@@ -106,7 +106,7 @@ memory, routines and remote Mac computer nodes.
 ## Packaging identifiers
 
 The product-facing name is `OpenAgentFleet`. A few internal package identifiers
-remain intentionally compatibility-stable while the repository is private:
+remain intentionally compatibility-stable while the public alpha is evolving:
 
 - the Tauri crate is still named `client`;
 - the bundled Computer sidecar package is still named

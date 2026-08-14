@@ -34,6 +34,6 @@ package and must be reviewed again before a public packaged release.
 - <https://www.websearchplus.xyz/>
 - <https://github.com/dondai44423/master-fetch>
 
-Before publishing a signed/notarized release, maintainers must regenerate the
-exact dependency and binary inventory for the release and include any
-additional required license or NOTICE text here.
+For every signed/notarized release, maintainers must regenerate the exact
+dependency and binary inventory for that release and include any additional
+required license or NOTICE text here.

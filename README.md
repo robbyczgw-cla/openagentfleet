@@ -6,12 +6,12 @@ Use Grok Build, Codex App Server, or OpenCode in one local workspace. For
 browser and desktop tasks, OpenAgentFleet gives approved runs access to a
 separate, observable Linux computer you can watch, stop, or take over.
 
-**Alpha software:** the Mac-first runtime is real and tested, but OpenAgentFleet
-is not feature-complete or production-ready yet. Provider login, model
-availability, macOS permissions, and local runtime setup depend on your
+**Open-source public alpha.** The Mac-first runtime is real and tested, but
+OpenAgentFleet is not feature-complete or production-ready. Provider login,
+model availability, macOS permissions, and local runtime setup depend on your
 machine. The project is independent and licensed under [Apache-2.0](LICENSE).
 
-[Build the macOS alpha from source](#build-from-source) ·
+[Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.1.0-alpha/OpenAgentFleet_0.1.0_aarch64.dmg) ·
 [Visit the product site](https://openagentfleet.xyz) ·
 [Read the security model](docs/architecture.md)
 
@@ -60,18 +60,23 @@ the engine:
   `ask` mode; its dangerous auto mode is disabled). It does not go through
   the controller's approval broker, and the UI labels it accordingly.
 
-## macOS distribution status
+## Download
 
-There is not yet a signed or notarized macOS release asset. Until the first
-alpha is published, use [the source build](#build-from-source). The GitHub
-Releases page will become the download destination once a real release is
-available; a local debug DMG is not a production download.
+`v0.1.0-alpha` is a signed and notarized DMG for Apple Silicon Macs:
+
+[**OpenAgentFleet_0.1.0_aarch64.dmg**](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.1.0-alpha/OpenAgentFleet_0.1.0_aarch64.dmg)
+
+Checksums and release notes are on the
+[v0.1.0-alpha release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.1.0-alpha).
+Intel Macs are not supported yet. If you would rather build it yourself, or you
+want to contribute, use [the source build](#build-from-source).
 
 ## Build from source
 
-The current supported target is Apple Silicon macOS. The native Tauri build
-requires Go, Node.js with `pnpm`, Rust with the macOS build tools, `uv`, `uvx`,
-and OpenCode exactly at version `1.18.10`. The sidecar preparation step
+Building from source is the contributor path; you do not need it to run the
+alpha. The current supported target is Apple Silicon macOS. The native Tauri
+build requires Go, Node.js with `pnpm`, Rust with the macOS build tools, `uv`,
+`uvx`, and OpenCode exactly at version `1.18.10`. The sidecar preparation step
 packages `botd`, the Agent Computer MCP, Web Search Plus launchers, and the
 bundled OpenCode worker, so these are required for the current full build
 path, not optional provider tools.
@@ -284,8 +289,8 @@ workers, MCP connectors, and a remote-client contract.
 
 Remaining work includes broader provider adapters, universal worker
 isolation, production skill/plugin lifecycle, richer routines and heartbeat
-execution, native mobile releases, signed/notarized distribution, and complete
-product parity. The honest current-vs-planned boundary lives in the
+execution, native mobile releases, Intel Mac support, and complete product
+parity. The honest current-vs-planned boundary lives in the
 [Grok Build parity contract](docs/grok-build-parity.md), the QA runbooks and
 the architecture documents.
 

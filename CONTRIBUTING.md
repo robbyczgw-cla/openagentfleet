@@ -1,8 +1,8 @@
 # Contributing to OpenAgentFleet
 
-Thanks for helping with OpenAgentFleet. The project is in a private alpha, so
-the priority is a small, understandable Mac-first product with honest
-security boundaries and reproducible checks.
+Thanks for helping with OpenAgentFleet. The project is in a public alpha, so
+the priority is a small, understandable Mac-first product with honest security
+boundaries and reproducible checks.
 
 ## Before opening an issue
 
