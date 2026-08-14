@@ -23,6 +23,7 @@ not earned yet.
 | [OpenCode bundling](opencode-bundling.md) | Exact macOS sidecar pin, architecture checks, and upgrade procedure | Implemented packaging contract |
 | [Search connectors](search-connectors.md) | Optional Web Search Plus and Hound MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
 | [Fresh-user smoke checklist](fresh-user-smoke-test.md) | Short native-app checklist for the simple first-run flow and optional Advanced settings | Current QA runbook |
+| [FAQ and troubleshooting](faq.md) | Plain-language answers about engines, Computer View, privacy, setup and common failures | Current user guide |
 | [CI and QA gates](ci-qa.md) | Local and GitHub Actions checks, plus what each gate does not prove | Current release runbook |
 
 ## Documentation conventions
