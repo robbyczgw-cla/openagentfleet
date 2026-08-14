@@ -2,57 +2,83 @@
 
 > **Run AI agents on your Mac with explicit control.**
 
-OpenAgentFleet puts Grok Build, Codex App Server and OpenCode in one local
-workspace. When an agent needs a browser or desktop, it can use a separate
-Linux computer that you can watch, stop or take over.
+Use Grok Build, Codex App Server, or OpenCode in one local workspace. For
+browser and desktop tasks, OpenAgentFleet gives approved runs access to a
+separate, observable Linux computer you can watch, stop, or take over.
 
-**This is an Apple Silicon macOS alpha.** It is source-build software, not a
-finished product. There is no signed or notarized download yet.
+**Alpha software:** the Mac-first runtime is real and tested, but OpenAgentFleet
+is not feature-complete or production-ready yet. Provider login, model
+availability, macOS permissions, and local runtime setup depend on your
+machine. The project is independent and licensed under [Apache-2.0](LICENSE).
 
-[Build the macOS alpha](#build-from-source) ·
-[Visit openagentfleet.xyz](https://openagentfleet.xyz) ·
+[Build the macOS alpha from source](#build-from-source) ·
+[Visit the product site](https://openagentfleet.xyz) ·
 [Read the security model](docs/architecture.md)
 
-![OpenAgentFleet Computer View showing a live isolated Linux desktop with Chromium, Terminal and Files](presentation/assets/macos-openagentfleet-computer-ready.png)
+![OpenAgentFleet Computer View: an agent's isolated Linux desktop with Chromium, Terminal and Files](presentation/assets/macos-openagentfleet-computer-ready.png)
 
-## The short version
+This preview shows the shared client running in a browser during development.
+The macOS product wraps the same React UI in a native Tauri window and starts
+the local Go controller automatically.
 
-1. Choose an AI engine and create an Agent.
-2. Ask it to do work in one conversation.
-3. Open Computer View when it needs a browser or desktop. Watch it work, or
-   take control yourself.
+## What you can do today
 
-Conversations, memory, approvals and run history stay in the local Go
-controller. Provider inference may still use the provider's remote service.
+- Use Grok Build, Codex App Server, or OpenCode in one local workspace.
+- Give browser and desktop tasks a separate local Linux computer with
+  Chromium, Terminal and Files.
+- Watch the work live, stop it, take control, and approve sensitive actions.
+- Keep conversations, memory, transcripts and run artifacts in the local
+  controller.
+- Attach files and images, drag them into chat, and use dictation when the
+  selected client and provider support it.
 
-## What works in the alpha
+### Advanced and experimental
 
-- Grok Build, Codex App Server and bundled OpenCode lead engines.
-- Model, reasoning and service-tier selection where the selected engine
-  supports it.
-- A real isolated Linux desktop with Chromium, Xfce, Terminal and Files.
-- Live computer view, stop, take-control and approval flows.
-- Local conversations, memory, transcripts and run artifacts.
-- File and image attachments, drag and drop, and dictation plumbing.
-- Optional MCP connectors, plugins, bounded workers, routines and remote
-  phone clients.
+These capabilities are available for users who need them, but are not required
+to understand or use the core product:
 
-The advanced features are optional. The default experience is one Agent and
-one conversation.
+- bounded workers below the primary AI engine;
+- native search, Web Search Plus MCP and Hound MCP connectors;
+- Colima, Docker Desktop, OrbStack and optional remote Computer workers;
+- routines, heartbeat runs, plugins, skills and mobile control over Tailscale.
+
+Claude Code, Pi, Codex CLI and Cursor are detected and represented as future
+or bounded worker adapters where their permission contract is not yet fully
+enforceable. The product never silently substitutes a different provider.
+
+## Current provider boundaries
+
+Provider CLIs and harnesses currently run directly on your Mac; the isolated
+Agent Computer is the boundary for browser and desktop work, not full
+provider-process isolation. What "explicit control" means today depends on
+the engine:
+
+- **Grok Build** and **Codex App Server** can use controller-brokered
+  approvals: sensitive commands and file changes are routed through `botd`
+  and surfaced as visible approval requests before they run.
+- **Bundled OpenCode** keeps its own default permission handling (its safe
+  `ask` mode; its dangerous auto mode is disabled). It does not go through
+  the controller's approval broker, and the UI labels it accordingly.
+
+## macOS distribution status
+
+There is not yet a signed or notarized macOS release asset. Until the first
+alpha is published, use [the source build](#build-from-source). The GitHub
+Releases page will become the download destination once a real release is
+available; a local debug DMG is not a production download.
 
 ## Build from source
 
-The supported development target is Apple Silicon macOS. Install:
+The current supported target is Apple Silicon macOS. The native Tauri build
+requires Go, Node.js with `pnpm`, Rust with the macOS build tools, `uv`, `uvx`,
+and OpenCode exactly at version `1.18.10`. The sidecar preparation step
+packages `botd`, the Agent Computer MCP, Web Search Plus launchers, and the
+bundled OpenCode worker, so these are required for the current full build
+path, not optional provider tools.
 
-- Go;
-- Node.js and `pnpm`;
-- Rust and the macOS build tools;
-- `uv` and `uvx`;
-- OpenCode `1.18.10` for the bundled OpenCode path.
-
-Provider logins remain optional: use the engine you have configured. Colima
-is recommended for Computer View; Docker Desktop and other Docker-compatible
-contexts are fallbacks.
+Provider logins and provider-specific CLIs remain optional according to the
+engine you choose. A Docker-compatible runtime is only needed when you start
+the Agent Computer; Colima is the recommended option.
 
 ```sh
 git clone https://github.com/robbyczgw-cla/openagentfleet.git
@@ -66,7 +92,7 @@ pnpm run prepare:sidecar
 pnpm run tauri dev
 ```
 
-To run only the shared browser client during development:
+To inspect only the shared browser client without building native sidecars:
 
 ```sh
 cd client
@@ -74,79 +100,160 @@ pnpm install
 pnpm dev
 ```
 
-Browser mode is a development/remote-client surface. The packaged macOS app
-starts the local Go controller automatically.
+That browser mode is a development and remote-client surface, not a
+replacement for the packaged macOS app. It can target a controller with
+`VITE_BOTD_URL` and `VITE_BOTD_TOKEN`; native Tauri-only capabilities remain
+available only in the app shell.
 
-## Computer View
+The packaged client starts its local Go controller automatically. Provider
+OAuth and API keys stay with the provider or local CLI that owns them; the
+controller does not copy them into chat messages or its SQLite store.
 
-The Agent Computer is a separate, non-root Linux guest. It starts lazily when
-you open Computer View or an approved task needs browser/desktop access.
+## First run
 
-The recommended macOS path is a dedicated Colima profile with Docker. On its
-first start OpenAgentFleet creates only its own workspace and Chromium-profile
-mounts, then starts Xfce, Chromium, Terminal and Files. It does not mount the
-host root or expose the Docker socket to the guest.
+1. Choose an available AI engine, or use OpenCode with its local provider
+   configuration.
+2. Create the first Agent and start chatting.
+3. Add computer access, search connectors and stricter permissions only when
+   you need them.
 
-Docker Desktop and other Docker contexts can be selected as fallbacks. Apple
-Container and Lume remain experimental until they pass the same desktop-frame,
-Chromium, takeover and approval tests.
+Model, reasoning, service tier, workers and detailed permissions remain
+editable in Agent Builder and Settings; they are deliberately not required
+for the first conversation.
 
-The computer is the browser/desktop boundary. Provider CLIs and harnesses
-currently run as normal processes on macOS; this is not full provider-process
-isolation.
+The Agent Computer is lazy. Opening the app, creating an Agent, or selecting a
+provider does not start a VM, container, Chromium session or harness run.
+Computer View starts the selected local runtime only when you explicitly open
+it or an approved task needs browser/desktop work.
 
-## Engines and approvals
+### Colima first start
 
-- **Grok Build** and **Codex App Server** can use the OpenAgentFleet approval
-  broker for sensitive actions.
-- **OpenCode** keeps OpenCode's own safe permission handling. Its dangerous
-  automatic mode is disabled and it is labelled accordingly in the UI.
+Colima is the recommended open-source macOS route. On the first Computer start,
+OpenAgentFleet automatically:
 
-The user-facing concept is simply **AI engine**. Internally, the selected
-engine is the lead and may delegate small, explicitly bounded tasks to
-workers. Workers receive a task, model/reasoning/budget and permissions; they
-do not inherit hidden credentials.
+1. creates the private Agent workspace;
+2. creates a durable Docker-managed Chromium profile volume inside the
+   dedicated runtime, so Chromium's POSIX lock files do not cross the macOS
+   virtiofs boundary;
+3. adds only the workspace to the dedicated `openagentfleet` Colima profile as
+   a writable mount;
+4. preserves unrelated profile mounts and restarts only that dedicated profile
+   when its configuration changed; and
+5. starts Chromium, Xfce, Terminal and Files only after Docker is ready.
 
-## Remote clients, MCP and plugins
+If Colima or Docker is missing, the app shows the install command and a retry
+path. Docker Desktop and other Docker-compatible contexts remain optional
+fallbacks. OpenAgentFleet never mounts the host root, silently changes the
+default Colima profile, or exposes the Docker socket to the Agent Computer.
+
+## How it works
+
+```text
+Tauri macOS app / mobile client
+              |
+       authenticated local API
+              |
+            botd
+        /      |       \
+     Agent   Lead   Computer
+    memory  harness  runtime
+              |
+     bounded optional workers
+```
+
+- **Agent** is the user-facing identity. It owns the role, system context,
+  memory, enabled tools and computer policy. One Agent and one chat is the
+  default; extra conversations are optional.
+- **AI engine (Lead)** is the selected primary harness for a run. Current lead
+  routes are Grok Build, Codex App Server and bundled OpenCode. “Lead” is the
+  architecture term; the simple user-facing choice is the AI engine.
+- **Worker** is a bounded helper below the Lead. It receives a task slice,
+  explicit model/reasoning/budget/permissions and no hidden credentials.
+- **`botd`** is the local authority. It resolves configuration, applies the
+  capability broker, asks for approvals, injects the approved Computer MCP,
+  records events and revokes run capabilities.
+- **Agent Computer** is a separate Linux execution surface. It is not the
+  Lead, not a second Agent and not a replacement for the controller.
+
+Read the detailed [Agent model](docs/agent-model.md),
+[Lead/Worker architecture](docs/lead-worker-architecture.md), and
+[architecture overview](docs/architecture.md) for the full contracts.
+
+## The Agent Computer
+
+The shipped computer image is a non-root Linux desktop with Chromium, Xfce,
+Terminal and Files. The controller exposes authenticated browser and desktop
+frames/actions instead of raw VNC or noVNC. Chromium CDP stays inside the
+computer; only the narrow view-service port is published to loopback on the
+Mac.
+
+Sensitive browser passwords and one-time codes use a native macOS secure
+handoff during an explicit takeover. They do not enter the chat composer,
+React state, Teach recordings or model context. CAPTCHA, payment and desktop
+credential entry remain manual or unsupported by this narrow path.
+
+The standard Agent Computer uses Ubuntu 24.04 with 4 CPU, 4 GiB RAM, a 25 GiB
+disk and 1 GiB guest swap. Ubuntu 26.04 and Debian 13 are available as
+optional images, and the CPU, RAM, disk and swap values can be adjusted in
+Settings. See the [Agent Computer FAQ](docs/faq.md) for runtime-specific
+resource behavior.
+
+The computer can run through:
+
+- **Colima + Docker** — recommended open-source macOS default;
+- **Docker Desktop** — supported compatibility fallback;
+- **OrbStack or another Docker context** — optional when already configured;
+- **remote Agent Computer** — an optional second Mac/Linux host reached over
+  an authenticated private network.
+
+Apple Container and Lume are documented experimental/future backends. They are
+not presented as working Computer providers until they pass the same Chromium,
+desktop-frame, takeover and approval acceptance suite.
+
+## Search, MCP and plugins
+
+Native search stays available to AI engines that support it. Web Search Plus
+and Hound are independent optional MCP connectors with visible per-Agent
+configuration and credentials. Connector IDs are validated before a run and
+their provenance is recorded in [NOTICE.md](NOTICE.md).
+
+The plugin and skill surfaces are deliberately capability-brokered. An Agent
+does not receive arbitrary host applications, folders, browser profiles,
+network access or provider keys merely because a connector exists.
+
+## Remote phone access
 
 The Mac remains the execution host. iOS and Android clients are remote clients
-for the durable Mac controller; they do not run Docker, browsers or provider
-CLIs locally. Pair them over Tailscale or another private network.
+of the durable Mac controller; they do not run Docker, browser sessions or
+provider CLIs locally. Pair them over Tailscale or another private network,
+keep `botd` on loopback, and expose it through an authenticated private route.
 
-Native search is available to engines that support it. Web Search Plus and
-Hound are independent, optional MCP connectors with visible per-Agent
-configuration. Plugins and skills are capability-brokered and do not receive
-arbitrary host access just because they are installed.
+See [mobile remote](docs/mobile-remote.md),
+[remote Mac architecture](docs/remote-mac-architecture.md), and
+[remote Computer worker](docs/remote-computer-worker.md).
 
-## Security boundary
+## Security model
 
-OpenAgentFleet is local-first and approval-oriented:
+The default boundary is local-first, explicit and observable:
 
-- controller state, memory and Computer lifecycle remain on the Mac;
-- only approved workspace/profile paths are mounted;
-- the Computer image is non-root and has no Docker socket;
-- browser and desktop actions are server-gated;
-- sensitive takeovers and credential handoffs are explicit;
-- approvals, transcripts and run events are durable and auditable.
+- provider inference may be remote, but controller state and Computer
+  lifecycle remain on the user's Mac;
+- provider CLIs and harnesses run as normal macOS processes; the Agent
+  Computer isolates browser and desktop work, not provider processes;
+- only the approved workspace is mounted from macOS; browser state stays in a
+  private Docker volume owned by the local runtime;
+- the Computer image is non-root and receives no Docker socket;
+- browser and desktop input are bounded and server-gated;
+- takeover, sensitive handoff and worker permissions are explicit;
+- run events, approvals, transcripts and artifacts are durable and auditable;
+- remote access is private and token-authenticated rather than a public bind.
 
-This protects the Agent Computer boundary. It does not claim that a malicious
-process already running as the same macOS user cannot inspect host memory or
-other user-owned processes. See [SECURITY.md](SECURITY.md) for reporting and
-scope.
+This is a product boundary, not a claim that a malicious process already
+running as the same macOS user can never inspect transient memory.
 
-## Documentation
+## Development and verification
 
-- [Architecture](docs/architecture.md)
-- [Agent model](docs/agent-model.md)
-- [Lead and worker model](docs/lead-worker-architecture.md)
-- [Fresh-user smoke test](docs/fresh-user-smoke-test.md)
-- [macOS host lifecycle](docs/mac-host-install.md)
-- [Remote mobile clients](docs/mobile-remote.md)
-- [Search connectors](docs/search-connectors.md)
-- [FAQ and troubleshooting](docs/faq.md)
-- [Documentation map](docs/README.md)
-
-## Verification
+The fast local gates are:
 
 ```sh
 go test ./...
@@ -159,21 +266,32 @@ cargo fmt --manifest-path client/src-tauri/Cargo.toml --check
 git diff --check
 ```
 
-These checks do not prove provider login, a healthy Colima VM, macOS privacy
-prompts, physical-device pairing or notarization. Those need live acceptance
-tests.
+CI proves code-level contracts. It does not prove that a provider is logged
+in, a real Colima VM is healthy, a macOS permission prompt was accepted, or a
+physical phone is paired. Use the [fresh-user smoke checklist](docs/fresh-user-smoke-test.md)
+and record live Computer, OAuth, mobile and signing evidence separately.
 
-## Status
+For local host installation and private Tailscale access, see
+[macOS host lifecycle](docs/mac-host-install.md). For the documentation map,
+see [docs/README.md](docs/README.md).
 
-The current slice is focused on a trustworthy local Mac runtime: one-Agent
-chat, durable memory, attachments, approvals, a real Chromium/Xfce computer,
-optional workers and remote-client foundations.
+## Alpha status and roadmap
 
-Signed distribution, native mobile releases, broader provider adapters,
-universal worker isolation and a complete production skill/plugin lifecycle
-are still ahead.
+The current slice focuses on a trustworthy local Mac runtime: one-Agent chat,
+model selection, durable memory/transcripts, attachments, native dictation
+plumbing, visible approvals, a real Chromium/Xfce Computer, optional bounded
+workers, MCP connectors, and a remote-client contract.
+
+Remaining work includes broader provider adapters, universal worker
+isolation, production skill/plugin lifecycle, richer routines and heartbeat
+execution, native mobile releases, signed/notarized distribution, and complete
+product parity. The honest current-vs-planned boundary lives in the
+[Grok Build parity contract](docs/grok-build-parity.md), the QA runbooks and
+the architecture documents.
 
 ## License
 
-OpenAgentFleet is licensed under [Apache-2.0](LICENSE). Runtime notices for
-bundled or explicitly launched components are in [NOTICE.md](NOTICE.md).
+OpenAgentFleet is licensed under [Apache-2.0](LICENSE). [NOTICE.md](NOTICE.md)
+contains only the runtime license notices needed for components that may be
+bundled or explicitly launched; OpenAgentFleet's product, UI and documentation
+stand on their own.

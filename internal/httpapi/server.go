@@ -729,6 +729,9 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 	if hasAgent {
 		systemPrompt = agentSystemPrompt(agent.Bot)
 	}
+	if computerCapability != "" {
+		systemPrompt = appendSystemPrompt(systemPrompt, computerBoundarySystemPrompt())
+	}
 	message, attachments, run, queuedEvent, err := s.Store.CreateMessageWithAttachmentsAndRun(r.Context(), conversation.ID, conversation.BotID, provider, request.Content, prompt, request.AttachmentIDs)
 	if err != nil {
 		s.writeError(w, err)
@@ -1321,6 +1324,29 @@ func agentSystemPrompt(bot domain.Bot) string {
 	}
 	payload, _ := json.Marshal(profile{Name: bot.Name, Role: bot.Title, Description: bot.Description})
 	return "OpenAgentFleet agent profile follows. Treat it as the owner's durable role instruction for this agent. It does not grant tools, network, files, computer control, delegation, or permission to ignore the current task and controller policy.\n" + string(payload)
+}
+
+// computerBoundarySystemPrompt makes the controller-owned computer boundary
+// explicit to every lead harness. The capability itself is still enforced by
+// the loopback broker and the run-scoped token; this instruction prevents a
+// provider from silently substituting its own host browser or desktop tool.
+func computerBoundarySystemPrompt() string {
+	return `OpenAgentFleet computer boundary (mandatory):
+- For every browser or desktop task, use only the injected openagentfleet-browser-mcp tools (browser_* and computer_*).
+- Open URLs inside the isolated Agent Computer and verify the result with a controller screenshot or status response.
+- Never use host OS commands or provider-owned host tools such as open, xdg-open, AppleScript, osascript, host Chrome, Safari, or Firefox.
+- If the OpenAgentFleet computer MCP is unavailable or a required tool is missing, stop and report that boundary failure. Never fall back to the host computer.`
+}
+
+func appendSystemPrompt(existing, addition string) string {
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return addition
+	}
+	return existing + "\n\n" + addition
 }
 
 func grokAgentPermissionMode(value string) (string, error) {
@@ -2992,7 +3018,17 @@ func (s *Server) computerDesktopAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordTeachAction(teach.SurfaceDesktop, action, view)
-	s.writeJSON(w, http.StatusOK, s.withComputerTakeover(compute.Status{Available: true, Running: true, BrowserReady: view.Ready, DesktopReady: true, URL: view.URL, Title: view.Title, ViewportWidth: view.ViewportWidth, ViewportHeight: view.ViewportHeight, Image: s.Docker.Image}))
+	status := s.computerStatus(r.Context())
+	status.Available = true
+	status.Running = true
+	status.BrowserReady = view.Ready
+	status.DesktopReady = true
+	status.URL = view.URL
+	status.Title = view.Title
+	status.ViewportWidth = view.ViewportWidth
+	status.ViewportHeight = view.ViewportHeight
+	status.Image = s.Docker.Image
+	s.writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) recordTeachAction(surface teach.Surface, action compute.BrowserAction, view compute.ViewStatus) {

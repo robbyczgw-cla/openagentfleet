@@ -418,8 +418,8 @@ fn local_botd_conflict() -> Option<String> {
 }
 
 fn bundled_executable_path(name: &str) -> Result<PathBuf, String> {
-    let executable =
-        env::current_exe().map_err(|error| format!("resolve OpenAgentFleet executable: {error}"))?;
+    let executable = env::current_exe()
+        .map_err(|error| format!("resolve OpenAgentFleet executable: {error}"))?;
     let parent = executable
         .parent()
         .ok_or_else(|| "resolve bundled executable directory".to_string())?;
@@ -469,7 +469,10 @@ fn configure_sidecar_environment(
     command.env("OPENAGENTFLEET_UVX_BINARY", uvx);
     command.env("OPENAGENTFLEET_OPENCODE_BINARY", opencode);
     command.env("OPENAGENTFLEET_BROWSER_MCP_BINARY", browser_mcp);
-    command.env("OPENAGENTFLEET_WEBSEARCH_DATA_DIR", data_dir.join("web-search"));
+    command.env(
+        "OPENAGENTFLEET_WEBSEARCH_DATA_DIR",
+        data_dir.join("web-search"),
+    );
     // The packaged product must be usable without asking users to relaunch a
     // GUI app from Terminal with hidden environment gates. Actual write/tool
     // authority remains controlled by the Agent permission profile and the

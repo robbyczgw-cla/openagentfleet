@@ -1,0 +1,2 @@
+# Optional local npm policy. Copy this file to mobile/.npmrc when needed.
+# Set minimum-release-age in minutes if your local workflow uses npm age gating.

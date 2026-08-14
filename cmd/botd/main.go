@@ -156,6 +156,7 @@ func main() {
 	docker := compute.NewDocker(workspacePath, contextPath, allowComputer)
 	runtimeSelection.Detail = runtimeDetail
 	docker.ConfigureRuntime(runtimeSelection)
+	docker.ConfigureResources(compute.ResourceConfigFromPreferences(configuredPreferences.Computer))
 	docker.ViewPort = computerPort
 	if strings.TrimSpace(remoteComputerURL) != "" {
 		remoteComputerToken := strings.TrimSpace(os.Getenv("OPENAGENTFLEET_COMPUTER_REMOTE_TOKEN"))

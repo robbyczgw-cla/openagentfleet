@@ -1,7 +1,8 @@
 import {
   DragEvent as ReactDragEvent,
   FormEvent,
-  MouseEvent as ReactMouseEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
   useRef,
@@ -16,6 +17,9 @@ import "./App.css";
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
 const API_TOKEN = import.meta.env.VITE_BOTD_TOKEN ?? "";
 const OPENCODE_STARTER_MODEL = "opencode/deepseek-v4-flash-free";
+const OPENCODE_STARTER_MODEL_LABEL = "DeepSeek V4 Flash · starter route";
+const OPENCODE_STARTER_MODEL_DETAIL =
+  "Optional OpenCode starter route; availability, limits, and billing are provider-defined and may change. It is not guaranteed to be free.";
 const ONBOARDING_STEP_COUNT = 4;
 const NATIVE_RUNTIME_AVAILABLE =
   typeof window !== "undefined" &&
@@ -70,6 +74,37 @@ function canPreviewAttachment(mediaType: string): boolean {
     normalized.startsWith("audio/") ||
     normalized.startsWith("video/")
   );
+}
+
+async function isNearBlankFrame(blob: Blob): Promise<boolean> {
+  if (typeof createImageBitmap !== "function") return false;
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = 32;
+    canvas.height = 32;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return false;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let minimum = 255;
+    let maximum = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const luminance =
+        (299 * pixels[index] +
+          587 * pixels[index + 1] +
+          114 * pixels[index + 2]) /
+        1000;
+      minimum = Math.min(minimum, luminance);
+      maximum = Math.max(maximum, luminance);
+    }
+    return maximum < 55 && maximum - minimum < 18;
+  } catch {
+    return false;
+  } finally {
+    bitmap?.close();
+  }
 }
 
 async function apiFetch(path: string, init: RequestInit = {}) {
@@ -230,6 +265,13 @@ type Computer = {
   browser_ready: boolean;
   desktop_ready?: boolean;
   image: string;
+  resources?: {
+    cpus?: number;
+    memory_gib?: number;
+    disk_gib?: number;
+    swap_gib?: number;
+    os_image?: string;
+  };
   url?: string;
   title?: string;
   viewport_width?: number;
@@ -478,6 +520,11 @@ type Preferences = {
   computer?: {
     default_surface?: ComputerViewMode;
     runtime?: string;
+    cpus?: number;
+    ram_gib?: number;
+    disk_gib?: number;
+    swap_gib?: number;
+    os_image?: string;
     remote_url?: string;
   };
   safety?: { retain_transcripts?: boolean; retain_activity?: boolean };
@@ -698,16 +745,23 @@ function leadModelChoices(
   const catalogHarness = value === "grok" ? "grok_build" : value;
   const catalogChoices = catalog
     .filter((entry) => entry.harness === catalogHarness)
-    .map((entry) => ({
-      value: entry.model,
-      label: entry.label,
-      detail: entry.detail ?? "Provider model",
-      available: entry.available,
-      disabledReason: entry.disabled_reason,
-      billing: entry.billing,
-      authLabel: entry.auth_label,
-      authState: entry.auth_state,
-    }));
+    .map((entry) => {
+      const starterRoute = entry.model === OPENCODE_STARTER_MODEL;
+      return {
+        value: entry.model,
+        label: starterRoute
+          ? OPENCODE_STARTER_MODEL_LABEL
+          : entry.label,
+        detail: starterRoute
+          ? OPENCODE_STARTER_MODEL_DETAIL
+          : entry.detail ?? "Provider model",
+        available: entry.available,
+        disabledReason: entry.disabled_reason,
+        billing: entry.billing,
+        authLabel: entry.auth_label,
+        authState: entry.auth_state,
+      };
+    });
   if (catalogChoices.length > 0) return catalogChoices;
   switch (leadProviderValue(value)) {
     case "grok":
@@ -740,8 +794,8 @@ function leadModelChoices(
       return [
         {
           value: OPENCODE_STARTER_MODEL,
-          label: "DeepSeek V4 Flash Free",
-          detail: "Bundled OpenCode starter model",
+          label: OPENCODE_STARTER_MODEL_LABEL,
+          detail: OPENCODE_STARTER_MODEL_DETAIL,
         },
         {
           value: "opencode-go/deepseek-v4-flash",
@@ -833,8 +887,11 @@ function ModelPicker({
                 onChange(choice.value);
               }}
             >
-              <span className="model-picker-radio" aria-hidden="true">
-                {selected ? "✓" : ""}
+              <span
+                className={`model-picker-radio${selected ? " selected" : ""}`}
+                aria-hidden="true"
+              >
+                <span>{selected ? "✓" : ""}</span>
               </span>
               <span>
                 <strong>{choice.label}</strong>
@@ -861,8 +918,11 @@ function ModelPicker({
             if (!custom) onChange("");
           }}
         >
-          <span className="model-picker-radio" aria-hidden="true">
-            {custom ? "✓" : ""}
+          <span
+            className={`model-picker-radio${custom ? " selected" : ""}`}
+            aria-hidden="true"
+          >
+            <span>{custom ? "✓" : ""}</span>
           </span>
           <span>
             <strong>Custom model ID</strong>
@@ -1290,6 +1350,8 @@ function App() {
     needsInput: true,
   });
   const computerCloseRef = useRef<HTMLButtonElement>(null);
+  const computerFrameRef = useRef<HTMLImageElement>(null);
+  const computerFrameFocusPendingRef = useRef(false);
   const settingsCloseRef = useRef<HTMLButtonElement>(null);
   const teachGoalRef = useRef<HTMLInputElement>(null);
 
@@ -1614,10 +1676,8 @@ function App() {
 
   useEffect(() => {
     if (
-      !data?.computer.browser_ready ||
-      (computerViewOpen &&
-        computerViewMode === "desktop" &&
-        data.computer.desktop_ready)
+      !data?.computer.running ||
+      computerViewMode !== "browser"
     ) {
       if (frameURLRef.current) URL.revokeObjectURL(frameURLRef.current);
       frameURLRef.current = null;
@@ -1629,30 +1689,41 @@ function App() {
     }
     let cancelled = false;
     let timer = 0;
+    const controller = new AbortController();
     if (computerViewOpen) {
       setComputerFrameState({ surface: "browser", status: "loading" });
     }
     async function pollFrame() {
       try {
-        const response = await apiFetch(`/api/computer/frame?ts=${Date.now()}`);
+        const response = await apiFetch(`/api/computer/frame?ts=${Date.now()}`, {
+          signal: controller.signal,
+        });
         if (!response.ok) throw new Error(`frame returned ${response.status}`);
-        const nextURL = URL.createObjectURL(await response.blob());
+        const blob = await response.blob();
+        if (await isNearBlankFrame(blob))
+          throw new Error("Chromium is repainting the live frame");
+        const nextURL = URL.createObjectURL(blob);
         if (cancelled) {
           URL.revokeObjectURL(nextURL);
         } else {
           if (frameURLRef.current) URL.revokeObjectURL(frameURLRef.current);
           frameURLRef.current = nextURL;
           setComputerFrameURL(nextURL);
+          setData((current) =>
+            current
+              ? { ...current, computer: { ...current.computer, browser_ready: true } }
+              : current,
+          );
           if (computerViewOpen) {
             setComputerFrameState({ surface: "browser", status: "ready" });
           }
         }
       } catch {
-        if (!cancelled && computerViewOpen) {
+        if (!cancelled && !controller.signal.aborted && computerViewOpen) {
           setComputerFrameState({
             surface: "browser",
             status: "error",
-            error: "The browser frame did not respond yet.",
+            error: "Chromium is warming up. The live frame will appear automatically.",
           });
         }
       }
@@ -1665,6 +1736,7 @@ function App() {
     void pollFrame();
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
       if (frameURLRef.current) URL.revokeObjectURL(frameURLRef.current);
       frameURLRef.current = null;
@@ -1674,39 +1746,41 @@ function App() {
     computerViewOpen,
     computerViewMode,
     computerFrameRetryKey,
-    data?.computer.browser_ready,
+    data?.computer.running,
   ]);
 
   useEffect(() => {
     if (
-      !computerViewOpen ||
-      computerViewMode !== "desktop" ||
-      !data?.computer.desktop_ready
+      !data?.computer.running ||
+      computerViewMode !== "desktop"
     ) {
       if (desktopFrameURLRef.current)
         URL.revokeObjectURL(desktopFrameURLRef.current);
       desktopFrameURLRef.current = null;
       setDesktopFrameURL(null);
-      if (
-        computerViewOpen &&
-        computerViewMode === "desktop" &&
-        data?.computer.desktop_ready
-      ) {
+      if (computerViewOpen && computerViewMode === "desktop") {
         setComputerFrameState({ surface: "desktop", status: "idle" });
       }
       return;
     }
     let cancelled = false;
     let timer = 0;
-    setComputerFrameState({ surface: "desktop", status: "loading" });
+    const controller = new AbortController();
+    if (computerViewOpen) {
+      setComputerFrameState({ surface: "desktop", status: "loading" });
+    }
     async function pollFrame() {
       try {
         const response = await apiFetch(
           `/api/computer/desktop/frame?ts=${Date.now()}`,
+          { signal: controller.signal },
         );
         if (!response.ok)
           throw new Error(`desktop frame returned ${response.status}`);
-        const nextURL = URL.createObjectURL(await response.blob());
+        const blob = await response.blob();
+        if (await isNearBlankFrame(blob))
+          throw new Error("The virtual desktop is repainting the live frame");
+        const nextURL = URL.createObjectURL(blob);
         if (cancelled) {
           URL.revokeObjectURL(nextURL);
         } else {
@@ -1714,22 +1788,33 @@ function App() {
             URL.revokeObjectURL(desktopFrameURLRef.current);
           desktopFrameURLRef.current = nextURL;
           setDesktopFrameURL(nextURL);
+          setData((current) =>
+            current
+              ? { ...current, computer: { ...current.computer, desktop_ready: true } }
+              : current,
+          );
           setComputerFrameState({ surface: "desktop", status: "ready" });
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted) {
           setComputerFrameState({
             surface: "desktop",
             status: "error",
-            error: "The desktop frame did not respond yet.",
+            error: "The desktop is warming up. The live frame will appear automatically.",
           });
         }
       }
-      if (!cancelled) timer = window.setTimeout(() => void pollFrame(), 280);
+      if (!cancelled) {
+        timer = window.setTimeout(
+          () => void pollFrame(),
+          computerViewOpen ? 280 : 1200,
+        );
+      }
     }
     void pollFrame();
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
       if (desktopFrameURLRef.current)
         URL.revokeObjectURL(desktopFrameURLRef.current);
@@ -1740,20 +1825,15 @@ function App() {
     computerViewOpen,
     computerViewMode,
     computerFrameRetryKey,
-    data?.computer.desktop_ready,
+    data?.computer.running,
   ]);
 
   useEffect(() => {
     if (!computerViewOpen) return;
     const preferred = preferences.computer?.default_surface ?? "desktop";
-    setComputerViewMode(
-      preferred === "desktop" && data?.computer.desktop_ready
-        ? "desktop"
-        : "browser",
-    );
+    setComputerViewMode(preferred);
   }, [
     computerViewOpen,
-    data?.computer.desktop_ready,
     preferences.computer?.default_surface,
   ]);
 
@@ -2065,7 +2145,8 @@ function App() {
       {
         value: "opencode" as const,
         label: "OpenCode",
-        description: "Open-source local-provider fallback with a free starter model.",
+        description:
+          "Open-source local-provider fallback with a starter route whose availability and billing may vary.",
         available: capability("opencode")?.available ?? false,
         authProvider: null,
         auth: undefined,
@@ -3463,7 +3544,7 @@ function App() {
         );
         if (payload.run.status === "blocked")
           setNotice(
-            "Run gespeichert. Harness-Ausführung ist noch deaktiviert.",
+            "Run saved. Harness execution is not enabled yet.",
           );
       }
       if (stillVisible) setDraft("");
@@ -3472,7 +3553,7 @@ function App() {
         setNotice(
           sendError instanceof Error
             ? sendError.message
-            : "Nachricht konnte nicht gesendet werden",
+            : "Message could not be sent",
         );
       }
     } finally {
@@ -3490,17 +3571,18 @@ function App() {
       const payload = (await response.json()) as Computer & { error?: string };
       if (!response.ok)
         throw new Error(
-          payload.error ?? "Agent Computer konnte nicht gestartet werden",
+          payload.error ?? "Agent Computer could not be started",
         );
       setData((current) =>
         current ? { ...current, computer: payload } : current,
       );
-      if (openView) openComputerView();
+      setComputerFrameRetryKey((current) => current + 1);
+      if (openView) openComputerView(false);
     } catch (computerError) {
       setNotice(
         computerError instanceof Error
           ? computerError.message
-          : "Agent Computer konnte nicht gestartet werden",
+          : "Agent Computer could not be started",
       );
     } finally {
       setComputerBusy(false);
@@ -3517,7 +3599,7 @@ function App() {
       const payload = (await response.json()) as Computer & { error?: string };
       if (!response.ok)
         throw new Error(
-          payload.error ?? "Agent Computer konnte nicht gestoppt werden",
+          payload.error ?? "Agent Computer could not be stopped",
         );
       setComputerViewOpen(false);
       setComputerFrameURL(null);
@@ -3525,21 +3607,26 @@ function App() {
       setData((current) =>
         current ? { ...current, computer: payload } : current,
       );
-      setNotice("Agent Computer gestoppt. Der Container startet erst wieder auf Anfrage.");
+      setNotice("Agent Computer stopped. The container will start again only when requested.");
     } catch (computerError) {
       setNotice(
         computerError instanceof Error
           ? computerError.message
-          : "Agent Computer konnte nicht gestoppt werden",
+          : "Agent Computer could not be stopped",
       );
     } finally {
       setComputerBusy(false);
     }
   }
 
-  function openComputerView() {
+  function openComputerView(ensure = true) {
     setNotice(null);
     setComputerViewOpen(true);
+    if (!ensure || !data || computerBusy) return;
+    const ready =
+      data.computer.running &&
+      Boolean(data.computer.browser_ready || data.computer.desktop_ready);
+    if (!ready) void ensureComputer(false);
   }
 
   function retryComputerFrame() {
@@ -3569,14 +3656,14 @@ function App() {
       );
       setNotice(
         enabled
-          ? "Takeover aktiv. Die Computersteuerung bleibt bei dir; sensible Teach-Schritte werden redigiert."
-          : "Takeover beendet. OpenAgentFleet kann wieder beobachten, aber nicht über diese Leiste steuern.",
+          ? "Takeover enabled. Computer control remains with you; sensitive Teach steps are redacted."
+          : "Takeover released. OpenAgentFleet can observe again, but cannot control the computer from this toolbar.",
       );
     } catch (takeoverError) {
       setNotice(
         takeoverError instanceof Error
           ? takeoverError.message
-          : "Takeover konnte nicht geändert werden",
+          : "Takeover could not be changed",
       );
     }
   }
@@ -3596,14 +3683,14 @@ function App() {
       );
       setNotice(
         enabled
-          ? "Agent Control aktiv. Zugelassene Agent-Computer-Tools können jetzt die isolierte Arbeitsumgebung steuern."
-          : "Agent Control pausiert. Die Arbeitsumgebung bleibt sichtbar.",
+          ? "Agent Control enabled. Approved Agent Computer tools can now control the isolated workspace."
+          : "Agent Control paused. The workspace remains visible.",
       );
     } catch (agentControlError) {
       setNotice(
         agentControlError instanceof Error
           ? agentControlError.message
-          : "Agent Control konnte nicht geändert werden",
+          : "Agent Control could not be changed",
       );
     }
   }
@@ -3781,42 +3868,121 @@ function App() {
     }
   }
 
-  function handleComputerClick(event: ReactMouseEvent<HTMLImageElement>) {
-    if (!data || !data.computer.takeover || !data.computer.browser_ready)
-      return;
+  function framePoint(
+    event: ReactPointerEvent<HTMLImageElement>,
+    surface: ComputerViewMode,
+  ) {
+    if (!data) return null;
     const bounds = event.currentTarget.getBoundingClientRect();
-    const viewportWidth =
-      data.computer.viewport_width || event.currentTarget.naturalWidth || bounds.width;
-    const viewportHeight =
-      data.computer.viewport_height || event.currentTarget.naturalHeight || bounds.height;
-    const scale = Math.min(bounds.width / viewportWidth, bounds.height / viewportHeight);
-    const renderedWidth = viewportWidth * scale;
-    const renderedHeight = viewportHeight * scale;
-    const offsetX = (bounds.width - renderedWidth) / 2;
-    const offsetY = (bounds.height - renderedHeight) / 2;
-    const x = (event.clientX - bounds.left - offsetX) / scale;
-    const y = (event.clientY - bounds.top - offsetY) / scale;
-    if (x < 0 || y < 0 || x > viewportWidth || y > viewportHeight) return;
-    void computerAction({ action: "click", x, y });
+    const sourceWidth =
+      data.computer.viewport_width || event.currentTarget.naturalWidth;
+    const sourceHeight =
+      data.computer.viewport_height || event.currentTarget.naturalHeight;
+    if (!sourceWidth || !sourceHeight || !bounds.width || !bounds.height)
+      return null;
+
+    // Both live images use object-fit: contain. Calculate the actual painted
+    // image rectangle instead of mapping against the full CSS box; this keeps
+    // clicks aligned when the frame is letterboxed or retina-scaled.
+    const sourceRatio = sourceWidth / sourceHeight;
+    const boxRatio = bounds.width / bounds.height;
+    const paintedWidth = boxRatio > sourceRatio
+      ? bounds.height * sourceRatio
+      : bounds.width;
+    const paintedHeight = boxRatio > sourceRatio
+      ? bounds.height
+      : bounds.width / sourceRatio;
+    const offsetX = (bounds.width - paintedWidth) / 2;
+    const offsetY = (bounds.height - paintedHeight) / 2;
+    const x = ((event.clientX - bounds.left - offsetX) / paintedWidth) * sourceWidth;
+    const y = ((event.clientY - bounds.top - offsetY) / paintedHeight) * sourceHeight;
+    if (x < 0 || y < 0 || x > sourceWidth || y > sourceHeight) return null;
+    return { x, y, surface };
   }
 
-  function handleDesktopClick(event: ReactMouseEvent<HTMLImageElement>) {
+  function handleComputerPointerDown(event: ReactPointerEvent<HTMLImageElement>) {
+    if (!data || !data.computer.takeover || !data.computer.browser_ready)
+      return;
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
+    const point = framePoint(event, "browser");
+    if (point) void computerAction({ action: "click", x: point.x, y: point.y });
+  }
+
+  function handleDesktopPointerDown(event: ReactPointerEvent<HTMLImageElement>) {
     if (!data || !data.computer.takeover || !data.computer.desktop_ready)
       return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const naturalWidth = event.currentTarget.naturalWidth;
-    const naturalHeight = event.currentTarget.naturalHeight;
-    if (!naturalWidth || !naturalHeight || !bounds.width || !bounds.height)
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
+    const point = framePoint(event, "desktop");
+    if (point)
+      void computerAction({ action: "click", x: point.x, y: point.y }, "desktop");
+  }
+
+  function computerKey(event: ReactKeyboardEvent<HTMLImageElement>, surface: ComputerViewMode) {
+    const browserNames: Record<string, string> = {
+      " ": "Space",
+      ArrowUp: "ArrowUp",
+      ArrowDown: "ArrowDown",
+      ArrowLeft: "ArrowLeft",
+      ArrowRight: "ArrowRight",
+      Backspace: "Backspace",
+      Delete: "Delete",
+      Escape: "Escape",
+      Enter: "Enter",
+      Tab: "Tab",
+      Home: "Home",
+      End: "End",
+      PageUp: "PageUp",
+      PageDown: "PageDown",
+      Insert: "Insert",
+      CapsLock: "CapsLock",
+      Meta: "Meta",
+      Control: "Control",
+      Alt: "Alt",
+      Shift: "Shift",
+    };
+    const desktopNames: Record<string, string> = {
+      ...browserNames,
+      " ": "space",
+      ArrowUp: "Up",
+      ArrowDown: "Down",
+      ArrowLeft: "Left",
+      ArrowRight: "Right",
+      Backspace: "BackSpace",
+      PageUp: "Page_Up",
+      PageDown: "Page_Down",
+      CapsLock: "Caps_Lock",
+      Meta: "super",
+      Control: "ctrl",
+      Alt: "alt",
+      Shift: "shift",
+    };
+    const names = surface === "desktop" ? desktopNames : browserNames;
+    const base = names[event.key] ?? event.key;
+    const modifiers = [
+      event.ctrlKey ? (surface === "desktop" ? "ctrl" : "Control") : "",
+      event.altKey ? (surface === "desktop" ? "alt" : "Alt") : "",
+      event.shiftKey && event.key.length > 1
+        ? surface === "desktop" ? "shift" : "Shift"
+        : "",
+      event.metaKey ? (surface === "desktop" ? "super" : "Meta") : "",
+    ].filter(Boolean);
+    return modifiers.length > 0 ? `${modifiers.join("+")}+${base}` : base;
+  }
+
+  function handleComputerKeyDown(event: ReactKeyboardEvent<HTMLImageElement>) {
+    if (!data || !data.computer.takeover || data.computer.agent_control)
       return;
-    const scale = Math.min(bounds.width / naturalWidth, bounds.height / naturalHeight);
-    const renderedWidth = naturalWidth * scale;
-    const renderedHeight = naturalHeight * scale;
-    const offsetX = (bounds.width - renderedWidth) / 2;
-    const offsetY = (bounds.height - renderedHeight) / 2;
-    const x = (event.clientX - bounds.left - offsetX) / scale;
-    const y = (event.clientY - bounds.top - offsetY) / scale;
-    if (x < 0 || y < 0 || x > naturalWidth || y > naturalHeight) return;
-    void computerAction({ action: "click", x, y }, "desktop");
+    if (event.nativeEvent.isComposing || event.key === "Dead" || event.repeat) return;
+    event.preventDefault();
+    const surface = activeComputerView;
+    const hasModifier = event.ctrlKey || event.altKey || event.metaKey;
+    if (event.key.length === 1 && !hasModifier) {
+      void computerAction({ action: "type", text: event.key }, surface);
+      return;
+    }
+    void computerAction({ action: "press", key: computerKey(event, surface) }, surface);
   }
 
   function approvalOptions(approval: Approval): ApprovalOption[] {
@@ -4453,6 +4619,34 @@ function App() {
     }
   }
 
+  // Keep these hooks above the loading/error returns. The app renders once
+  // before botd finishes bootstrapping, so conditional hook placement would
+  // make React crash with minified error #310 on the first successful load.
+  const focusComputerView: ComputerViewMode = computerViewMode;
+  const focusFrameURL =
+    focusComputerView === "desktop" ? desktopFrameURL : computerFrameURL;
+  useEffect(() => {
+    if (!computerViewOpen) {
+      computerFrameFocusPendingRef.current = false;
+      return;
+    }
+    computerFrameFocusPendingRef.current = true;
+  }, [computerViewOpen, focusComputerView]);
+
+  useEffect(() => {
+    if (
+      !computerViewOpen ||
+      !focusFrameURL ||
+      !computerFrameFocusPendingRef.current
+    )
+      return;
+    const frame = window.requestAnimationFrame(() => {
+      computerFrameRef.current?.focus({ preventScroll: true });
+      computerFrameFocusPendingRef.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [computerViewOpen, focusFrameURL]);
+
   if (loading)
     return (
       <div className="loading-screen">
@@ -4496,10 +4690,7 @@ function App() {
         </div>
       </div>
     );
-  const activeComputerView: ComputerViewMode =
-    computerViewMode === "desktop" && data.computer.desktop_ready
-      ? "desktop"
-      : "browser";
+  const activeComputerView: ComputerViewMode = computerViewMode;
   const computerReady =
     data.computer.running &&
     Boolean(data.computer.browser_ready || data.computer.desktop_ready);
@@ -4507,6 +4698,25 @@ function App() {
   const computerState =
     data.computer.state ??
     (computerReady ? "ready" : data.computer.running ? "starting" : "stopped");
+  const computerResources = {
+    cpus: preferences.computer?.cpus ?? 4,
+    ram_gib: preferences.computer?.ram_gib ?? 4,
+    disk_gib: preferences.computer?.disk_gib ?? 25,
+    swap_gib: preferences.computer?.swap_gib ?? 1,
+    os_image: preferences.computer?.os_image ?? "ubuntu-24.04",
+  };
+  const computerResourcePresets = [
+    { value: "light", label: "Light · 2 CPU · 2 GiB · 25 GiB", cpus: 2, ram_gib: 2, disk_gib: 25, swap_gib: 0 },
+    { value: "standard", label: "Standard · 4 CPU · 4 GiB · 25 GiB", cpus: 4, ram_gib: 4, disk_gib: 25, swap_gib: 1 },
+    { value: "roomy", label: "Roomy · 6 CPU · 8 GiB · 50 GiB", cpus: 6, ram_gib: 8, disk_gib: 50, swap_gib: 2 },
+  ];
+  const selectedComputerResourcePreset = computerResourcePresets.find(
+    (preset) =>
+      preset.cpus === computerResources.cpus &&
+      preset.ram_gib === computerResources.ram_gib &&
+      preset.disk_gib === computerResources.disk_gib &&
+      preset.swap_gib === computerResources.swap_gib,
+  )?.value ?? "custom";
   const activeFrameState: ComputerFrameState =
     computerFrameState.surface === activeComputerView
       ? computerFrameState
@@ -4532,11 +4742,7 @@ function App() {
       <button
         className="computer-preview"
         type="button"
-        onClick={() =>
-          computerReady
-            ? void openComputerView()
-            : void ensureComputer()
-        }
+        onClick={() => void openComputerView()}
         aria-label={
           computerReady
             ? "Open live Agent Computer"
@@ -4551,17 +4757,19 @@ function App() {
             {data.computer.url || "agent://workspace"}
           </span>
         </div>
-        {computerFrameURL ? (
+        {activeFrameURL ? (
           <img
             className="preview-frame"
-            src={computerFrameURL}
-            alt="Live Agent Computer"
+            src={activeFrameURL}
+            alt={`Live Agent Computer ${activeComputerView} view`}
           />
         ) : (
           <span className="preview-content">
             <span className="preview-star">✦</span>
             <strong>
-              {computerState === "ready"
+              {computerState === "ready" && activeFrameState.status === "loading"
+                ? "Loading current screen"
+                : computerState === "ready"
                 ? "Computer ready"
                 : computerState === "starting"
                   ? "Starting Chromium"
@@ -4572,7 +4780,9 @@ function App() {
                       : "Computer stopped"}
             </strong>
             <span>
-              {computerState === "ready"
+              {computerState === "ready" && activeFrameState.error
+                ? activeFrameState.error
+                : computerState === "ready"
                 ? "Chromium, terminal and files live in an isolated workspace."
                 : data.computer.detail ??
                   (computerState === "starting"
@@ -5546,8 +5756,11 @@ function App() {
                             }
                           }}
                         >
-                          <span className="onboarding-radio" aria-hidden="true">
-                            {selected ? "✓" : ""}
+                          <span
+                            className={`onboarding-radio${selected ? " selected" : ""}`}
+                            aria-hidden="true"
+                          >
+                            <span>{selected ? "✓" : ""}</span>
                           </span>
                           <span>
                             <strong>{engine.label}</strong>
@@ -5990,9 +6203,7 @@ function App() {
                   >
 					<option value="grok_build">Grok Build</option>
                     <option value="codex_app_server">Codex App Server</option>
-                    <option value="opencode">
-                      OpenCode 1.18.10 · free starter
-                    </option>
+                    <option value="opencode">OpenCode 1.18.10 · starter route</option>
                   </select>
                 </label>
                 <div className="builder-model-field">
@@ -6349,7 +6560,11 @@ function App() {
                     className="computer-desktop-frame"
                     src={desktopFrameURL}
                     alt="Builder's Computer desktop live screen"
-                    onClick={handleDesktopClick}
+                    ref={computerFrameRef}
+                    tabIndex={0}
+                    draggable={false}
+                    onPointerDown={handleDesktopPointerDown}
+                    onKeyDown={handleComputerKeyDown}
                   />
                 ) : (
                   <div className="computer-viewport-empty">
@@ -6383,7 +6598,11 @@ function App() {
                 <img
                   src={computerFrameURL}
                   alt="Builder's Computer browser live screen"
-                  onClick={handleComputerClick}
+                  ref={computerFrameRef}
+                  tabIndex={0}
+                  draggable={false}
+                  onPointerDown={handleComputerPointerDown}
+                  onKeyDown={handleComputerKeyDown}
                 />
               ) : (
                 <div className="computer-viewport-empty">
@@ -6488,7 +6707,11 @@ function App() {
                   onClick={() => void stopComputer()}
                   disabled={computerBusy || !data.computer.running}
                 >
-                  {computerBusy ? "Stopping…" : "Stop computer"}
+                  {computerBusy
+                    ? computerState === "starting" || !data.computer.running
+                      ? "Starting…"
+                      : "Stopping…"
+                    : "Stop computer"}
                 </button>
                 <button
                   className={
@@ -6986,6 +7209,135 @@ function App() {
                   </option>
                 </select>
               </label>
+              <details className="settings-advanced-section computer-resources-settings">
+                <summary>
+                  Computer resources
+                  <span className="settings-summary-value">
+                    {computerResources.cpus} CPU · {computerResources.ram_gib} GiB RAM · {computerResources.disk_gib} GiB disk
+                  </span>
+                </summary>
+                <p className="field-note">
+                  Optional. Colima uses these values for the isolated Linux VM;
+                  Docker Desktop and OrbStack use CPU/RAM/swap as container
+                  limits while their VM disk stays managed by the runtime.
+                </p>
+                <label>
+                  Resource preset
+                  <select
+                    value={selectedComputerResourcePreset}
+                    onChange={(event) => {
+                      const preset = computerResourcePresets.find(
+                        (item) => item.value === event.target.value,
+                      );
+                      if (!preset) return;
+                      void patchPreferences({
+                        computer: {
+                          cpus: preset.cpus,
+                          ram_gib: preset.ram_gib,
+                          disk_gib: preset.disk_gib,
+                          swap_gib: preset.swap_gib,
+                        },
+                      });
+                    }}
+                  >
+                    {computerResourcePresets.map((preset) => (
+                      <option key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </option>
+                    ))}
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <div className="computer-resource-grid">
+                  <label>
+                    CPU
+                    <input
+                      type="number"
+                      min={1}
+                      max={16}
+                      step={1}
+                      value={computerResources.cpus}
+                      onChange={(event) =>
+                        void patchPreferences({
+                          computer: { cpus: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    RAM (GiB)
+                    <input
+                      type="number"
+                      min={2}
+                      max={64}
+                      step={1}
+                      value={computerResources.ram_gib}
+                      onChange={(event) =>
+                        void patchPreferences({
+                          computer: { ram_gib: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Disk (GiB)
+                    <input
+                      type="number"
+                      min={10}
+                      max={500}
+                      step={1}
+                      value={computerResources.disk_gib}
+                      onChange={(event) =>
+                        void patchPreferences({
+                          computer: { disk_gib: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Guest swap (GiB)
+                    <input
+                      type="number"
+                      min={0}
+                      max={16}
+                      step={1}
+                      value={computerResources.swap_gib}
+                      onChange={(event) =>
+                        void patchPreferences({
+                          computer: { swap_gib: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <label>
+                  Linux image
+                  <select
+                    value={computerResources.os_image}
+                    onChange={(event) =>
+                      void patchPreferences({
+                        computer: { os_image: event.target.value },
+                      })
+                    }
+                  >
+                    <option value="ubuntu-24.04">Ubuntu 24.04 LTS (recommended)</option>
+                    <option value="ubuntu-26.04">Ubuntu 26.04 LTS</option>
+                    <option value="debian-13">Debian 13 (Trixie)</option>
+                  </select>
+                </label>
+                <p className="field-note">
+                  Changes apply the next time the Agent Computer starts. A
+                  larger existing Colima disk is never deleted or shrunk; for
+                  example, an existing 100 GiB profile remains 100 GiB when
+                  the setting says 25 GiB. Swap is a small emergency buffer,
+                  not a replacement for RAM.
+                </p>
+                {data.computer.resources && (
+                  <p className="field-note">
+                    Active computer: {data.computer.resources.cpus ?? computerResources.cpus} CPU · {data.computer.resources.memory_gib ?? computerResources.ram_gib} GiB RAM · {data.computer.resources.disk_gib ?? computerResources.disk_gib} GiB disk · {data.computer.resources.swap_gib ?? computerResources.swap_gib} GiB swap
+                  </p>
+                )}
+              </details>
               <div className="runtime-status-card" aria-label="Runtime status">
                 <div>
                   <span className="eyebrow">Active now</span>

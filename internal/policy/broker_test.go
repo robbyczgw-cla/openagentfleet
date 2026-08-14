@@ -11,8 +11,10 @@ import (
 
 var fixedNow = time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
 
+const testWorkspaceRoot = "/tmp/openagentfleet-policy/workspace"
+
 func TestBrokerIsOptionalAndDenyByDefault(t *testing.T) {
-	action := folderAction("/Users/robby/Projects/mybot/README.md", "read")
+	action := folderAction(testWorkspaceRoot+"/README.md", "read")
 	for _, config := range []Config{{}, {Version: CurrentVersion, Enabled: true}} {
 		broker := newTestBroker(t, config)
 		decision, err := broker.Evaluate(context.Background(), action)
@@ -26,10 +28,10 @@ func TestBrokerIsOptionalAndDenyByDefault(t *testing.T) {
 }
 
 func TestSecurityPrecedenceIsDenyThenAskThenAllow(t *testing.T) {
-	action := folderAction("/Users/robby/Projects/mybot/internal/policy/broker.go", "write")
+	action := folderAction(testWorkspaceRoot+"/internal/policy/broker.go", "write")
 	rules := []Rule{
 		folderRule("z-allow", EffectAllow, MatchExact, action.Resource.Target, "write"),
-		folderRule("a-ask", EffectAsk, MatchTree, "/Users/robby/Projects/mybot", "write"),
+		folderRule("a-ask", EffectAsk, MatchTree, testWorkspaceRoot, "write"),
 	}
 	broker := enabledBroker(t, rules...)
 	decision, err := broker.Evaluate(context.Background(), action)
@@ -40,7 +42,7 @@ func TestSecurityPrecedenceIsDenyThenAskThenAllow(t *testing.T) {
 		t.Fatalf("decision = %#v, want ask to outrank allow", decision)
 	}
 
-	rules = append(rules, folderRule("deny", EffectDeny, MatchTree, "/Users/robby/Projects", "write"))
+	rules = append(rules, folderRule("deny", EffectDeny, MatchTree, "/tmp/openagentfleet-policy", "write"))
 	broker = enabledBroker(t, rules...)
 	decision, err = broker.Evaluate(context.Background(), action)
 	if err != nil {
@@ -155,7 +157,7 @@ func TestExpiredRuleIsIgnoredAtBoundary(t *testing.T) {
 }
 
 func TestFolderTraversalAndPrefixTrapAreDenied(t *testing.T) {
-	bad := []string{"/Users/robby/Projects/mybot/../secret", "workspace", "/Users/robby/Projects//mybot"}
+	bad := []string{testWorkspaceRoot + "/../secret", "workspace", testWorkspaceRoot + "//"}
 	for _, path := range bad {
 		rule := folderRule("unsafe", EffectAllow, MatchTree, path, "read")
 		if _, err := New(Config{Version: CurrentVersion, Enabled: true, Rules: []Rule{rule}}); err == nil {
@@ -163,13 +165,13 @@ func TestFolderTraversalAndPrefixTrapAreDenied(t *testing.T) {
 		}
 	}
 
-	broker := enabledBroker(t, folderRule("workspace", EffectAllow, MatchTree, "/Users/robby/Projects/mybot", "read"))
-	decision, err := broker.Evaluate(context.Background(), folderAction("/Users/robby/Projects/mybot-evil/file", "read"))
+	broker := enabledBroker(t, folderRule("workspace", EffectAllow, MatchTree, testWorkspaceRoot, "read"))
+	decision, err := broker.Evaluate(context.Background(), folderAction(testWorkspaceRoot+"-evil/file", "read"))
 	if err != nil || decision.Effect != EffectDeny {
 		t.Fatalf("prefix-trap decision = %#v, error = %v", decision, err)
 	}
 
-	decision, err = broker.Evaluate(context.Background(), folderAction("/Users/robby/Projects/mybot/../secret", "read"))
+	decision, err = broker.Evaluate(context.Background(), folderAction(testWorkspaceRoot+"/../secret", "read"))
 	if err == nil || decision.Effect != EffectDeny || decision.Reason != ReasonInvalidAction {
 		t.Fatalf("unsafe action = %#v, error = %v", decision, err)
 	}
@@ -177,7 +179,7 @@ func TestFolderTraversalAndPrefixTrapAreDenied(t *testing.T) {
 
 func TestWildcardsAreRejectedForEveryScope(t *testing.T) {
 	cases := []Resource{
-		{Kind: ResourceFolder, Target: "/Users/robby/*"},
+		{Kind: ResourceFolder, Target: testWorkspaceRoot + "/*"},
 		{Kind: ResourceBrowserProfile, Target: "profile-*"},
 		{Kind: ResourceNativeApp, Target: "com.example.*"},
 		{Kind: ResourceNetwork, Target: "https://*.example.com"},
@@ -228,7 +230,7 @@ func TestActionHashIsStableAndSensitive(t *testing.T) {
 
 func TestExactScopesCoverAllResourceKinds(t *testing.T) {
 	actions := []Action{
-		folderAction("/Users/robby/Projects/mybot/README.md", "read"),
+		folderAction(testWorkspaceRoot+"/README.md", "read"),
 		{Principal: workerPrincipal(), RunID: "run-1", Resource: Resource{Kind: ResourceBrowserProfile, Target: "profile-1"}, Operation: "navigate"},
 		{Principal: workerPrincipal(), RunID: "run-1", Resource: Resource{Kind: ResourceNativeApp, Target: "com.apple.Terminal"}, Operation: "open"},
 		{Principal: workerPrincipal(), RunID: "run-1", Resource: Resource{Kind: ResourceNetwork, Target: "https://api.github.com"}, Operation: "connect"},
@@ -280,7 +282,7 @@ func TestScopeIsExactOutsideExplicitFolderTree(t *testing.T) {
 }
 
 func TestAuditOmitsParametersAndInvalidRawResource(t *testing.T) {
-	action := folderAction("/Users/robby/Projects/mybot/README.md", "read")
+	action := folderAction(testWorkspaceRoot+"/README.md", "read")
 	action.Parameters = []Parameter{{Name: "opaque", Value: "do-not-store-me"}}
 	broker := enabledBroker(t, folderRule("allow-read", EffectAllow, MatchExact, action.Resource.Target, "read"))
 	decision, err := broker.Evaluate(context.Background(), action)
@@ -340,18 +342,18 @@ func TestAllowFailsClosedWhenExternalAuditFails(t *testing.T) {
 }
 
 func TestConfigIsDefensivelyCloned(t *testing.T) {
-	rule := folderRule("read", EffectAllow, MatchTree, "/Users/robby/Projects/mybot", "read")
+	rule := folderRule("read", EffectAllow, MatchTree, testWorkspaceRoot, "read")
 	config := Config{Version: CurrentVersion, Enabled: true, Rules: []Rule{rule}}
 	broker := newTestBroker(t, config)
 	config.Rules[0].Effect = EffectDeny
 	config.Rules[0].Operations[0] = "write"
-	decision, err := broker.Evaluate(context.Background(), folderAction("/Users/robby/Projects/mybot/README.md", "read"))
+	decision, err := broker.Evaluate(context.Background(), folderAction(testWorkspaceRoot+"/README.md", "read"))
 	if err != nil || decision.Effect != EffectAllow {
 		t.Fatalf("caller mutation reached broker: %#v, error = %v", decision, err)
 	}
 	copyConfig := broker.Config()
 	copyConfig.Rules[0].Effect = EffectDeny
-	decision, _ = broker.Evaluate(context.Background(), folderAction("/Users/robby/Projects/mybot/README.md", "read"))
+	decision, _ = broker.Evaluate(context.Background(), folderAction(testWorkspaceRoot+"/README.md", "read"))
 	if decision.Effect != EffectAllow {
 		t.Fatal("Config() returned aliased rules")
 	}

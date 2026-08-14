@@ -1,3 +1,11 @@
 * text=auto
 *.bat text eol=crlf
 *.sh text eol=lf
+
+### Public repository policy ###
+# Credentials and private runtime state are never committed or encrypted into
+# this repository. Use local environment variables or the CI secret store.
+*.example !filter !diff
+*.example.* !filter !diff
+*.template !filter !diff
+*.sample !filter !diff

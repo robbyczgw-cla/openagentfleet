@@ -32,6 +32,13 @@ func TestDisabledComputerDoesNotMutateDocker(t *testing.T) {
 func TestContainerRunUsesSeparateHostAndContainerPorts(t *testing.T) {
 	workspace := "/tmp/openagentfleet-workspace"
 	docker := NewDocker(workspace, "", true)
+	docker.ConfigureResources(ResourceConfig{
+		CPUs:      6,
+		MemoryGiB: 8,
+		DiskGiB:   50,
+		SwapGiB:   2,
+		OSImage:   "ubuntu-24.04",
+	})
 	docker.ViewPort = 19224
 	docker.ContainerPort = 9223
 
@@ -46,16 +53,24 @@ func TestContainerRunUsesSeparateHostAndContainerPorts(t *testing.T) {
 	if published != "127.0.0.1:19224:9223" {
 		t.Fatalf("published port = %q, want 127.0.0.1:19224:9223", published)
 	}
-	profileMount := "type=bind,source=" + docker.BrowserProfilePath + ",target=/home/agent/.chromium-profile"
+	profileMount := "type=volume,source=" + docker.BrowserProfileVolume + ",target=/home/agent/.chromium-profile"
 	workspaceMount := "type=bind,source=" + workspace + ",target=/workspace"
 	if docker.BrowserProfilePath == filepath.Join(workspace, ".browser-profile") {
 		t.Fatalf("browser profile must not live inside workspace: %q", docker.BrowserProfilePath)
 	}
 	if !containsArg(args, profileMount) {
-		t.Fatalf("container args do not mount controller-owned browser profile: %q", profileMount)
+		t.Fatalf("container args do not mount the durable Docker browser profile volume: %q", profileMount)
+	}
+	if containsArg(args, "type=bind,source="+docker.BrowserProfilePath+",target=/home/agent/.chromium-profile") {
+		t.Fatal("container args still expose the browser profile through a macOS host bind mount")
 	}
 	if !containsArg(args, workspaceMount) {
 		t.Fatalf("container args do not mount workspace: %q", workspaceMount)
+	}
+	for _, want := range []string{"--cpus", "6", "--memory", "8g", "--memory-swap", "10g", "--shm-size", "256m"} {
+		if !containsArg(args, want) {
+			t.Fatalf("container args do not include resource value %q: %q", want, args)
+		}
 	}
 }
 
@@ -67,6 +82,9 @@ func TestBrowserProfileIsPersistentAndOutsideWorkspaceMount(t *testing.T) {
 
 	if first.BrowserProfilePath != restarted.BrowserProfilePath {
 		t.Fatalf("browser profile changed across restart: %q != %q", first.BrowserProfilePath, restarted.BrowserProfilePath)
+	}
+	if first.BrowserProfileVolume != restarted.BrowserProfileVolume || first.BrowserProfileVolume == "" {
+		t.Fatalf("browser profile volume changed or is empty: %q != %q", first.BrowserProfileVolume, restarted.BrowserProfileVolume)
 	}
 	relative, err := filepath.Rel(workspace, first.BrowserProfilePath)
 	if err != nil {
@@ -120,6 +138,28 @@ func TestPrepareBrowserProfileRejectsWorkspacePath(t *testing.T) {
 	docker.BrowserProfilePath = filepath.Join(workspace, "browser-profile")
 	if _, err := docker.prepareBrowserProfile(); err == nil {
 		t.Fatal("workspace browser profile path was accepted")
+	}
+}
+
+func TestClearStaleBrowserProfileLocksIsExactAndIdempotent(t *testing.T) {
+	profile := t.TempDir()
+	for _, name := range []string{"SingletonCookie", "SingletonLock", "SingletonSocket"} {
+		if err := os.WriteFile(filepath.Join(profile, name), []byte("stale"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := clearStaleBrowserProfileLocks(profile); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearStaleBrowserProfileLocks(profile); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stale lock cleanup left %d entries", len(entries))
 	}
 }
 

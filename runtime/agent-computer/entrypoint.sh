@@ -3,7 +3,31 @@ set -euo pipefail
 
 display_number="${DISPLAY:-:99}"
 profile_dir=/home/agent/.chromium-profile
-mkdir -p "${profile_dir}" /workspace
+workspace_dir=/workspace
+runtime_dir=/tmp/agent-runtime
+
+# macOS bind mounts commonly arrive inside the Linux VM as root:root 0755,
+# even when the host directory belongs to the current macOS user. Prepare the
+# app-owned workspace and runtime volume, then run the actual desktop/browser/server as the
+# unprivileged agent user below.
+mkdir -p "${profile_dir}" "${workspace_dir}" "${runtime_dir}"
+# Docker's macOS file-share may reject chmod from inside the Linux VM even
+# though the host user can create files there. Do not make that a startup
+# failure; the exact stale Chromium locks are removed below as root, and all
+# long-lived processes still run as the unprivileged agent user.
+chmod -R a+rwX "${profile_dir}" "${workspace_dir}" 2>/dev/null || true
+chmod 700 "${runtime_dir}"
+chown agent:agent "${runtime_dir}" 2>/dev/null || true
+
+agent_command() {
+  runuser -u agent --preserve-environment -- env \
+    "HOME=/home/agent" \
+    "USER=agent" \
+    "LOGNAME=agent" \
+    "DISPLAY=${display_number}" \
+    "XDG_RUNTIME_DIR=${runtime_dir}" \
+    "$@"
+}
 
 # Docker restarts the same named container without recreating its writable
 # layer. If Xvfb was interrupted, its socket and lock can survive even though
@@ -20,11 +44,12 @@ if [[ "${display_id}" =~ ^[0-9]+$ ]]; then
   fi
 fi
 
-# The Chromium profile is intentionally host-mounted so browser sessions
-# persist across container upgrades. Chromium leaves Singleton* files behind
-# when its container is replaced; the named Agent Computer guarantees there is
-# only one owner, so clear only those stale lock entries before starting it.
-rm -f "${profile_dir}/SingletonCookie" "${profile_dir}/SingletonLock" "${profile_dir}/SingletonSocket"
+# The Chromium profile is intentionally a Docker-managed volume so browser
+# sessions persist across container upgrades without crossing macOS virtiofs.
+# Chromium leaves Singleton* files behind when its container is replaced; the
+# named Agent Computer guarantees there is only one owner, so clear only those
+# stale lock entries before starting it.
+rm -f "${profile_dir}/SingletonCookie" "${profile_dir}/SingletonLock" "${profile_dir}/SingletonSocket" 2>/dev/null || true
 
 # Docker can replace this named computer while Chromium is still winding down.
 # That is not a user crash: its durable profile is deliberately reused by the
@@ -79,11 +104,17 @@ done
 # A real desktop is intentionally part of the computer, not just a hidden
 # browser process. Xfce gives the agent and the human a persistent terminal,
 # file-manager and application surface inside the isolated Linux runtime.
-eval "$(dbus-launch --sh-syntax)"
-startxfce4 >/tmp/xfce.log 2>&1 &
+eval "$(agent_command dbus-launch --sh-syntax)"
+agent_command startxfce4 >/tmp/xfce.log 2>&1 &
 desktop_pid=$!
 
-chromium \
+chromium_binary="${CHROMIUM_BINARY:-/usr/local/bin/chromium}"
+if [[ ! -x "${chromium_binary}" ]]; then
+  echo "Chromium binary is missing: ${chromium_binary}" >&2
+  exit 1
+fi
+
+agent_command "${chromium_binary}" \
   --no-sandbox \
   --test-type \
   --disable-dev-shm-usage \
@@ -98,6 +129,6 @@ chromium \
   about:blank >/tmp/chromium.log 2>&1 &
 chromium_pid=$!
 
-node /opt/agent-computer/computer-server.mjs &
+agent_command node /opt/agent-computer/computer-server.mjs &
 computer_pid=$!
 wait "${computer_pid}"

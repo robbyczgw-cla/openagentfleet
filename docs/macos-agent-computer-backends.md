@@ -32,6 +32,45 @@ detail, not an onboarding choice. Apple `container` is inventoried as an
 opt-in experimental candidate, but is not selectable as an Agent Computer
 backend until its separate adapter passes the same desktop acceptance suite.
 
+## Agent Computer image and resource configuration
+
+The shipped default is **Ubuntu 24.04** (`ubuntu-24.04`). The selector also
+offers **Ubuntu 26.04** (`ubuntu-26.04`) and **Debian 13** (`debian-13`). The
+choice selects the base image used when the Agent Computer image is built; it
+does not change the controller or the browser/desktop view contract.
+
+The standard resource contract is:
+
+| Resource | Default | Optional range |
+| --- | ---: | ---: |
+| CPU | 4 | 1–16 |
+| RAM | 4 GiB | 2–64 GiB |
+| Disk | 25 GiB | 10–500 GiB |
+| Guest swap | 1 GiB | 0–16 GiB |
+
+These are optional per-computer settings. They apply on the next computer
+start, not to an already running instance. Swap is a small emergency buffer,
+not a substitute for RAM; increase RAM for sustained memory pressure.
+
+The values have different meanings depending on the Docker-compatible runtime:
+
+- **Colima:** CPU, RAM and disk configure the dedicated Colima VM. The
+  requested swap is an app-owned swap file inside the Linux guest. If an
+  existing Colima profile already has a larger disk, OpenAgentFleet keeps that
+  disk and never attempts to shrink it; a requested 25 GiB therefore does not
+  turn an existing 100 GiB profile into a smaller disk.
+- **Docker Desktop and OrbStack:** CPU, RAM and swap are passed as per-container
+  limits. The disk value does not resize the runtime's VM disk; Docker Desktop
+  or OrbStack continue to manage that VM storage in their own settings. The
+  host VM may therefore need separate resource configuration even when the
+  Agent Computer limits are correct.
+
+Before Colima provisioning, the controller performs a host free-space
+preflight for the Colima storage and the Agent Computer workspace/profile. If
+the host cannot provide the requested budget, startup stops before the VM or
+container is provisioned and returns an explicit, retryable free-space error.
+This keeps a full disk from appearing as a generic Docker or Chromium failure.
+
 ## First-use product flow
 
 1. The user creates or opens an Agent and chats normally; no computer runtime
@@ -145,18 +184,17 @@ Docker Desktop context:
 brew install colima
 DATA_DIR="$HOME/Library/Application Support/com.openagentfleet.desktop"
 colima --profile openagentfleet start --runtime docker --vm-type vz --cpus 4 --memory 6 --disk 32 \
-  --mount "$DATA_DIR:w" --mount "$HOME/Projects/mybot:w" \
+  --mount "$DATA_DIR:w" --mount "$HOME/Projects/openagentfleet:w" \
   --mount-type virtiofs --activate=false --downloader curl
-docker context create colima-openagentfleet --docker "host=unix:///Users/robby/.colima/openagentfleet/docker.sock"
+docker context create colima-openagentfleet --docker "host=unix://$HOME/.colima/openagentfleet/docker.sock"
 ```
 
-The data-directory mount is required for the native Agent Computer because
-`botd` binds `agent-workspace` and the persistent Chromium profile from that
-directory. A profile that mounts only the source checkout will start Docker
-successfully but reject the later bind mount as invisible inside the VM. If an
-existing dedicated profile has different mounts, stop and restart only that
-profile with the desired mount list before testing; do not change the global
-Docker Desktop context.
+The data-directory mount is required because `botd` bind-mounts the private
+Agent workspace from that directory. Chromium state is deliberately a
+Docker-managed volume inside the VM; its POSIX `Singleton*` locks must not cross
+the macOS virtiofs boundary. If an existing dedicated profile has different
+mounts, stop and restart only that profile with the desired mount list before
+testing; do not change the global Docker Desktop context.
 
 The Go controller keeps the container service on port `9223` and lets the
 host-side proxy port vary with `OPENAGENTFLEET_COMPUTER_PORT` or `-computer-port`.

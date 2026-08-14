@@ -16,6 +16,8 @@ if (typeof controlToken !== "string" || controlToken.length < 32) {
 let browser;
 let page;
 let operation = Promise.resolve();
+let lastBrowserViewStatus;
+let desktopViewport;
 const computerID = randomUUID();
 const nativeHandoffTargets = new Map();
 const execFileAsync = promisify(execFile);
@@ -238,13 +240,15 @@ async function viewStatus() {
   } catch {
     // The page may be between navigations. The configured Xvfb size is a safe fallback.
   }
-  return {
+  const status = {
     ready: true,
     url: activePage.url(),
     title: await activePage.title().catch(() => ""),
     viewport,
     pages: activePage.context().pages().length,
   };
+  lastBrowserViewStatus = status;
+  return status;
 }
 
 function validWebURL(value) {
@@ -307,25 +311,126 @@ async function desktopFrame() {
   }
 }
 
+const xdotoolKeyAliases = {
+  " ": "space",
+  Enter: "Return",
+  Return: "Return",
+  Escape: "Escape",
+  Esc: "Escape",
+  Tab: "Tab",
+  Backspace: "BackSpace",
+  Delete: "Delete",
+  Insert: "Insert",
+  Home: "Home",
+  End: "End",
+  PageUp: "Page_Up",
+  PageDown: "Page_Down",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  CapsLock: "Caps_Lock",
+  NumLock: "Num_Lock",
+  ScrollLock: "Scroll_Lock",
+  PrintScreen: "Print",
+  NumpadEnter: "KP_Enter",
+  NumpadAdd: "KP_Add",
+  NumpadSubtract: "KP_Subtract",
+  NumpadMultiply: "KP_Multiply",
+  NumpadDivide: "KP_Divide",
+  NumpadDecimal: "KP_Decimal",
+  Numpad0: "KP_0",
+  Numpad1: "KP_1",
+  Numpad2: "KP_2",
+  Numpad3: "KP_3",
+  Numpad4: "KP_4",
+  Numpad5: "KP_5",
+  Numpad6: "KP_6",
+  Numpad7: "KP_7",
+  Numpad8: "KP_8",
+  Numpad9: "KP_9",
+  Control: "ctrl",
+  Ctrl: "ctrl",
+  Alt: "alt",
+  Shift: "shift",
+  Meta: "super",
+  OS: "super",
+  Super: "super",
+  AltGraph: "ISO_Level3_Shift",
+};
+const xdotoolKeyAliasLookup = new Map(
+  Object.entries(xdotoolKeyAliases).map(([key, value]) => [key.toLowerCase(), value]),
+);
+
+function normalizeXdotoolKey(value) {
+  const tokens = value.split("+");
+  if (tokens.some((token) => token.length === 0)) {
+    throw new Error("desktop key is invalid");
+  }
+  return tokens
+    .map((token) => xdotoolKeyAliasLookup.get(token.toLowerCase()) ?? token)
+    .join("+");
+}
+
+function desktopCoordinate(value, axis) {
+  const coordinate = Number(value);
+  if (!Number.isFinite(coordinate) || coordinate < 0 || coordinate > 10000) {
+    throw new Error(`desktop ${axis} coordinate is invalid`);
+  }
+  return Math.round(coordinate);
+}
+
+async function desktopStatus() {
+  if (!desktopViewport) {
+    try {
+      const { stdout } = await execFileAsync("xdotool", ["getdisplaygeometry"], {
+        env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" },
+      });
+      const [width, height] = stdout.trim().split(/\s+/).map(Number);
+      if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+        desktopViewport = { width, height };
+      }
+    } catch {
+      // Xvfb is provisioned at this size by the image entrypoint.
+      desktopViewport = { width: 1440, height: 900 };
+    }
+  }
+  return {
+    ...(lastBrowserViewStatus ?? {
+      ready: true,
+      url: "",
+      title: "",
+      pages: 0,
+    }),
+    ready: true,
+    viewport: desktopViewport ?? { width: 1440, height: 900 },
+  };
+}
+
 async function desktopAction(request) {
   const run = (args) => execFileAsync("xdotool", args, { env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" } });
   switch (request.action) {
-    case "click":
-      await run(["mousemove", String(Math.round(Number(request.x))), String(Math.round(Number(request.y))), "click", "1"]);
+    case "click": {
+      const x = desktopCoordinate(request.x, "x");
+      const y = desktopCoordinate(request.y, "y");
+      // --sync makes xdotool wait until the X server has applied the move
+      // before the following click command is dispatched.
+      await run(["mousemove", "--sync", String(x), String(y), "click", "1"]);
       break;
+    }
     case "type":
       if (typeof request.text !== "string") throw new Error("text is required");
       if (request.native_handoff === true) {
         throw new Error("secure handoff is available for browser fields only");
       }
-      await run(["type", "--delay", "1", "--", request.text]);
+      // Give X11 a small per-character interval and clear modifiers first.
+      // A zero-delay burst can race XFCE/Chromium repainting and leave the
+      // next root-window capture stale or black on some virtual displays.
+      await run(["type", "--delay", "1", "--clearmodifiers", "--", request.text]);
       break;
     case "press":
       if (typeof request.key !== "string" || request.key.length > 64) throw new Error("key is required");
-      // Browser/Playwright calls use the familiar "Enter" key name, while
-      // xdotool expects the X11 keysym "Return". Keep the public computer
-      // action contract consistent across the Browser and Desktop surfaces.
-      await run(["key", "--", request.key === "Enter" ? "Return" : request.key]);
+      await run(["key", "--clearmodifiers", "--", normalizeXdotoolKey(request.key)]);
       break;
     case "scroll": {
       const delta = Number(request.delta_y ?? 0);
@@ -336,7 +441,12 @@ async function desktopAction(request) {
     default:
       throw new Error("unsupported desktop action");
   }
-  return viewStatus();
+  // Let the virtual desktop compositor settle before the controller starts
+  // its next frame poll after an input event.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Desktop input does not need a CDP round-trip. Keep the last browser
+  // metadata for the controller response, but report the X11 desktop geometry.
+  return desktopStatus();
 }
 
 async function handle(req, res) {
