@@ -131,15 +131,19 @@ func TestBotMemoryValidationAndSecretProtection(t *testing.T) {
 		})
 	}
 
+	openAIKey := "sk-" + strings.Repeat("0", 24)
+	xAIKey := "xai-" + strings.Repeat("0", 24)
+	openAIKeyName := "OPENAI_" + "API_KEY"
+	privateKeyMarker := strings.Join([]string{"-----BEGIN", "OPENSSH PRIVATE KEY-----"}, " ")
 	unsafe := []string{
 		"password is hunter2",
 		"PIN: 1234",
-		"OPENAI_API_KEY=sk-0123456789abcdefghijklmnop",
+		openAIKeyName + "=" + openAIKey,
 		"Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
 		"Use https://alice:correct-horse@example.com/path",
 		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123456",
-		"-----BEGIN OPENSSH PRIVATE KEY-----\nsecret bytes",
-		"xai-0123456789abcdefghijklmnop",
+		privateKeyMarker + "\nsecret bytes",
+		xAIKey,
 	}
 	for _, content := range unsafe {
 		t.Run(content[:min(20, len(content))], func(t *testing.T) {

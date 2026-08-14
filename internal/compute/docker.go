@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"math"
 	"net"
@@ -17,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +45,7 @@ type Docker struct {
 	RuntimeID      string
 	RuntimeName    string
 	RuntimeDetail  string
+	Resources      ResourceConfig
 	ColimaBinary   string
 	ColimaProfile  string
 	ContainerName  string
@@ -51,10 +55,15 @@ type Docker struct {
 	AllowExecution bool
 	ViewPort       int
 	ContainerPort  int
-	// BrowserProfilePath is controller-owned persistent Chromium state. It must
-	// never live under Workspace because Workspace is bind-mounted into the
-	// untrusted Agent Computer.
+	// BrowserProfilePath is the legacy/controller-side location retained for
+	// migration checks and compatibility with older callers. New containers use
+	// BrowserProfileVolume because Chromium needs POSIX symlink locks that a
+	// macOS virtiofs bind mount cannot reliably provide.
 	BrowserProfilePath string
+	// BrowserProfileVolume is a durable Docker-managed volume inside the local
+	// Colima VM. It keeps Chromium state persistent without exposing its lock
+	// files through a macOS host bind mount.
+	BrowserProfileVolume string
 	// ControlTokenPath is deliberately outside Workspace: Workspace is bind
 	// mounted into the Agent Computer and must never expose the controller
 	// capability token to the guest.
@@ -78,25 +87,26 @@ type Status struct {
 	// State is a product-facing lifecycle value. It prevents clients from
 	// collapsing a stopped runtime, a warming Chromium session, and a broken
 	// provider into the same indefinite "waiting" state.
-	State          string `json:"state"`
-	CanRetry       bool   `json:"can_retry"`
-	Available      bool   `json:"available"`
-	ContainerID    string `json:"container_id,omitempty"`
-	Running        bool   `json:"running"`
-	BrowserReady   bool   `json:"browser_ready"`
-	DesktopReady   bool   `json:"desktop_ready"`
-	Image          string `json:"image"`
-	RuntimeID      string `json:"runtime_id,omitempty"`
-	RuntimeName    string `json:"runtime_name,omitempty"`
-	RuntimeContext string `json:"runtime_context,omitempty"`
-	RuntimeDetail  string `json:"runtime_detail,omitempty"`
-	URL            string `json:"url,omitempty"`
-	Title          string `json:"title,omitempty"`
-	ViewportWidth  int    `json:"viewport_width,omitempty"`
-	ViewportHeight int    `json:"viewport_height,omitempty"`
-	Takeover       bool   `json:"takeover"`
-	AgentControl   bool   `json:"agent_control"`
-	Detail         string `json:"detail,omitempty"`
+	State          string         `json:"state"`
+	CanRetry       bool           `json:"can_retry"`
+	Available      bool           `json:"available"`
+	ContainerID    string         `json:"container_id,omitempty"`
+	Running        bool           `json:"running"`
+	BrowserReady   bool           `json:"browser_ready"`
+	DesktopReady   bool           `json:"desktop_ready"`
+	Image          string         `json:"image"`
+	Resources      ResourceConfig `json:"resources"`
+	RuntimeID      string         `json:"runtime_id,omitempty"`
+	RuntimeName    string         `json:"runtime_name,omitempty"`
+	RuntimeContext string         `json:"runtime_context,omitempty"`
+	RuntimeDetail  string         `json:"runtime_detail,omitempty"`
+	URL            string         `json:"url,omitempty"`
+	Title          string         `json:"title,omitempty"`
+	ViewportWidth  int            `json:"viewport_width,omitempty"`
+	ViewportHeight int            `json:"viewport_height,omitempty"`
+	Takeover       bool           `json:"takeover"`
+	AgentControl   bool           `json:"agent_control"`
+	Detail         string         `json:"detail,omitempty"`
 }
 
 type ViewStatus struct {
@@ -130,26 +140,38 @@ type BrowserAction struct {
 
 func NewDocker(workspace, buildContext string, allowExecution bool) *Docker {
 	stateDir := filepath.Dir(workspace)
+	resources := DefaultResourceConfig()
 	docker := &Docker{
-		Binary:             "docker",
-		RuntimeID:          RuntimeDocker,
-		RuntimeName:        runtimeName(RuntimeDocker),
-		ColimaBinary:       "colima",
-		ColimaProfile:      DefaultColimaProfile,
-		ContainerName:      "openagentfleet-agent-computer",
-		Image:              "openagentfleet-agent-computer:dev",
-		Workspace:          workspace,
-		BuildContext:       buildContext,
-		AllowExecution:     allowExecution,
-		ViewPort:           9223,
-		ContainerPort:      9223,
-		BrowserProfilePath: filepath.Join(stateDir, "agent-computer-browser-profile"),
-		ControlTokenPath:   filepath.Join(stateDir, "agent-computer-control-token"),
+		Binary:               "docker",
+		RuntimeID:            RuntimeDocker,
+		RuntimeName:          runtimeName(RuntimeDocker),
+		ColimaBinary:         "colima",
+		ColimaProfile:        DefaultColimaProfile,
+		ContainerName:        "openagentfleet-agent-computer",
+		Image:                resources.ImageTag(),
+		Resources:            resources,
+		Workspace:            workspace,
+		BuildContext:         buildContext,
+		AllowExecution:       allowExecution,
+		ViewPort:             9223,
+		ContainerPort:        9223,
+		BrowserProfilePath:   filepath.Join(stateDir, "agent-computer-browser-profile"),
+		BrowserProfileVolume: browserProfileVolumeName(stateDir),
+		ControlTokenPath:     filepath.Join(stateDir, "agent-computer-control-token"),
 	}
 	if binary, err := findExecutable("docker"); err == nil {
 		docker.Binary = binary
 	}
 	return docker
+}
+
+func browserProfileVolumeName(stateDir string) string {
+	absolute, err := filepath.Abs(stateDir)
+	if err != nil {
+		absolute = filepath.Clean(stateDir)
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(absolute)))
+	return fmt.Sprintf("openagentfleet-browser-profile-%x", digest[:8])
 }
 
 // ConfigureRuntime changes only this controller's explicit Docker context. It
@@ -161,6 +183,27 @@ func (d *Docker) ConfigureRuntime(selection RuntimeSelection) {
 	d.RuntimeID = selection.ID
 	d.RuntimeName = selection.Name
 	d.RuntimeDetail = selection.Detail
+}
+
+// ConfigureResources applies the validated Agent Computer contract to this
+// controller. It changes the image tag as well, so selecting a different OS
+// can never accidentally reuse a previously built distro image.
+func (d *Docker) ConfigureResources(resources ResourceConfig) {
+	resources = resources.Normalize()
+	d.runtimeMu.Lock()
+	defer d.runtimeMu.Unlock()
+	d.Resources = resources
+	d.Image = resources.ImageTag()
+}
+
+func (d *Docker) resourceConfig() ResourceConfig {
+	d.runtimeMu.RLock()
+	resources := d.Resources
+	d.runtimeMu.RUnlock()
+	if resources.CPUs == 0 {
+		resources = DefaultResourceConfig()
+	}
+	return resources.Normalize()
 }
 
 // ConfigureRemote selects an optional authenticated Agent Computer worker.
@@ -193,7 +236,7 @@ func (d *Docker) remoteEnabled() bool {
 }
 
 func (d *Docker) baseStatus() Status {
-	status := Status{State: ComputerStateUnavailable, Image: d.Image}
+	status := Status{State: ComputerStateUnavailable, Image: d.Image, Resources: d.resourceConfig()}
 	d.applyRuntimeStatus(&status)
 	return status
 }
@@ -396,12 +439,29 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 	if d.remoteEnabled() {
 		return d.remoteLifecycle(ctx, http.MethodPost, "/ensure")
 	}
+	resources := d.resourceConfig()
+	d.runtimeMu.RLock()
+	runtimeID := d.RuntimeID
+	d.runtimeMu.RUnlock()
+	if runtimeID == RuntimeColima {
+		if err := d.checkHostStorage(resources); err != nil {
+			status := d.baseStatus()
+			status.State = ComputerStateError
+			status.CanRetry = true
+			status.Detail = err.Error()
+			return status, err
+		}
+	}
 	if err := os.MkdirAll(d.Workspace, 0o700); err != nil {
 		return Status{}, err
 	}
-	profilePath, err := d.prepareBrowserProfile()
-	if err != nil {
-		return Status{}, err
+	var err error
+	profilePath := d.browserProfilePath()
+	if strings.TrimSpace(d.BrowserProfileVolume) == "" {
+		profilePath, err = d.prepareBrowserProfile()
+		if err != nil {
+			return Status{}, err
+		}
 	}
 	if err := d.ensureRuntimeReady(ctx); err != nil {
 		status := d.baseStatus()
@@ -413,7 +473,7 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		return status, errors.New(status.Detail)
 	}
 	if status.Running {
-		if status.BrowserReady && status.DesktopReady && d.usesControllerBrowserProfile(ctx, profilePath) {
+		if status.Image == d.Image && status.BrowserReady && status.DesktopReady && d.usesControllerBrowserProfile(ctx, profilePath) {
 			return status, nil
 		}
 		// A running container without the view service is an older Agent
@@ -424,11 +484,18 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 			return status, fmt.Errorf("replace stale agent computer: %w", err)
 		}
 	}
+	if strings.TrimSpace(d.BrowserProfileVolume) == "" {
+		if err := clearStaleBrowserProfileLocks(profilePath); err != nil {
+			return status, err
+		}
+	} else if err := d.ensureBrowserProfileVolume(ctx); err != nil {
+		return status, err
+	}
 	if _, err := d.runOutput(ctx, "image", "inspect", d.Image); err != nil {
 		if d.BuildContext == "" {
 			return status, fmt.Errorf("agent image %s is missing and no build context is configured", d.Image)
 		}
-		if _, err := d.runOutput(ctx, "build", "--tag", d.Image, d.BuildContext); err != nil {
+		if _, err := d.runOutput(ctx, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
 			return status, fmt.Errorf("build agent image: %w", err)
 		}
 	}
@@ -477,6 +544,27 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 	return status, errors.New(status.Detail)
 }
 
+func (d *Docker) ensureBrowserProfileVolume(ctx context.Context) error {
+	volume := strings.TrimSpace(d.BrowserProfileVolume)
+	if volume == "" {
+		return nil
+	}
+	if _, err := d.runOutput(ctx, "volume", "create", volume); err != nil {
+		return fmt.Errorf("create persistent Chromium profile volume: %w", err)
+	}
+	return nil
+}
+
+func clearStaleBrowserProfileLocks(profilePath string) error {
+	for _, name := range []string{"SingletonCookie", "SingletonLock", "SingletonSocket"} {
+		path := filepath.Join(profilePath, name)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("clear stale Chromium profile lock %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (d *Docker) ensureRuntimeReady(parent context.Context) error {
 	d.runtimeMu.RLock()
 	runtimeID := d.RuntimeID
@@ -492,33 +580,53 @@ func (d *Docker) ensureRuntimeReady(parent context.Context) error {
 	if strings.TrimSpace(colimaBinary) == "" {
 		colimaBinary = "colima"
 	}
+	resources := d.resourceConfig()
 	mounts, err := d.ensureColimaHostMounts()
 	if err != nil {
 		return err
 	}
-	configExists, configChanged, err := ensureColimaMountConfig(profile, mounts)
+	configExists, mountsChanged, err := ensureColimaMountConfig(profile, mounts)
 	if err != nil {
 		return err
+	}
+	resourceConfigExists, resourcesChanged, actualDiskGiB, err := ensureColimaResourceConfig(profile, resources)
+	if err != nil {
+		return err
+	}
+	configExists = configExists || resourceConfigExists
+	configChanged := mountsChanged || resourcesChanged
+	diskDetail := ""
+	if actualDiskGiB > resources.DiskGiB {
+		diskDetail = fmt.Sprintf("Existing Colima profile keeps its larger %d GiB disk; Colima cannot shrink it to the requested %d GiB", actualDiskGiB, resources.DiskGiB)
 	}
 
 	probeContext, probeCancel := context.WithTimeout(parent, 3*time.Second)
 	probeErr := d.run(probeContext, "info", "--format", "{{.ServerVersion}}")
 	probeCancel()
 	if probeErr == nil {
-		if !configChanged {
-			return nil
+		if configChanged {
+			path, err := findExecutable(colimaBinary)
+			if err != nil {
+				return errors.New("Colima is not installed; use the onboarding installer or run: " + ColimaInstallCommand)
+			}
+			if err := restartColimaProfile(parent, path, profile); err != nil {
+				return err
+			}
 		}
 		path, err := findExecutable(colimaBinary)
 		if err != nil {
 			return errors.New("Colima is not installed; use the onboarding installer or run: " + ColimaInstallCommand)
 		}
-		if err := restartColimaProfile(parent, path, profile); err != nil {
+		if err := configureColimaSwap(parent, path, profile, resources.SwapGiB); err != nil {
 			return err
 		}
 		verifyContext, verifyCancel := context.WithTimeout(parent, 10*time.Second)
 		defer verifyCancel()
 		if err := d.run(verifyContext, "info", "--format", "{{.ServerVersion}}"); err != nil {
 			return fmt.Errorf("Colima restarted but Docker context %s is unavailable: %w", colimaContextName(profile), err)
+		}
+		if diskDetail != "" {
+			d.setRuntimeDetail(diskDetail)
 		}
 		return nil
 	}
@@ -529,7 +637,12 @@ func (d *Docker) ensureRuntimeReady(parent context.Context) error {
 
 	startContext, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
-	args := []string{"start", "--profile", profile, "--activate=false"}
+	args := []string{
+		"start", "--profile", profile, "--activate=false",
+		"--cpus", strconv.Itoa(resources.CPUs),
+		"--memory", strconv.Itoa(resources.MemoryGiB),
+		"--disk", strconv.Itoa(resources.DiskGiB),
+	}
 	if !configExists {
 		for _, mount := range mounts {
 			args = append(args, "--mount", mount+":w")
@@ -547,13 +660,25 @@ func (d *Docker) ensureRuntimeReady(parent context.Context) error {
 
 	selection := stoppedColimaSelection(profile)
 	selection.Detail = "Dedicated Colima profile " + profile + " started on demand"
+	if diskDetail != "" {
+		selection.Detail += ". " + diskDetail
+	}
 	d.ConfigureRuntime(selection)
+	if err := configureColimaSwap(parent, path, profile, resources.SwapGiB); err != nil {
+		return err
+	}
 	verifyContext, verifyCancel := context.WithTimeout(parent, 10*time.Second)
 	defer verifyCancel()
 	if err := d.run(verifyContext, "info", "--format", "{{.ServerVersion}}"); err != nil {
 		return fmt.Errorf("Colima started but Docker context %s is unavailable: %w", selection.Context, err)
 	}
 	return nil
+}
+
+func (d *Docker) setRuntimeDetail(detail string) {
+	d.runtimeMu.Lock()
+	d.RuntimeDetail = detail
+	d.runtimeMu.Unlock()
 }
 
 func restartColimaProfile(parent context.Context, binary, profile string) error {
@@ -581,14 +706,27 @@ func (d *Docker) containerRunArgs(controlToken string) []string {
 		containerPort = 9223
 	}
 	profilePath := d.browserProfilePath()
+	profileMount := "type=bind,source=" + profilePath + ",target=/home/agent/.chromium-profile"
+	if volume := strings.TrimSpace(d.BrowserProfileVolume); volume != "" {
+		profileMount = "type=volume,source=" + volume + ",target=/home/agent/.chromium-profile"
+	}
+	resources := d.resourceConfig()
+	memorySwapGiB := resources.MemoryGiB + resources.SwapGiB
+	if resources.SwapGiB == 0 {
+		memorySwapGiB = resources.MemoryGiB
+	}
 	return []string{
 		"run", "--detach", "--init", "--name", d.ContainerName,
-		"--label", "com.mybot.role=agent-computer",
-		"--label", "com.mybot.computer-view=playwright-cdp-v1",
+		"--label", "com.openagentfleet.role=agent-computer",
+		"--label", "com.openagentfleet.computer-view=playwright-cdp-v1",
 		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort),
+		"--cpus", strconv.Itoa(resources.CPUs),
+		"--memory", fmt.Sprintf("%dg", resources.MemoryGiB),
+		"--memory-swap", fmt.Sprintf("%dg", memorySwapGiB),
+		"--shm-size", "256m",
 		"--env", "COMPUTER_CONTROL_TOKEN=" + controlToken,
 		"--mount", "type=bind,source=" + d.Workspace + ",target=/workspace",
-		"--mount", "type=bind,source=" + profilePath + ",target=/home/agent/.chromium-profile",
+		"--mount", profileMount,
 		"--workdir", "/workspace", d.Image,
 	}
 }
@@ -668,12 +806,20 @@ func (d *Docker) usesControllerBrowserProfile(ctx context.Context, profilePath s
 	if err != nil {
 		return false
 	}
-	expected, err := filepath.Abs(profilePath)
-	if err != nil {
-		return false
+	expected := strings.TrimSpace(d.BrowserProfileVolume)
+	if expected == "" {
+		var err error
+		expected, err = filepath.Abs(profilePath)
+		if err != nil {
+			return false
+		}
 	}
-	actual, err := filepath.Abs(strings.TrimSpace(output))
-	return err == nil && actual == expected
+	actual := strings.TrimSpace(output)
+	if strings.TrimSpace(d.BrowserProfileVolume) != "" {
+		return actual == expected
+	}
+	absolute, err := filepath.Abs(actual)
+	return err == nil && absolute == expected
 }
 
 // DesktopReady checks the controlled Xfce screenshot surface. Raw VNC/noVNC
@@ -774,14 +920,58 @@ func (d *Docker) frame(ctx context.Context, path string) ([]byte, error) {
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("computer frame returned HTTP %d", response.StatusCode)
 	}
-	image, err := io.ReadAll(io.LimitReader(response.Body, 12<<20))
+	frame, err := io.ReadAll(io.LimitReader(response.Body, 12<<20))
 	if err != nil {
 		return nil, err
 	}
-	if len(image) == 0 {
+	if len(frame) == 0 {
 		return nil, errors.New("computer frame is empty")
 	}
-	return image, nil
+	if path == "/desktop-frame" {
+		if err := validateDesktopFrame(frame); err != nil {
+			return nil, err
+		}
+	}
+	return frame, nil
+}
+
+// validateDesktopFrame rejects the transient blank root-window capture that
+// some X11/desktop combinations can produce while Chromium and XFCE repaint
+// after an input event. The client keeps its last good frame when this returns
+// an error, so a transient compositor frame never replaces a usable preview.
+func validateDesktopFrame(frame []byte) error {
+	decoded, err := png.Decode(bytes.NewReader(frame))
+	if err != nil {
+		return fmt.Errorf("computer desktop frame is not a PNG: %w", err)
+	}
+	bounds := decoded.Bounds()
+	if bounds.Dx() < 2 || bounds.Dy() < 2 {
+		return errors.New("computer desktop frame is too small")
+	}
+
+	var minLuminance uint32 = ^uint32(0)
+	var maxLuminance uint32
+	for row := 0; row < 8; row++ {
+		y := bounds.Min.Y + row*bounds.Dy()/8
+		for column := 0; column < 8; column++ {
+			x := bounds.Min.X + column*bounds.Dx()/8
+			r, g, b, _ := decoded.At(x, y).RGBA()
+			luminance := (299*r + 587*g + 114*b) / 1000
+			if luminance < minLuminance {
+				minLuminance = luminance
+			}
+			if luminance > maxLuminance {
+				maxLuminance = luminance
+			}
+		}
+	}
+	// A real Agent Computer always includes a visible XFCE/Chromium surface.
+	// Reject a solid near-black capture, but do not reject a dark web page with
+	// normal browser chrome or a dark desktop containing visible applications.
+	if maxLuminance < 14000 || maxLuminance-minLuminance < 2000 {
+		return errors.New("computer desktop frame is blank while the virtual display repaints")
+	}
+	return nil
 }
 
 func (d *Docker) Action(ctx context.Context, action BrowserAction) (ViewStatus, error) {

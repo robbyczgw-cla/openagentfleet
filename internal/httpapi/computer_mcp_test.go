@@ -107,6 +107,15 @@ func TestCreateMessageForwardsControllerComputerMCPToLeadOnly(t *testing.T) {
 	if calls[0].Options.MCPServers[0].Env[browsermcp.RunIDEnv] != run.ID || calls[0].Options.MCPServers[0].Env[browsermcp.RunTokenEnv] == "" {
 		t.Fatalf("lead MCP capability binding = %#v", calls[0].Options.MCPServers[0].Env)
 	}
+	for _, want := range []string{
+		"OpenAgentFleet computer boundary (mandatory)",
+		"use only the injected openagentfleet-browser-mcp tools",
+		"Never fall back to the host computer",
+	} {
+		if !strings.Contains(calls[0].Options.SystemPrompt, want) {
+			t.Fatalf("lead system prompt missing computer boundary %q: %s", want, calls[0].Options.SystemPrompt)
+		}
+	}
 	if len(calls[1].Options.MCPServers) != 0 {
 		t.Fatalf("worker inherited controller MCP = %#v", calls[1].Options.MCPServers)
 	}

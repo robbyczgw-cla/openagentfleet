@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,48 @@ func TestDockerStartsStoppedColimaWithoutChangingGlobalContext(t *testing.T) {
 	}
 	if docker.Context != "colima-openagentfleet" {
 		t.Fatalf("runtime context = %q", docker.Context)
+	}
+}
+
+func TestDockerStartsColimaWithSelectedResourceFlags(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("COLIMA_HOME", filepath.Join(tempDir, "colima-home"))
+	marker := filepath.Join(tempDir, "started")
+	argsFile := filepath.Join(tempDir, "colima-args")
+	t.Setenv("OPENAGENTFLEET_TEST_COLIMA_MARKER", marker)
+	t.Setenv("OPENAGENTFLEET_TEST_COLIMA_ARGS", argsFile)
+	dockerBinary := filepath.Join(tempDir, "docker")
+	colimaBinary := filepath.Join(tempDir, "colima")
+	if err := os.WriteFile(dockerBinary, []byte("#!/bin/sh\n[ -f \"$OPENAGENTFLEET_TEST_COLIMA_MARKER\" ]\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	colimaScript := `#!/bin/sh
+if [ "$1" = "ssh" ]; then
+  exit 0
+fi
+printf '%s\n' "$@" > "$OPENAGENTFLEET_TEST_COLIMA_ARGS"
+touch "$OPENAGENTFLEET_TEST_COLIMA_MARKER"
+`
+	if err := os.WriteFile(colimaBinary, []byte(colimaScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	docker := NewDocker(filepath.Join(tempDir, "workspace"), "", true)
+	docker.Binary = dockerBinary
+	docker.ConfigureRuntime(stoppedColimaSelection(DefaultColimaProfile))
+	docker.ConfigureResources(ResourceConfig{CPUs: 6, MemoryGiB: 8, DiskGiB: 50, SwapGiB: 2, OSImage: "ubuntu-24.04"})
+	docker.ColimaBinary = colimaBinary
+	if err := docker.ensureRuntimeReady(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"start\n", "--profile\nopenagentfleet\n", "--cpus\n6\n", "--memory\n8\n", "--disk\n50\n", "--activate=false\n"} {
+		if !strings.Contains(string(args), want) {
+			t.Fatalf("Colima args %q do not contain %q", args, want)
+		}
 	}
 }
 

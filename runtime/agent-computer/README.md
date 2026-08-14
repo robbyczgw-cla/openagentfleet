@@ -2,10 +2,14 @@
 
 This image is the first local runtime for the persistent user-scoped Agent Computer.
 
-It is isolated and non-root. It runs a persistent Xfce desktop with Chromium,
-a terminal and file-manager inside Xvfb; Chromium DevTools Protocol is attached
-through Playwright. The Go daemon mounts `/workspace` and
-`/home/agent/.chromium-profile` from the host workspace.
+The desktop, Chromium and computer server run as the unprivileged `agent` user
+inside the isolated runtime. A short-lived root entrypoint only prepares the
+two app-owned mounts before dropping privileges. It runs a persistent Xfce
+desktop with Chromium, a terminal and file-manager inside Xvfb; Chromium DevTools
+Protocol is attached through Playwright. The Go daemon bind-mounts `/workspace`
+from the host and puts `/home/agent/.chromium-profile` in a durable
+Docker-managed volume inside the local runtime. This keeps Chromium's POSIX
+profile locks away from the macOS virtiofs boundary.
 
 The current view contract is:
 
@@ -13,6 +17,25 @@ The current view contract is:
 - `GET /frame` — one PNG viewport frame;
 - `GET /tabs` — current persistent Chromium tabs;
 - `POST /action` — navigate, click, type, key press, scroll, reload, back, or forward.
+
+## Image and resource defaults
+
+The controller builds this image from Ubuntu 24.04 by default. Ubuntu 26.04 and
+Debian 13 are also supported base-image choices. The standard Agent Computer
+resource contract is 4 CPU, 4 GiB RAM, 25 GiB disk and 1 GiB guest swap. The
+controller accepts optional overrides of 1–16 CPU, 2–64 GiB RAM, 10–500 GiB
+disk and 0–16 GiB guest swap; changes apply when the computer starts again.
+
+Runtime behavior is provider-specific. Colima uses CPU, RAM and disk as VM
+resources and configures the requested swap inside the Linux guest. Docker
+Desktop and OrbStack use CPU, RAM and swap as container limits while managing
+their VM resources and VM disk separately. An existing larger Colima disk is
+never shrunk to satisfy a smaller setting.
+
+Before Colima provisioning, `botd` checks host free space for the Colima
+storage and the workspace/runtime volume. Insufficient space blocks startup
+with a retryable free-space error before provisioning begins. Swap is only an
+emergency buffer, not a replacement for RAM.
 
 The app receives full Xfce desktop frames from the container and sends manual
 click/type/key actions through `botd`. The server applies the same explicit
@@ -26,7 +49,7 @@ per-container capability token and adds the explicit human takeover gate before
 forwarding actions. Its owner-only local state file lives outside the
 bind-mounted workspace, so a botd restart can reattach to the same container;
 the token is rotated when that container is recreated or stopped. The browser
-profile survives container recreation.
+profile volume survives container recreation and image upgrades.
 
 ## Native secure handoff
 

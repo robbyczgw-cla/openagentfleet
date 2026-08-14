@@ -67,7 +67,7 @@ func TestInspectUsesOnlyAllowlistedSpecsInStableOrder(t *testing.T) {
 }
 
 func TestInspectTurnsProbeErrorsIntoRedactedUnavailableRecords(t *testing.T) {
-	secret := "ghp_1234567890abcdef"
+	secret := "ghp_" + strings.Repeat("0", 20)
 	runner := &fakeRunner{responses: map[string]fakeResponse{
 		"grok:mcp:list": {
 			output: CommandOutput{Stderr: "Authorization: Bearer " + secret + " api_key=top-secret"},
@@ -159,9 +159,10 @@ func TestExecRunnerRejectsAlteredCommandsAndShells(t *testing.T) {
 }
 
 func TestSafeDetailRedactsCredentialShapes(t *testing.T) {
-	value := "api_key=abc password: hunter2 Authorization: Bearer abcdefghijkl xai-1234567890abcdef eyJhbGciOiJub25l.sig.payload"
+	xAISecret := "xai-" + strings.Repeat("0", 16)
+	value := "api_key=abc password: hunter2 Authorization: Bearer abcdefghijkl " + xAISecret + " eyJhbGciOiJub25l.sig.payload"
 	got := safeDetail(value)
-	for _, secret := range []string{"abc", "hunter2", "abcdefghijkl", "xai-1234567890abcdef", "eyJhbGciOiJub25l.sig.payload"} {
+	for _, secret := range []string{"abc", "hunter2", "abcdefghijkl", xAISecret, "eyJhbGciOiJub25l.sig.payload"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("%q survived redaction in %q", secret, got)
 		}

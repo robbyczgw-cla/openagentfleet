@@ -54,6 +54,53 @@ func TestDefaultsUseColimaWithoutEnablingComputerControl(t *testing.T) {
 	if defaults.Computer.AutoTakeover || defaults.Computer.AutoAgentControl {
 		t.Fatalf("Colima default must not grant computer control: %#v", defaults.Computer)
 	}
+	if defaults.Computer.CPUs != ComputerDefaultCPUs || defaults.Computer.RAMGiB != ComputerDefaultRAMGiB || defaults.Computer.DiskGiB != ComputerDefaultDiskGiB || defaults.Computer.SwapGiB != ComputerDefaultSwapGiB || defaults.Computer.OSImage != OSImageUbuntu2404 {
+		t.Fatalf("computer resource defaults = %#v", defaults.Computer)
+	}
+}
+
+func TestComputerResourcesCanBePatchedIncludingDisabledSwap(t *testing.T) {
+	updated, err := MergePatch(Defaults(), []byte(`{"computer":{"cpus":8,"ram_gib":12,"disk_gib":50,"swap_gib":0,"os_image":"debian-13"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Computer.CPUs != 8 || updated.Computer.RAMGiB != 12 || updated.Computer.DiskGiB != 50 || updated.Computer.SwapGiB != 0 || updated.Computer.OSImage != OSImageDebian13 {
+		t.Fatalf("computer resources = %#v", updated.Computer)
+	}
+}
+
+func TestComputerResourcesValidateBoundsAndImageChoice(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*ComputerDefaults)
+		want string
+	}{
+		{name: "cpus", edit: func(value *ComputerDefaults) { value.CPUs = 0 }, want: "computer.cpus"},
+		{name: "ram", edit: func(value *ComputerDefaults) { value.RAMGiB = 1 }, want: "computer.ram_gib"},
+		{name: "disk", edit: func(value *ComputerDefaults) { value.DiskGiB = 9 }, want: "computer.disk_gib"},
+		{name: "swap", edit: func(value *ComputerDefaults) { value.SwapGiB = 17 }, want: "computer.swap_gib"},
+		{name: "image", edit: func(value *ComputerDefaults) { value.OSImage = "debian-12" }, want: "computer.os_image"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := Defaults()
+			test.edit(&value.Computer)
+			if err := value.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLegacyPreferencesReceiveComputerResourceDefaults(t *testing.T) {
+	legacy := []byte(`{"version":1,"appearance":{"theme":"system","density":"comfortable","font_scale":1},"usage":{"default_worker":"grok","reasoning_effort":"high","permission_mode":"default"},"computer":{"default_surface":"desktop","runtime":"colima","auto_takeover":false,"auto_agent_control":false},"safety":{"retain_transcripts":false,"retain_activity":false},"features":{}}`)
+	got, err := Decode(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Computer.CPUs != ComputerDefaultCPUs || got.Computer.RAMGiB != ComputerDefaultRAMGiB || got.Computer.DiskGiB != ComputerDefaultDiskGiB || got.Computer.SwapGiB != ComputerDefaultSwapGiB || got.Computer.OSImage != ComputerDefaultOSImage {
+		t.Fatalf("legacy computer resources = %#v", got.Computer)
+	}
 }
 
 func TestRemoteComputerURLIsOptionalAndCredentialsAreRejected(t *testing.T) {
@@ -259,7 +306,7 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	want := Defaults()
 	want.Appearance = Appearance{Theme: ThemeDark, Density: DensityCompact, FontScale: 1.15}
 	want.Usage = UsageDefaults{DefaultWorker: ProviderCodexAppServer, ReasoningEffort: ReasoningLow, PermissionMode: PermissionPlan}
-	want.Computer = ComputerDefaults{DefaultSurface: SurfaceBrowser, Runtime: RuntimeAuto}
+	want.Computer = ComputerDefaults{DefaultSurface: SurfaceBrowser, Runtime: RuntimeAuto, CPUs: 6, RAMGiB: 8, DiskGiB: 50, SwapGiB: 2, OSImage: OSImageDebian13}
 	want.Safety = SafetyRetention{RetainTranscripts: true, RetainActivity: true}
 	want.Features = FeatureToggles{LeadWorkerRuntime: true, WorkerIsolation: true, ResearchRuns: true}
 

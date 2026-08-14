@@ -23,6 +23,7 @@ import (
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	resourceDefaults := compute.DefaultResourceConfig()
 	addr := flag.String("addr", envOr("OPENAGENTFLEET_COMPUTER_WORKER_ADDR", "127.0.0.1:9323"), "loopback worker API address")
 	token := flag.String("token", envOr("OPENAGENTFLEET_COMPUTER_WORKER_TOKEN", ""), "worker bearer token; prefer OPENAGENTFLEET_COMPUTER_WORKER_TOKEN")
 	dataDir := flag.String("data-dir", envOr("OPENAGENTFLEET_COMPUTER_WORKER_DATA_DIR", ".openagentfleet-computer"), "worker data directory")
@@ -31,6 +32,11 @@ func main() {
 	runtimeID := flag.String("runtime", envOr("OPENAGENTFLEET_COMPUTER_WORKER_RUNTIME", compute.RuntimeAuto), "Docker-compatible runtime: auto, colima, docker_desktop, or orbstack")
 	computerPort := flag.Int("computer-port", envInt("OPENAGENTFLEET_COMPUTER_WORKER_PORT", 9223), "local Agent Computer view-service port")
 	containerName := flag.String("container-name", envOr("OPENAGENTFLEET_COMPUTER_WORKER_CONTAINER", "openagentfleet-remote-agent-computer"), "worker-owned container name")
+	computerCPUs := flag.Int("cpus", envInt("OPENAGENTFLEET_COMPUTER_WORKER_CPUS", resourceDefaults.CPUs), "Agent Computer CPU count")
+	computerMemory := flag.Int("memory-gib", envInt("OPENAGENTFLEET_COMPUTER_WORKER_MEMORY_GIB", resourceDefaults.MemoryGiB), "Agent Computer memory in GiB")
+	computerDisk := flag.Int("disk-gib", envInt("OPENAGENTFLEET_COMPUTER_WORKER_DISK_GIB", resourceDefaults.DiskGiB), "Agent Computer Colima disk in GiB")
+	computerSwap := flag.Int("swap-gib", envInt("OPENAGENTFLEET_COMPUTER_WORKER_SWAP_GIB", resourceDefaults.SwapGiB), "Agent Computer guest swap in GiB")
+	computerOSImage := flag.String("os-image", envOr("OPENAGENTFLEET_COMPUTER_WORKER_OS_IMAGE", resourceDefaults.OSImage), "Agent Computer OS image: ubuntu-24.04, ubuntu-26.04, or debian-13")
 	flag.Parse()
 
 	if err := validateLoopbackAddr(*addr); err != nil {
@@ -77,6 +83,12 @@ func main() {
 	}
 	docker := compute.NewDocker(workspacePath, contextPath, true)
 	docker.ConfigureRuntime(selection)
+	resources := compute.ResourceConfig{CPUs: *computerCPUs, MemoryGiB: *computerMemory, DiskGiB: *computerDisk, SwapGiB: *computerSwap, OSImage: *computerOSImage}
+	if err := resources.Validate(); err != nil {
+		log.Error("invalid Agent Computer resources", "error", err)
+		os.Exit(2)
+	}
+	docker.ConfigureResources(resources)
 	docker.ContainerName = *containerName
 	docker.ViewPort = *computerPort
 	worker, err := compute.NewRemoteWorker(docker, *token)

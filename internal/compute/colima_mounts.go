@@ -17,7 +17,10 @@ type colimaMountEntry struct {
 // Computer already receives as Docker bind mounts. Colima needs the same
 // paths mounted into its VM before Docker can expose them to the container.
 func (d *Docker) ensureColimaHostMounts() ([]string, error) {
-	candidates := []string{d.Workspace, d.browserProfilePath()}
+	// Chromium state lives in a Docker-managed volume. Binding the profile
+	// through macOS virtiofs breaks Chromium's POSIX Singleton* lock symlinks;
+	// only the user workspace needs a host/Colima mount.
+	candidates := []string{d.Workspace}
 	paths := make([]string, 0, len(candidates))
 	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {

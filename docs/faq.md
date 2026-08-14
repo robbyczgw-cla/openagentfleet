@@ -1,152 +1,97 @@
-# OpenAgentFleet FAQ
+# Agent Computer FAQ
 
-This page answers the questions that usually come up after the short README.
-For exact setup commands and engineering contracts, use the linked guides in
-the [documentation map](README.md).
+This page covers the settings most users do not need to think about on the
+first run. The default is intentionally modest and ready to use.
 
-## Product basics
+## What is the standard configuration?
 
-### Is OpenAgentFleet a cloud service?
+The default Agent Computer is:
 
-The workspace is local-first. The Go controller, SQLite state, conversations,
-memory, approvals and Agent Computer lifecycle run on your Mac. The selected
-AI provider may still send prompts to its own remote inference service through
-its CLI or harness. OpenAgentFleet does not turn that provider traffic into a
-local model.
+- Ubuntu 24.04;
+- 4 CPU;
+- 4 GiB RAM;
+- 25 GiB disk; and
+- 1 GiB guest swap.
 
-### Do I need a Grok or Codex account?
+The computer starts lazily when Computer View or an approved browser/desktop
+task needs it. You do not need to choose an image or tune resources before
+your first conversation.
 
-No single provider is required by the product. Grok Build and Codex App Server
-are optional lead engines. Bundled OpenCode is the local-provider fallback,
-but the models and accounts available to OpenCode still depend on the local
-provider configuration you choose.
+## Which Linux images can I choose?
 
-### What is an Agent?
+The supported choices are Ubuntu 24.04 (the default), Ubuntu 26.04 and Debian
+13. The image is selected in the advanced Agent Computer settings and is built
+into a separate image tag, so changing the choice does not silently reuse the
+previous distribution image.
 
-An Agent is the identity you chat with: its name, role, system context,
-memory, enabled connectors and Computer policy. The default is one Agent and
-one conversation. Additional conversations and more advanced engine settings
-are available without changing that simple starting point.
+## Can I change CPU, RAM, disk or swap?
 
-### What is a worker?
+Yes. Each value is optional and can be changed independently in Settings:
 
-A worker is an optional helper below the selected AI engine. The engine can
-delegate a small, explicit task with its own model, reasoning level, budget and
-permissions. A worker is not a second Agent and does not receive hidden
-credentials or unrestricted host access.
+| Setting | Allowed value |
+| --- | ---: |
+| CPU | 1–16 |
+| RAM | 2–64 GiB |
+| Disk | 10–500 GiB |
+| Guest swap | 0–16 GiB |
 
-## Agent Computer
+Changes apply the next time the Agent Computer starts. A running computer is
+not resized underneath an active session.
 
-### What does the Agent Computer contain?
+## Will a smaller disk setting shrink my existing Colima disk?
 
-It is a separate, non-root Linux desktop with Chromium, Xfce, Terminal and
-Files. Browser and desktop actions happen there, and the app shows its live
-screen. You can stop the run or take control when the agent needs a human for
-a sign-in, CAPTCHA, payment or another sensitive step.
+No. Colima disks are grow-only here. If the dedicated profile already has a
+larger disk, OpenAgentFleet preserves it and reports that fact; it does not
+delete or shrink the profile disk. For example, a profile with 100 GiB stays
+at 100 GiB when the setting is changed to 25 GiB. A new profile can start with
+the requested disk size, and a smaller-than-existing request is safe.
 
-### Is the whole agent isolated from macOS?
+## What happens when the Mac does not have enough free space?
 
-Not yet. The Agent Computer is the browser and desktop boundary. Provider CLIs
-and harnesses currently run as normal processes on macOS. A process already
-running as the same macOS user is outside the Computer boundary. See the
-[security model](architecture.md) for the full scope and residual risks.
+Before starting Colima, OpenAgentFleet checks free space on the filesystem that
+holds Colima and on the Agent Computer workspace/profile location. The check
+includes the requested VM disk and guest swap, image-layer headroom, and
+workspace/profile headroom. If the budget is not available, provisioning is
+blocked before a VM or container is created. The UI shows a specific free-space
+error and a retry path instead of reporting a vague Docker or Chromium error.
 
-### Which container runtime should I use on a Mac?
+Freeing space and retrying is enough; the preflight does not delete unrelated
+files or automatically resize other runtimes.
 
-Colima plus Docker is the recommended open-source route. OpenAgentFleet uses a
-dedicated profile and only its own workspace/profile mounts. Docker Desktop
-and other Docker-compatible contexts are fallbacks. Apple Container and Lume
-are experimental until they pass the same Chromium, desktop-frame, takeover
-and approval tests.
+## Why do Docker Desktop, OrbStack and Colima show different resource behavior?
 
-### Why does the Computer start slowly?
+They provide different resource boundaries even though OpenAgentFleet talks to
+each through Docker-compatible commands:
 
-The Computer is lazy: it is not started just because the app opened. The first
-Computer start may need to start Colima, create the image and launch Xfce and
-Chromium. Later starts reuse the dedicated runtime and profile. The app should
-show a live desktop frame before it labels the Computer ready.
+| Runtime | What OpenAgentFleet controls | What the runtime controls |
+| --- | --- | --- |
+| Colima | VM CPU, VM RAM, VM disk and guest swap | The underlying macOS/VM lifecycle |
+| Docker Desktop | Container CPU, RAM and swap limits | VM CPU/RAM/storage and its disk image |
+| OrbStack | Container CPU, RAM and swap limits | VM/machine CPU/RAM/storage and its disk management |
 
-### The Computer says it is ready, but I see a blank or stale frame. What do I do?
+For Docker Desktop or OrbStack, the Agent Computer's disk setting is not a
+request to resize the runtime's VM disk. If the host runtime has too little
+space or memory, adjust that runtime in its own settings as well. The
+controller still applies the per-container limits so a selected Agent Computer
+cannot quietly consume unlimited CPU or RAM.
 
-Stop the Computer in the app and start it again. If it persists, check the
-dedicated Docker context and container without exposing the Docker socket:
+## Is swap extra performance?
 
-```sh
-docker context show
-docker --context colima-openagentfleet ps
-docker --context colima-openagentfleet logs openagentfleet-agent-computer
-```
+No. Swap is only a small emergency buffer for short memory spikes. The default
+1 GiB helps avoid an abrupt failure when the guest briefly exceeds its RAM, but
+it is much slower than RAM and should not be used to make a workload larger.
+Set guest swap to `0` to disable the explicit app-owned buffer, or increase RAM
+for a workload that regularly needs more memory.
 
-The expected container includes Xfce, Chromium and the Computer view service.
-If Colima or Docker is missing, use the install command shown by the app and
-retry rather than switching the global Docker context manually. Report the
-runtime, the visible error and the relevant run ID; do not include provider
-tokens or passwords.
+On Colima, this is guest swap; macOS host swap is not the same resource. On
+Docker Desktop and OrbStack, the value participates in the container's memory
+and swap limit while the runtime's own VM policy remains separate.
 
-## Approvals, passwords and privacy
+## Do settings change the global Docker context?
 
-### What does “approve” mean?
+No. The selected runtime and its resource settings are applied to the
+controller instance. Colima uses the dedicated `openagentfleet` profile, and
+OpenAgentFleet does not silently switch the global Docker context.
 
-For Grok Build and Codex App Server, sensitive actions can be routed through
-the local controller approval broker. You see the request before it runs and
-can allow or reject it. OpenCode currently keeps its own safe permission
-handling rather than using the same broker; the UI labels that boundary.
-
-### Can I give the agent my password or one-time code?
-
-Use the native secure handoff while you have control of the Computer. Do not
-paste passwords, passkeys, CAPTCHA answers, payment details or one-time codes
-into the chat composer. The secure handoff is kept out of chat state, Teach
-recordings and model context.
-
-### Where are chats and memory stored?
-
-The controller stores conversations, agent memory, transcripts, approvals and
-run artifacts locally. Provider inference and any connector you explicitly
-enable have their own network and retention policies. Review those policies
-before enabling a provider or MCP connector.
-
-## Search, files and phone access
-
-### Is web search always on?
-
-Native search is available to engines that support it. Web Search Plus and
-Hound are separate optional MCP connectors, off until you enable and configure
-them for an Agent. Connector credentials are configured locally and are not
-placed in chat messages.
-
-### Can I attach files and images?
-
-Yes. Use the composer attachment control or drag files and images into the
-chat. The exact file-size and provider limits still apply. Only attach data
-you intend to make available to the selected Agent and provider.
-
-### Can I use OpenAgentFleet from an iPhone or Android phone?
-
-The Mac remains the execution host. Mobile clients are remote clients for the
-Mac controller; they do not run Docker, Chromium or provider CLIs on the
-phone. Pairing is designed for a private Tailscale or equivalent network and
-is optional for the macOS alpha.
-
-## Distribution and support
-
-### Can I download a signed Mac app?
-
-Not yet. The current alpha is source-build software for Apple Silicon macOS.
-Signing, notarization and a public release asset are separate release gates;
-the homepage and README will change when they are genuinely complete.
-
-### How do I report a security problem?
-
-Do not open a public issue for an unpatched vulnerability. Follow
-[SECURITY.md](../SECURITY.md) for the private reporting route, scope and
-expected information. For normal bugs, use the repository issue templates.
-
-### Where should I look next?
-
-- [Build and host lifecycle](mac-host-install.md)
-- [Computer backend details](macos-agent-computer-backends.md)
-- [Agent and memory model](agent-model.md)
-- [Lead and worker architecture](lead-worker-architecture.md)
-- [Fresh-user smoke test](fresh-user-smoke-test.md)
-- [Security and architecture](architecture.md)
+For the full backend contract and advanced isolation decisions, see
+[macOS Agent Computer Backends](macos-agent-computer-backends.md).

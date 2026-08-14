@@ -54,6 +54,32 @@ const (
 	RuntimeOrbStack       = "orbstack"
 	RuntimeAppleContainer = "apple_container"
 
+	// OS image identifiers are preference-level choices. Runtime support and
+	// image provisioning are deliberately handled outside this package.
+	OSImageUbuntu2404 = "ubuntu-24.04"
+	OSImageUbuntu2604 = "ubuntu-26.04"
+	OSImageDebian13   = "debian-13"
+
+	// Computer resource defaults keep the first-run computer useful without
+	// reserving more of the host than necessary. SwapGiB may be set to zero to
+	// disable swap explicitly; the default is a small 1 GiB safety buffer.
+	ComputerDefaultCPUs    = 4
+	ComputerDefaultRAMGiB  = 4
+	ComputerDefaultDiskGiB = 25
+	ComputerDefaultSwapGiB = 1
+	ComputerDefaultOSImage = OSImageUbuntu2404
+
+	// Resource bounds prevent an accidental preferences edit from requesting
+	// an unbounded VM or an unusably small computer.
+	MinComputerCPUs    = 1
+	MaxComputerCPUs    = 16
+	MinComputerRAMGiB  = 2
+	MaxComputerRAMGiB  = 64
+	MinComputerDiskGiB = 10
+	MaxComputerDiskGiB = 500
+	MinComputerSwapGiB = 0
+	MaxComputerSwapGiB = 16
+
 	MinFontScale = 0.9
 	MaxFontScale = 1.2
 
@@ -83,6 +109,7 @@ var (
 	allowedPermissionModes  = set(PermissionDefault, PermissionAuto, PermissionPlan)
 	allowedSurfaces         = set(SurfaceDesktop, SurfaceBrowser)
 	allowedRuntimes         = set(RuntimeAuto, RuntimeDockerDesktop, RuntimeColima, RuntimeOrbStack, RuntimeAppleContainer)
+	allowedOSImages         = set(OSImageUbuntu2404, OSImageUbuntu2604, OSImageDebian13)
 )
 
 // Preferences is the complete versioned OpenAgentFleet preferences document.
@@ -138,6 +165,11 @@ type UsageDefaults struct {
 type ComputerDefaults struct {
 	DefaultSurface string `json:"default_surface"`
 	Runtime        string `json:"runtime"`
+	CPUs           int    `json:"cpus"`
+	RAMGiB         int    `json:"ram_gib"`
+	DiskGiB        int    `json:"disk_gib"`
+	SwapGiB        int    `json:"swap_gib"`
+	OSImage        string `json:"os_image"`
 	// RemoteURL is an optional Advanced setting. Credentials are supplied
 	// out-of-band by the controller and are never stored in preferences.
 	RemoteURL        string `json:"remote_url"`
@@ -210,6 +242,11 @@ type UsagePatch struct {
 type ComputerPatch struct {
 	DefaultSurface   *string `json:"default_surface,omitempty"`
 	Runtime          *string `json:"runtime,omitempty"`
+	CPUs             *int    `json:"cpus,omitempty"`
+	RAMGiB           *int    `json:"ram_gib,omitempty"`
+	DiskGiB          *int    `json:"disk_gib,omitempty"`
+	SwapGiB          *int    `json:"swap_gib,omitempty"`
+	OSImage          *string `json:"os_image,omitempty"`
 	RemoteURL        *string `json:"remote_url,omitempty"`
 	AutoTakeover     *bool   `json:"auto_takeover,omitempty"`
 	AutoAgentControl *bool   `json:"auto_agent_control,omitempty"`
@@ -255,6 +292,11 @@ func Defaults() Preferences {
 		Computer: ComputerDefaults{
 			DefaultSurface:   SurfaceDesktop,
 			Runtime:          RuntimeColima,
+			CPUs:             ComputerDefaultCPUs,
+			RAMGiB:           ComputerDefaultRAMGiB,
+			DiskGiB:          ComputerDefaultDiskGiB,
+			SwapGiB:          ComputerDefaultSwapGiB,
+			OSImage:          ComputerDefaultOSImage,
 			AutoTakeover:     false,
 			AutoAgentControl: false,
 		},
@@ -317,6 +359,13 @@ func (p Preferences) Normalize() Preferences {
 	}
 	if value, ok := canonicalAllowed(runtimeSelection, allowedRuntimes); ok {
 		normalized.Computer.Runtime = value
+	}
+	normalized.Computer.CPUs = normalizeComputerResource(p.Computer.CPUs, MinComputerCPUs, MaxComputerCPUs, ComputerDefaultCPUs)
+	normalized.Computer.RAMGiB = normalizeComputerResource(p.Computer.RAMGiB, MinComputerRAMGiB, MaxComputerRAMGiB, ComputerDefaultRAMGiB)
+	normalized.Computer.DiskGiB = normalizeComputerResource(p.Computer.DiskGiB, MinComputerDiskGiB, MaxComputerDiskGiB, ComputerDefaultDiskGiB)
+	normalized.Computer.SwapGiB = normalizeComputerResource(p.Computer.SwapGiB, MinComputerSwapGiB, MaxComputerSwapGiB, ComputerDefaultSwapGiB)
+	if value, ok := canonicalAllowed(p.Computer.OSImage, allowedOSImages); ok {
+		normalized.Computer.OSImage = value
 	}
 	if remoteURL, ok := normalizeRemoteURL(p.Computer.RemoteURL); ok {
 		normalized.Computer.RemoteURL = remoteURL
@@ -393,6 +442,21 @@ func (p Preferences) Validate() error {
 	if _, ok := canonicalAllowed(runtimeSelection, allowedRuntimes); !ok {
 		return fmt.Errorf("invalid computer.runtime %q", p.Computer.Runtime)
 	}
+	if err := validateComputerResource("computer.cpus", p.Computer.CPUs, MinComputerCPUs, MaxComputerCPUs); err != nil {
+		return err
+	}
+	if err := validateComputerResource("computer.ram_gib", p.Computer.RAMGiB, MinComputerRAMGiB, MaxComputerRAMGiB); err != nil {
+		return err
+	}
+	if err := validateComputerResource("computer.disk_gib", p.Computer.DiskGiB, MinComputerDiskGiB, MaxComputerDiskGiB); err != nil {
+		return err
+	}
+	if err := validateComputerResource("computer.swap_gib", p.Computer.SwapGiB, MinComputerSwapGiB, MaxComputerSwapGiB); err != nil {
+		return err
+	}
+	if _, ok := canonicalAllowed(p.Computer.OSImage, allowedOSImages); !ok {
+		return fmt.Errorf("invalid computer.os_image %q", p.Computer.OSImage)
+	}
 	if _, ok := normalizeRemoteURL(p.Computer.RemoteURL); !ok {
 		return errors.New("computer.remote_url must be an http(s) URL without credentials, query, or fragment")
 	}
@@ -443,6 +507,9 @@ func Decode(data []byte) (Preferences, error) {
 	var result Preferences
 	if err := decodeStrict(data, &result); err != nil {
 		return Defaults(), fmt.Errorf("decode preferences: %w", err)
+	}
+	if err := hydrateMissingComputerResources(data, &result); err != nil {
+		return Defaults(), fmt.Errorf("decode preferences computer resources: %w", err)
 	}
 	if err := result.Validate(); err != nil {
 		return Defaults(), err
@@ -584,6 +651,21 @@ func (p Preferences) ApplyPatch(patch Patch) (Preferences, error) {
 		if patch.Computer.Runtime != nil {
 			result.Computer.Runtime = *patch.Computer.Runtime
 		}
+		if patch.Computer.CPUs != nil {
+			result.Computer.CPUs = *patch.Computer.CPUs
+		}
+		if patch.Computer.RAMGiB != nil {
+			result.Computer.RAMGiB = *patch.Computer.RAMGiB
+		}
+		if patch.Computer.DiskGiB != nil {
+			result.Computer.DiskGiB = *patch.Computer.DiskGiB
+		}
+		if patch.Computer.SwapGiB != nil {
+			result.Computer.SwapGiB = *patch.Computer.SwapGiB
+		}
+		if patch.Computer.OSImage != nil {
+			result.Computer.OSImage = *patch.Computer.OSImage
+		}
 		if patch.Computer.RemoteURL != nil {
 			result.Computer.RemoteURL = *patch.Computer.RemoteURL
 		}
@@ -627,6 +709,38 @@ func (p Preferences) ApplyPatch(patch Patch) (Preferences, error) {
 		return p.Normalize(), err
 	}
 	return result.Normalize(), nil
+}
+
+func hydrateMissingComputerResources(data []byte, result *Preferences) error {
+	var raw struct {
+		Computer *struct {
+			CPUs    *int    `json:"cpus"`
+			RAMGiB  *int    `json:"ram_gib"`
+			DiskGiB *int    `json:"disk_gib"`
+			SwapGiB *int    `json:"swap_gib"`
+			OSImage *string `json:"os_image"`
+		} `json:"computer"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if raw.Computer == nil || raw.Computer.CPUs == nil {
+		result.Computer.CPUs = ComputerDefaultCPUs
+	}
+	if raw.Computer == nil || raw.Computer.RAMGiB == nil {
+		result.Computer.RAMGiB = ComputerDefaultRAMGiB
+	}
+	if raw.Computer == nil || raw.Computer.DiskGiB == nil {
+		result.Computer.DiskGiB = ComputerDefaultDiskGiB
+	}
+	if raw.Computer == nil || raw.Computer.SwapGiB == nil {
+		result.Computer.SwapGiB = ComputerDefaultSwapGiB
+	}
+	if raw.Computer == nil || raw.Computer.OSImage == nil {
+		result.Computer.OSImage = ComputerDefaultOSImage
+	}
+	return nil
 }
 
 func normalizeRemoteURL(value string) (string, bool) {
@@ -679,6 +793,20 @@ func validateModel(value string) error {
 		return errors.New("model contains control characters")
 	}
 	return nil
+}
+
+func validateComputerResource(name string, value, minimum, maximum int) error {
+	if value < minimum || value > maximum {
+		return fmt.Errorf("%s must be between %d and %d", name, minimum, maximum)
+	}
+	return nil
+}
+
+func normalizeComputerResource(value, minimum, maximum, fallback int) int {
+	if value < minimum || value > maximum {
+		return fallback
+	}
+	return value
 }
 
 func isLoopbackHost(host string) bool {
