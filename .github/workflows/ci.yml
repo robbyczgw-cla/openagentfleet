@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go test, race, and vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      # These packages own the Agent Computer boundary and contain no tests
+      # that require Docker, Colima, a provider login, or network credentials.
+      - name: Race test Agent Computer and API boundary
+        run: go test -race ./internal/compute ./internal/httpapi ./internal/browsermcp
+
+      # Keep the small, no-runtime Computer contract visible in CI. The tests
+      # use in-process HTTP servers and validate disabled-mode, port, action,
+      # and local-install boundaries; they never start a container.
+      - name: Smoke test Agent Computer contracts
+        run: >-
+          go test ./internal/compute ./internal/httpapi -count=1
+          -run 'Test(DisabledComputerDoesNotMutateDocker|ContainerRunUsesSeparateHostAndContainerPorts|BrowserActionValidationKeepsNavigationAndInputBounded|DesktopActionValidationStaysWithinTheVirtualDisplay|RemoteRequestRefusesRedirects|RuntimesEndpointReturnsInjectedInventory|ColimaInstallIsExplicitAndLocalOnly)$'
+
+      - name: Vet
+        run: go vet ./...
+
+  client-and-rust:
+    name: Client build and Rust tests
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            client/pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      - name: Install client dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck client
+        working-directory: client
+        run: pnpm exec tsc --noEmit
+
+      - name: Build client
+        working-directory: client
+        run: pnpm exec vite build
+
+      - name: Verify Agent Computer npm lock
+        working-directory: runtime/agent-computer
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck mobile
+        working-directory: mobile
+        run: pnpm exec tsc --noEmit
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: stable
+          cache: true
+
+      - name: Prepare sidecar placeholders for Rust-only tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(rustc --print host-tuple)"
+          sidecar_dir="client/src-tauri/binaries"
+          mkdir -p "$sidecar_dir"
+          for name in botd browser-mcp uv uvx opencode; do
+            placeholder="$sidecar_dir/$name-$target"
+            printf '#!/bin/sh\nexit 0\n' > "$placeholder"
+            chmod 755 "$placeholder"
+          done
+
+      - name: Test Tauri Rust crate
+        run: cargo test --manifest-path client/src-tauri/Cargo.toml --locked
+
+  agent-computer-image:
+    name: Build Agent Computer image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build isolated Computer image
+        run: >-
+          docker buildx build
+          --platform linux/amd64
+          --pull
+          --file runtime/agent-computer/Dockerfile
+          --tag openagentfleet-agent-computer:ci
+          --load
+          runtime/agent-computer

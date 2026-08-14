@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.openagentfleet.botd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__OPENAGENTFLEET_BIN__</string>
+		<string>-addr</string>
+		<string>127.0.0.1:4317</string>
+		<string>-data-dir</string>
+		<string>__OPENAGENTFLEET_DATA__</string>
+		<string>-workspace</string>
+		<string>__OPENAGENTFLEET_WORKSPACE__</string>
+		<string>-build-context</string>
+		<string>__OPENAGENTFLEET_RUNTIME__</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>__OPENAGENTFLEET_PROJECT__</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>OPENAGENTFLEET_ALLOW_COMPUTER_EXECUTION</key>
+		<string>0</string>
+		<key>OPENAGENTFLEET_ALLOW_HARNESS_EXECUTION</key>
+		<string>0</string>
+		<key>PATH</key>
+		<string>__OPENAGENTFLEET_PATH__</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__OPENAGENTFLEET_LOG_DIR__/botd.log</string>
+	<key>StandardErrorPath</key>
+	<string>__OPENAGENTFLEET_LOG_DIR__/botd.error.log</string>
+</dict>
+</plist>

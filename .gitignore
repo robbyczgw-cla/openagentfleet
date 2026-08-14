@@ -1,0 +1,27 @@
+# Local runtime state and disposable QA data. Legacy prefixes are retained only
+# so existing local test databases never become accidental repository files.
+.mybot-data/
+.openfleetbots-*/
+.openagentfleet-data/
+.openagentfleet-*/
+/bin/
+client/node_modules/
+client/dist/
+client/src-tauri/target/
+client/.tauri/
+.DS_Store
+
+# Local credentials and developer overrides
+.env
+.env.*
+!.env.example
+mobile/android/app/debug.keystore
+
+### backup-managed ###
+node_modules/
+.next/
+dist/
+build/
+*.log
+.DS_Store
+### end backup-managed ###

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OpenAgentFleet uses the microphone for optional on-device voice dictation in the chat composer.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>OpenAgentFleet transcribes optional voice dictation on this Mac when on-device recognition is available.</string>
+</dict>
+</plist>

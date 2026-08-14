@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "OpenAgentFleet",
+    "slug": "openagentfleet-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "openagentfleet",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.openagentfleet.mobile"
+    },
+    "android": {
+      "package": "com.openagentfleet.mobile"
+    },
+    "plugins": ["expo-secure-store"]
+  }
+}

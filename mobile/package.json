@@ -1,0 +1,24 @@
+{
+  "name": "openagentfleet-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "doctor": "npx expo-doctor"
+  },
+  "dependencies": {
+    "expo": "^57.0.12",
+    "expo-secure-store": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-sse": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.8",
+    "typescript": "~6.0.3"
+  }
+}

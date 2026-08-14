@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://openai.com/**" },
+        { "url": "https://*.openai.com/**" },
+        { "url": "https://chatgpt.com/**" },
+        { "url": "https://*.chatgpt.com/**" },
+        { "url": "https://x.ai/**" },
+        { "url": "https://*.x.ai/**" }
+      ]
+    }
+  ]
+}
