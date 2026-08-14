@@ -115,6 +115,74 @@ jobs:
       - name: Test Tauri Rust crate
         run: cargo test --manifest-path client/src-tauri/Cargo.toml --locked
 
+  linux-client:
+    name: Linux client and Rust checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      - name: Install client dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and build client
+        working-directory: client
+        run: |
+          pnpm exec tsc --noEmit
+          pnpm exec vite build
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: stable
+          cache: true
+
+      - name: Prepare sidecar placeholders for Rust-only tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(rustc --print host-tuple)"
+          sidecar_dir="client/src-tauri/binaries"
+          mkdir -p "$sidecar_dir"
+          for name in botd browser-mcp uv uvx opencode; do
+            placeholder="$sidecar_dir/$name-$target"
+            printf '#!/bin/sh\nexit 0\n' > "$placeholder"
+            chmod 755 "$placeholder"
+          done
+
+      - name: Test Linux Tauri crate
+        run: cargo test --manifest-path client/src-tauri/Cargo.toml --locked
+
+      - name: Validate Linux sidecar script
+        run: bash -n scripts/build-tauri-sidecar.sh
+
   agent-computer-image:
     name: Build Agent Computer image
     runs-on: ubuntu-latest

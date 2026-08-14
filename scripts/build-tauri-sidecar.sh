@@ -3,16 +3,33 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 target_triple="$(rustc --print host-tuple)"
+target_os=""
+go_arch=""
+expected_arch=""
 
 case "$target_triple" in
   aarch64-apple-darwin)
+    target_os="darwin"
     go_arch="arm64"
+    expected_arch="arm64"
     ;;
   x86_64-apple-darwin)
+    target_os="darwin"
     go_arch="amd64"
+    expected_arch="x86_64"
+    ;;
+  aarch64-unknown-linux-gnu)
+    target_os="linux"
+    go_arch="arm64"
+    expected_arch="aarch64"
+    ;;
+  x86_64-unknown-linux-gnu)
+    target_os="linux"
+    go_arch="amd64"
+    expected_arch="x86-64"
     ;;
   *)
-    printf 'OpenAgentFleet currently packages the botd sidecar for macOS only (got %s).\n' "$target_triple" >&2
+    printf 'OpenAgentFleet currently packages desktop sidecars for macOS and GNU/Linux (got %s).\n' "$target_triple" >&2
     exit 1
     ;;
 esac
@@ -47,33 +64,42 @@ if [[ "$opencode_version" != "$opencode_version_pin" ]]; then
   exit 1
 fi
 
-case "$go_arch" in
-  arm64)
-    expected_arch="arm64"
-    ;;
-  amd64)
-    expected_arch="x86_64"
-    ;;
-esac
+check_binary_arch() {
+  local tool="$1"
+  local tool_arches
+  case "$target_os" in
+    darwin)
+      tool_arches="$(lipo -archs "$tool" 2>/dev/null || true)"
+      if [[ " $tool_arches " != *" $expected_arch "* ]]; then
+        printf '%s does not contain the required %s architecture.\n' "$tool" "$expected_arch" >&2
+        exit 1
+      fi
+      ;;
+    linux)
+      tool_arches="$(file -b "$tool" 2>/dev/null || true)"
+      if [[ "$tool_arches" != *"$expected_arch"* ]]; then
+        printf '%s is not a compatible GNU/Linux %s executable (%s).\n' "$tool" "$expected_arch" "$tool_arches" >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
 for tool in "$uv_binary" "$uvx_binary" "$opencode_binary"; do
-  tool_arches="$(lipo -archs "$tool" 2>/dev/null || true)"
-  if [[ " $tool_arches " != *" $expected_arch "* ]]; then
-    printf '%s does not contain the required %s architecture.\n' "$tool" "$expected_arch" >&2
-    exit 1
-  fi
+  check_binary_arch "$tool"
 done
 
 sidecar_dir="$repo_root/client/src-tauri/binaries"
 sidecar_path="$sidecar_dir/botd-$target_triple"
 mkdir -p "$sidecar_dir"
 
-GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOOS=darwin GOARCH="$go_arch" \
+GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOOS="$target_os" GOARCH="$go_arch" \
   go build -trimpath -buildvcs=false -o "$sidecar_path" "$repo_root/cmd/botd"
 chmod 755 "$sidecar_path"
 printf 'Built botd sidecar: %s\n' "$sidecar_path"
 
 browser_mcp_path="$sidecar_dir/browser-mcp-$target_triple"
-GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOOS=darwin GOARCH="$go_arch" \
+GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOOS="$target_os" GOARCH="$go_arch" \
   go build -trimpath -buildvcs=false -o "$browser_mcp_path" "$repo_root/cmd/openagentfleet-browser-mcp"
 chmod 755 "$browser_mcp_path"
 printf 'Built Agent Computer MCP sidecar: %s\n' "$browser_mcp_path"

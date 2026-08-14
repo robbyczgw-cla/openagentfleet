@@ -351,7 +351,7 @@ func (d *Docker) probeStatus(ctx context.Context) Status {
 	result.Available = true
 	result.State = ComputerStateStopped
 	result.CanRetry = true
-	output, err := d.runOutput(statusContext, "ps", "--filter", "name=^/"+d.ContainerName+"$", "--format", "{{.ID}}|{{.Image}}|{{.Status}}")
+	output, err := d.runOutput(statusContext, "ps", "--all", "--filter", "name=^/"+d.ContainerName+"$", "--format", "{{.ID}}|{{.Image}}|{{.Status}}")
 	if err == nil {
 		fields := strings.Split(strings.TrimSpace(output), "|")
 		if len(fields) >= 3 {
@@ -482,6 +482,14 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		// below Workspace cannot survive this security migration.
 		if err := d.stop(ctx); err != nil {
 			return status, fmt.Errorf("replace stale agent computer: %w", err)
+		}
+	} else if status.ContainerID != "" {
+		// A failed or interrupted start leaves the named container behind in
+		// Docker. Treat that exact, stopped container as stale before issuing
+		// the next `docker run`; otherwise Docker rejects the fresh start with
+		// a name-conflict error and the UI can never recover from it.
+		if err := d.stop(ctx); err != nil {
+			return status, fmt.Errorf("remove stale agent computer: %w", err)
 		}
 	}
 	if strings.TrimSpace(d.BrowserProfileVolume) == "" {
