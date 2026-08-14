@@ -12,7 +12,9 @@ All notable OpenAgentFleet changes are recorded here.
   limitations in the README and maintained documentation.
 - Added release hygiene checks for macOS signing, notarization and DMG hashes.
 
-## 0.1.0-alpha (private, unreleased)
+## 0.1.0-alpha (public prerelease)
 
-The first private Apple Silicon macOS alpha. No public download or signed
-release asset exists yet.
+The first public Apple Silicon macOS alpha. The signed and notarized DMG and
+matching SHA-256 checksum are published on the
+[GitHub release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.1.0-alpha).
+This release is not feature-complete or production-ready.

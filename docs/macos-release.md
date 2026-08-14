@@ -1,8 +1,9 @@
 # macOS release runbook
 
-OpenAgentFleet is currently a private, source-build alpha. This runbook is the
-gate for the first signed macOS release; it deliberately does not publish a
-repository or release by itself.
+OpenAgentFleet is an open-source public alpha. This runbook documents the
+reproducible release gate for macOS distribution and the steps used to publish
+future signed builds. The public `v0.1.0-alpha` release has already passed the
+Developer ID, notarization, stapling, Gatekeeper, and checksum checks below.
 
 ## Measured state of the current checkout
 
@@ -10,10 +11,12 @@ repository or release by itself.
 - Target: Apple Silicon macOS.
 - The normal Tauri configuration uses `signingIdentity: "-"` for local
   development, which produces an ad-hoc signature.
-- The current keychain has an Apple Development identity, but no verified
-  `Developer ID Application` identity.
-- The existing local DMG is therefore a debug/alpha artifact, not a release
-  asset. It has a SHA-256 hash, but it is not notarized.
+- A verified `Developer ID Application` identity and Team Identifier were used
+  for the public alpha.
+- A notarization submission was accepted by Apple, and the ticket was stapled
+  to both the app and DMG.
+- The public GitHub prerelease contains the signed Apple Silicon DMG and its
+  matching SHA-256 checksum file.
 
 Do not change the default Tauri identity merely to make a local build look
 released. Use the release override below only after the correct distribution
@@ -21,8 +24,8 @@ certificate is installed.
 
 ## Required gates
 
-1. Start from a reviewed commit on the private `main` branch. The tree must be
-   clean and the exact commit must be recorded beside the artifact.
+1. Start from a reviewed commit on the `main` branch. The tree must be clean
+   and the exact commit must be recorded beside the artifact.
 2. Run the code and packaging checks from [CI and QA](ci-qa.md), plus the fresh
    native smoke checklist.
 3. Install a valid **Developer ID Application** certificate for the Apple team
@@ -32,9 +35,8 @@ certificate is installed.
 5. Build with the release identity override, verify the app signature, submit
    the DMG to Apple, staple the ticket, and validate it.
 6. Generate a SHA-256 file from the final DMG after notarization/stapling.
-7. Only then create a draft GitHub release. The repository may remain private
-   while invited testers validate the asset. Making either repository public is
-   a separate, explicit decision.
+7. Only then create a public GitHub prerelease with clear architecture and
+   alpha notes.
 
 ## Check the signing prerequisite
 
@@ -84,12 +86,14 @@ xcrun notarytool submit "$DMG" \
   --keychain-profile openagentfleet-notary --wait
 xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
 ```
 
 If using an App Store Connect API key instead, use the documented `notarytool`
 `--key`/`--issuer`/`--key-id` form and keep the `.p8` file outside this repo.
 
-## Checksum and private draft release
+## Checksum and public prerelease
 
 Hash the final, notarized DMG:
 
@@ -98,18 +102,21 @@ shasum -a 256 "$DMG" > SHA256SUMS
 cat SHA256SUMS
 ```
 
-Only after the signature, ticket and checksum pass may a maintainer create a
-private draft release for invited testers:
+The current public alpha is [`v0.1.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.1.0-alpha).
+It publishes the Apple Silicon DMG and the matching `SHA256SUMS` file.
+
+For a future release, publish only after the signature, ticket, Gatekeeper and
+checksum gates pass:
 
 ```sh
 gh release create v0.1.0-alpha \
   "$DMG#OpenAgentFleet 0.1.0 Apple Silicon DMG" \
   SHA256SUMS \
   --repo robbyczgw-cla/openagentfleet \
-  --draft \
-  --title 'OpenAgentFleet 0.1.0 alpha'
+  --title 'OpenAgentFleet vX.Y.Z alpha' \
+  --prerelease
 ```
 
-Do not run the final release command until the artifact is signed and
-notarized. A GitHub release in a private repository is still not a public
-download; repository visibility must be changed separately and deliberately.
+The current `v0.1.0-alpha` is public, Apple Silicon-only, and intentionally not
+a production stability promise. Keep the alpha label until the remaining
+runtime, update, and platform gates are complete.
