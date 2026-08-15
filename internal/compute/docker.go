@@ -278,6 +278,10 @@ func (d *Docker) runOutput(ctx context.Context, args ...string) (string, error) 
 	return runOutput(ctx, d.Binary, d.commandArgs(args...)...)
 }
 
+func (d *Docker) runOutputWithTimeout(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
+	return runOutputWithTimeout(ctx, timeout, d.Binary, d.commandArgs(args...)...)
+}
+
 func (d *Docker) Status(ctx context.Context) Status {
 	d.statusMu.Lock()
 	if d.statusRunning {
@@ -503,7 +507,7 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		if d.BuildContext == "" {
 			return status, fmt.Errorf("agent image %s is missing and no build context is configured", d.Image)
 		}
-		if _, err := d.runOutput(ctx, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
+		if _, err := d.runOutputWithTimeout(ctx, 15*time.Minute, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
 			return status, fmt.Errorf("build agent image: %w", err)
 		}
 	}
@@ -1469,7 +1473,11 @@ func run(parent context.Context, program string, args ...string) error {
 }
 
 func runOutput(parent context.Context, program string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	return runOutputWithTimeout(parent, 2*time.Minute, program, args...)
+}
+
+func runOutputWithTimeout(parent context.Context, timeout time.Duration, program string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	command := newCommandContext(ctx, program, args...)
 	output, err := command.CombinedOutput()
