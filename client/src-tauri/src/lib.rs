@@ -815,9 +815,11 @@ pub fn run() {
 mod tests {
     use super::{
         append_bounded_stderr, botd_health_response, new_local_api_token,
-        sanitize_startup_diagnostic, startup_error_with_diagnostic, terminate_owned_child,
-        validate_prompt_request, STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
+        sanitize_startup_diagnostic, startup_error_with_diagnostic, validate_prompt_request,
+        STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
     };
+    #[cfg(target_os = "macos")]
+    use super::terminate_owned_child;
     #[cfg(target_os = "macos")]
     use std::process::Command;
     use std::{
