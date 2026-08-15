@@ -282,6 +282,10 @@ func (d *Docker) runOutputWithTimeout(ctx context.Context, timeout time.Duration
 	return runOutputWithTimeout(ctx, timeout, d.Binary, d.commandArgs(args...)...)
 }
 
+func (d *Docker) runOutputWithTimeoutEnv(ctx context.Context, timeout time.Duration, env []string, args ...string) (string, error) {
+	return runOutputWithTimeoutEnv(ctx, timeout, env, d.Binary, d.commandArgs(args...)...)
+}
+
 func (d *Docker) Status(ctx context.Context) Status {
 	d.statusMu.Lock()
 	if d.statusRunning {
@@ -507,7 +511,17 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		if d.BuildContext == "" {
 			return status, fmt.Errorf("agent image %s is missing and no build context is configured", d.Image)
 		}
-		if _, err := d.runOutputWithTimeout(ctx, 15*time.Minute, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
+		buildEnv := []string(nil)
+		buildxContext, buildxCancel := context.WithTimeout(ctx, 15*time.Second)
+		_, buildxErr := d.runOutputWithTimeout(buildxContext, 15*time.Second, "buildx", "version")
+		buildxCancel()
+		if buildxErr != nil {
+			// Some Linux Docker packages ship without the buildx CLI plugin. Keep
+			// the local fallback usable there; Docker Desktop and Colima continue
+			// to use BuildKit when buildx is available.
+			buildEnv = []string{"DOCKER_BUILDKIT=0"}
+		}
+		if _, err := d.runOutputWithTimeoutEnv(ctx, 15*time.Minute, buildEnv, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
 			return status, fmt.Errorf("build agent image: %w", err)
 		}
 	}
@@ -1477,9 +1491,16 @@ func runOutput(parent context.Context, program string, args ...string) (string, 
 }
 
 func runOutputWithTimeout(parent context.Context, timeout time.Duration, program string, args ...string) (string, error) {
+	return runOutputWithTimeoutEnv(parent, timeout, nil, program, args...)
+}
+
+func runOutputWithTimeoutEnv(parent context.Context, timeout time.Duration, env []string, program string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	command := newCommandContext(ctx, program, args...)
+	if len(env) > 0 {
+		command.Env = append(os.Environ(), env...)
+	}
 	output, err := command.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 	if err != nil && text != "" {
