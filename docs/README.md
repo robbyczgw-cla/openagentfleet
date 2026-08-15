@@ -15,6 +15,7 @@ not earned yet.
 | [Agent model](agent-model.md) | Adopted chat-first product contract: one workspace engine, Agents, memory, Builder, and lazy Computer | Current product contract |
 | [Workspace engine and optional workers](lead-worker-architecture.md) | Internal controller/engine/worker boundary behind the simple product UX | Current implementation + advanced contract |
 | [Agent Computer backends](macos-agent-computer-backends.md) | Lazy local Computer lifecycle; Colima/Docker, VM, and macOS backend decisions | Implemented backend + product roadmap |
+| [Windows desktop track](windows-desktop.md) | Windows/Tauri/WebView2/Docker Desktop groundwork and live-release gates | In development |
 | [Remote Agent Computer worker](remote-computer-worker.md) | Optional second-host Docker/Colima worker over Tailscale | Implemented optional path |
 | [Remote Mac architecture](remote-mac-architecture.md) | Network boundary, Tailscale, and mobile safety rules | Current topology + target boundary |
 | [Mobile remote protocol](mobile-remote.md) | Pairing, device identity, API allowlist, and rollout phases | Implemented alpha + target contract |
