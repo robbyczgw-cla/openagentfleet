@@ -1,0 +1,16 @@
+{
+  "name": "OpenAgentFleet",
+  "user": "ubuntu",
+  "install": "go mod download && pnpm --dir client install --frozen-lockfile && pnpm --dir mobile install --frozen-lockfile && (cd runtime/agent-computer && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)",
+  "terminals": [
+    {
+      "name": "botd controller",
+      "command": "go run ./cmd/botd"
+    },
+    {
+      "name": "client dev server",
+      "command": "pnpm --dir client dev"
+    }
+  ],
+  "ports": [1420, 4317]
+}
