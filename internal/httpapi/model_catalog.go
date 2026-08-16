@@ -58,6 +58,7 @@ func buildModelCatalog(capabilities []domain.Capability, auth []harness.AuthStat
 	codexAuth, codexFound := authFor(harness.CodexAppServerProvider)
 	codexReady, codexState, codexReason := ready(capabilityAvailable(harness.CodexAppServerProvider), codexAuth, codexFound, true)
 	openCodeReady, openCodeState, openCodeReason := ready(capabilityAvailable("opencode"), harness.AuthStatus{}, false, false)
+	piReady, piState, piReason := ready(capabilityAvailable("pi"), harness.AuthStatus{}, false, false)
 
 	return []domain.ModelCatalogEntry{
 		{
@@ -114,6 +115,46 @@ func buildModelCatalog(capabilities []domain.Capability, auth []harness.AuthStat
 			AuthMode: "local", AuthLabel: "OpenCode provider configuration", AuthState: openCodeState,
 			Subscription: "Configure the OpenCode Go provider locally", Available: openCodeReady,
 			DisabledReason: openCodeReason, ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+			ServiceTiers: []string{"default"},
+		},
+		{
+			Harness: "pi", Provider: "pi", Model: "", Label: "Pi automatic",
+			Detail: "Use the model already configured in Pi", Billing: "Uses your local Pi login and provider configuration",
+			AuthMode: "local", AuthLabel: "Pi login (`pi /login`)", AuthState: piState,
+			Subscription: "Configure providers locally with Pi", Available: piReady,
+			DisabledReason: piReason, ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+			ServiceTiers: []string{"default"},
+		},
+		{
+			Harness: "pi", Provider: "pi", Model: "xai/grok-4.3", Label: "Pi · xAI Grok 4.3",
+			Detail: "Runs through Pi RPC as xai/grok-4.3, not the Grok Build harness", Billing: "Uses the xAI key stored by Pi (`pi /login` or XAI_API_KEY)",
+			AuthMode: "local", AuthLabel: "Pi login (`pi /login`)", AuthState: piState,
+			Subscription: "Pi xAI provider; this is not Grok Build OAuth", Available: piReady,
+			DisabledReason: piReason, ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+			ServiceTiers: []string{"default"},
+		},
+		{
+			Harness: "pi", Provider: "pi", Model: "anthropic/claude-sonnet-4.6", Label: "Pi · Claude Sonnet 4.6",
+			Detail: "Runs through Pi RPC as anthropic/claude-sonnet-4.6", Billing: "Uses the Anthropic key stored by Pi",
+			AuthMode: "local", AuthLabel: "Pi login (`pi /login`)", AuthState: piState,
+			Subscription: "Pi Anthropic provider", Available: piReady,
+			DisabledReason: piReason, ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+			ServiceTiers: []string{"default"},
+		},
+		{
+			Harness: "pi", Provider: "pi", Model: "openai/gpt-5.5", Label: "Pi · GPT-5.5",
+			Detail: "Runs through Pi RPC as openai/gpt-5.5, not Codex App Server", Billing: "Uses the OpenAI key stored by Pi",
+			AuthMode: "local", AuthLabel: "Pi login (`pi /login`)", AuthState: piState,
+			Subscription: "Pi OpenAI provider; this is not ChatGPT OAuth", Available: piReady,
+			DisabledReason: piReason, ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+			ServiceTiers: []string{"default"},
+		},
+		{
+			Harness: "pi", Provider: "pi", Model: "deepseek/deepseek-v4-flash", Label: "Pi · DeepSeek V4 Flash",
+			Detail: "Runs through Pi RPC as deepseek/deepseek-v4-flash, not bundled OpenCode", Billing: "Uses the DeepSeek key stored by Pi",
+			AuthMode: "local", AuthLabel: "Pi login (`pi /login`)", AuthState: piState,
+			Subscription: "Pi DeepSeek provider", Available: piReady,
+			DisabledReason: piReason, ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
 			ServiceTiers: []string{"default"},
 		},
 	}

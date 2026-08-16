@@ -104,6 +104,7 @@ var (
 		ProviderGrok,
 		ProviderOpenCode,
 		ProviderCodexAppServer,
+		ProviderPi,
 	)
 	allowedReasoningEfforts = set(ReasoningLow, ReasoningMedium, ReasoningHigh, ReasoningXHigh, ReasoningMax)
 	allowedPermissionModes  = set(PermissionDefault, PermissionAuto, PermissionPlan)
@@ -770,6 +771,9 @@ func defaultModelForProvider(provider string) string {
 		return "grok-4.6"
 	case ProviderOpenCode:
 		return "opencode/deepseek-v4-flash-free"
+	case ProviderPi:
+		// Empty means use Pi's configured default after `pi /login`.
+		return ""
 	default:
 		// Codex App Server owns its default model selection. An empty model is
 		// intentional and means "use the connected Codex account default".

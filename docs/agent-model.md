@@ -20,10 +20,12 @@ One local Agent Computer, only when an Agent needs it
 
 - An **Agent** is the Bot the user names, chats with, and edits.
 - An **engine** is the workspace-wide AI runtime chosen once in Settings. It
-  is backed by an installed provider such as Grok Build, Codex App Server, or
-  OpenCode. Internally, this is the selected *lead harness*.
+  is backed by an installed provider such as Grok Build, Codex App Server,
+  bundled OpenCode, or Pi. Internally, this is the selected *lead harness*.
+  The default remains Grok Build (`grok-4.6`); Pi is opt-in.
 - The **Agent Computer** is the visible Chromium/Linux desktop with Files and
-  Terminal. It is started only when it is needed.
+  Terminal. It is started only when it is needed, and only for engines that
+  actually receive Computer MCP. A Pi engine does not.
 - A **worker** is an optional, hidden advanced helper. It is not another Bot,
   another chat, or another computer the user must configure.
 
@@ -37,9 +39,19 @@ Every workspace has one active engine. The engine selection belongs in a small
 "Your engines" onboarding/settings surface, which detects local tools and
 their login state:
 
-- Grok Build;
+- Grok Build (the default, model `grok-4.6`);
 - Codex App Server;
-- bundled OpenCode, including an explicitly configured provider/model.
+- bundled OpenCode, including an explicitly configured provider/model;
+- Pi, when the `pi` CLI is installed and signed in with `pi /login`.
+
+Pi is a selectable workspace engine, not a silent substitute. A Pi lead starts
+`pi --mode rpc --no-session` with an exact `--tools` allowlist. `--no-session`
+keeps Agent memory OpenAgentFleet-owned rather than writing a Pi session.
+Auth lives in Pi's own `~/.pi` store; OpenAgentFleet does not run OAuth for
+Pi. Pi receives no MCP injection: no Hound, no Web Search Plus, and no
+Computer MCP. A Pi lead therefore has no Agent Computer. Lead `ask`, when
+used, confirms through a bundled Pi extension and RPC `extension_ui`, not a
+native OpenAgentFleet permission popup.
 
 The onboarding result is a working engine or a clearly marked draft setup. It
 does not configure a container runtime, a worker pool, search connectors, or
@@ -136,16 +148,20 @@ The current end-to-end slice is deliberately narrow: an eligible Grok or
 OpenCode engine records its draft, fans out bounded worker calls in parallel,
 records worker lifecycle events, and asks the same engine to synthesize the
 final answer. A worker receives no Computer MCP, run capability, full Agent
-memory, or implicit connector grant. Pi, Claude, Codex CLI and Cursor remain
-declared adapters whose enforceable execution path is future work; their
-profiles are rejected at preflight rather than silently substituted.
+memory, or implicit connector grant. Pi remains an eligible worker when its
+stored permission is `read_only` or `workspace`; that worker path is
+unchanged: `pi --mode rpc --no-session` with an exact `--tools` allowlist and
+never `bash`. Claude, Codex CLI and Cursor remain declared adapters whose
+enforceable execution path is future work; their profiles are rejected at
+preflight rather than silently substituted.
 
 ## Search, permissions, and current boundary
 
-Native web search is an engine capability. Optional Web Search Plus and Hound
-remain explicit Agent MCP grants; they are never silently installed or used as
-a fallback for disabled native search. Search connector configuration belongs
-in Agent tools/Settings, not first-run onboarding.
+Native web search is an engine capability on Grok Build and Codex App Server.
+Optional Web Search Plus and Hound remain explicit Agent MCP grants; they are
+never silently installed or used as a fallback for disabled native search.
+They are not injected into a Pi engine at all. Search connector configuration
+belongs in Agent tools/Settings, not first-run onboarding.
 
 `botd` remains the local policy boundary: it authenticates local clients,
 preflights the selected engine, retrieves approved memory, brokers permissions,

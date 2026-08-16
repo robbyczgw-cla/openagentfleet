@@ -65,6 +65,22 @@ func TestExecutionProfilesAcceptBothLeadsAndAllServiceTiers(t *testing.T) {
 	}
 }
 
+func TestPiLeadIsValidAndNotOpenCode(t *testing.T) {
+	plan := DefaultRunPlan(LeadPi, WorkerClaude, "/workspace")
+	plan.LeadProfile.Options = LeadOptions{
+		Model:       "",
+		Reasoning:   ReasoningHigh,
+		ServiceTier: ServiceTierPriority,
+		Permission:  PermissionAsk,
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("Pi lead Validate() error = %v", err)
+	}
+	if plan.Lead != LeadPi {
+		t.Fatalf("lead = %q, want %q", plan.Lead, LeadPi)
+	}
+}
+
 func TestZeroLeadProfileAndOmittedWorkerTierRemainBackwardCompatible(t *testing.T) {
 	plan := DefaultRunPlan(LeadGrokBuild, WorkerPi, "/workspace")
 	plan.LeadProfile = LeadRunProfile{}

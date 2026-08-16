@@ -19,7 +19,11 @@ func TestOpenCodeUsesExplicitBundledBinary(t *testing.T) {
 
 func TestBuildCommandKeepsProviderArgumentsStructured(t *testing.T) {
 	for _, provider := range []string{"pi", "claude", "codex", "grok", "opencode", "cursor"} {
-		command, err := BuildCommand(provider, "hello; do not shell expand", "/tmp/work")
+		options := CommandOptions{}
+		if provider == "pi" {
+			options.PermissionMode = "read_only"
+		}
+		command, err := BuildCommandWithOptions(provider, "hello; do not shell expand", "/tmp/work", options)
 		if err != nil {
 			t.Fatalf("%s: %v", provider, err)
 		}
@@ -27,6 +31,12 @@ func TestBuildCommandKeepsProviderArgumentsStructured(t *testing.T) {
 			t.Fatalf("%s: incomplete command: %#v", provider, command)
 		}
 		joined := strings.Join(command.Args, " ")
+		if provider == "pi" {
+			if strings.Contains(joined, "hello; do not shell expand") {
+				t.Fatalf("Pi RPC must not put the prompt on the command line: %#v", command.Args)
+			}
+			continue
+		}
 		if !strings.Contains(joined, "hello; do not shell expand") {
 			t.Fatalf("%s: prompt was not preserved: %#v", provider, command.Args)
 		}

@@ -160,7 +160,7 @@ type WorkerHarnessOption = {
 };
 
 // The lead -> worker runtime currently enforces permissions only for these
-// two adapters. Keep the future adapters visible for product discoverability,
+// adapters. Keep the remaining adapters visible for product discoverability,
 // but never present them as runnable choices.
 const WORKER_HARNESS_OPTIONS: WorkerHarnessOption[] = [
   {
@@ -184,8 +184,8 @@ const WORKER_HARNESS_OPTIONS: WorkerHarnessOption[] = [
   {
     value: "pi",
     label: "Pi",
-    supported: false,
-    detail: "Future: permission-enforcing worker adapter pending",
+    supported: true,
+    detail: "RPC worker with a read_only or workspace --tools sandbox. No MCP and no bash.",
   },
   {
     value: "codex",
@@ -469,7 +469,7 @@ type ComputerFrameState = {
   error?: string;
 };
 type Theme = "light" | "dark" | "system";
-type OnboardingLead = "grok_build" | "codex_app_server" | "opencode";
+type OnboardingLead = "grok_build" | "codex_app_server" | "opencode" | "pi";
 type SearchConnectorState = {
   web_search_plus_enabled: boolean;
   hound_enabled: boolean;
@@ -487,7 +487,7 @@ type SearchConnectorAvailability =
   | "absent"
   | "error";
 type SearchConnectorID = "web_search_plus" | "hound";
-type NativeSearchMode = "connected_harness" | "opencode";
+type NativeSearchMode = "connected_harness" | "opencode" | "pi";
 type OptionalFeatures = {
   lead_worker_runtime?: boolean;
   worker_isolation?: boolean;
@@ -733,6 +733,8 @@ function leadProviderValue(value: string) {
       return "codex_app_server";
     case "opencode":
       return "opencode";
+    case "pi":
+      return "pi";
     default:
       return "grok";
   }
@@ -806,6 +808,34 @@ function leadModelChoices(
           value: "opencode-go/deepseek-v4-pro",
           label: "DeepSeek V4 Pro",
           detail: "OpenCode Go provider model",
+        },
+      ];
+    case "pi":
+      return [
+        {
+          value: "",
+          label: "Pi automatic",
+          detail: "Use the model selected by Pi",
+        },
+        {
+          value: "xai/grok-4.3",
+          label: "Pi · xAI Grok 4.3",
+          detail: "Runs through Pi RPC as xai/grok-4.3, not the Grok Build harness",
+        },
+        {
+          value: "anthropic/claude-sonnet-4.6",
+          label: "Pi · Claude Sonnet 4.6",
+          detail: "Runs through Pi RPC as anthropic/claude-sonnet-4.6",
+        },
+        {
+          value: "openai/gpt-5.5",
+          label: "Pi · GPT-5.5",
+          detail: "Runs through Pi RPC as openai/gpt-5.5, not Codex App Server",
+        },
+        {
+          value: "deepseek/deepseek-v4-flash",
+          label: "Pi · DeepSeek V4 Flash",
+          detail: "Runs through Pi RPC as deepseek/deepseek-v4-flash, not bundled OpenCode",
         },
       ];
     default:
@@ -1032,7 +1062,16 @@ function SearchConnectorCards({
           unavailable:
             "OpenCode provider search depends on its configured tools. Optional MCP connectors are separate.",
         }
-      : {
+      : nativeSearchMode === "pi"
+        ? {
+            title: "Pi has no native search",
+            description:
+              "Pi does not inject search connectors or Agent Computer. Optional MCP routes stay separate and are not added to Pi.",
+            status: "Not available",
+            unavailable:
+              "Pi has no built-in search. Optional connectors are not injected into the Pi engine.",
+          }
+        : {
           title: "Built-in lead search",
           description:
             "Grok Build and Codex App Server can use live web search through the selected harness.",
@@ -1881,7 +1920,9 @@ function App() {
                 ? "codex_app_server"
                 : next.workspace?.engine === "opencode"
                   ? "opencode"
-                  : "grok_build";
+                  : next.workspace?.engine === "pi"
+                    ? "pi"
+                    : "grok_build";
             setOnboardingLead(persistedLead);
             setOnboardingModel(
               next.workspace?.model ??
@@ -2148,6 +2189,15 @@ function App() {
         description:
           "Open-source local-provider fallback with a starter route whose availability and billing may vary.",
         available: capability("opencode")?.available ?? false,
+        authProvider: null,
+        auth: undefined,
+      },
+      {
+        value: "pi" as const,
+        label: "Pi",
+        description:
+          "Optional Pi RPC engine. Sign in with pi /login. No MCP and no Agent Computer. Approvals: read_only/workspace via --tools.",
+        available: capability("pi")?.available ?? false,
         authProvider: null,
         auth: undefined,
       },
@@ -4178,6 +4228,11 @@ function App() {
         if (field === "harness" && value === "opencode") {
           next.permission = "provider_default";
           next.tier = "default";
+        } else if (field === "harness" && value === "pi") {
+          next.tier = "default";
+          if (next.permission !== "read_only" && next.permission !== "workspace") {
+            next.permission = "read_only";
+          }
         } else if (field === "harness" && value === "grok") {
           if (["xhigh", "max"].includes(next.reasoning)) next.reasoning = "high";
           next.tier = "default";
@@ -4234,7 +4289,9 @@ function App() {
         ? "codex_app_server"
         : provider === "opencode"
           ? "opencode"
-          : "grok_build");
+          : provider === "pi"
+            ? "pi"
+            : "grok_build");
     setAgentEditingID(null);
     setAgentName("");
     setAgentTitle("");
@@ -4247,9 +4304,13 @@ function App() {
     setAgentLeadReasoning(preferences.usage?.reasoning_effort ?? "high");
     setAgentLeadTier("default");
     setAgentLeadPermission(
-      initialLead === "opencode" ? "provider_default" : agentPermissionFromUsageDefault(),
+      initialLead === "opencode"
+        ? "provider_default"
+        : initialLead === "pi"
+          ? "workspace"
+          : agentPermissionFromUsageDefault(),
     );
-    setAgentLeadWebSearch("live");
+    setAgentLeadWebSearch(initialLead === "pi" ? "disabled" : "live");
     setAgentNotifyFinished(true);
     setAgentNotifyNeedsInput(true);
     setAgentWorkers([]);
@@ -4277,14 +4338,18 @@ function App() {
         ? "codex_app_server"
         : workspaceEngine === "opencode"
           ? "opencode"
-          : "grok_build";
+          : workspaceEngine === "pi"
+            ? "pi"
+            : "grok_build";
     const initialLead =
       leadOverride ??
       (lead?.harness === "codex_app_server"
         ? "codex_app_server"
         : lead?.harness === "opencode"
           ? "opencode"
-          : lead
+          : lead?.harness === "pi"
+            ? "pi"
+            : lead
             ? "grok_build"
             : workspaceLead);
     const configuringSeed = leadOverride !== undefined;
@@ -4305,7 +4370,7 @@ function App() {
         : (lead?.reasoning ?? "high"),
     );
     setAgentLeadTier(
-      configuringSeed || initialLead === "opencode"
+      configuringSeed || initialLead === "opencode" || initialLead === "pi"
         ? "default"
         : (lead?.service_tier ?? "default"),
     );
@@ -4313,12 +4378,24 @@ function App() {
       configuringSeed
         ? initialLead === "opencode"
           ? "provider_default"
-          : agentPermissionFromUsageDefault()
+          : initialLead === "pi"
+            ? "workspace"
+            : agentPermissionFromUsageDefault()
         : initialLead === "opencode"
           ? "provider_default"
-          : (lead?.permission ?? agentPermissionFromUsageDefault()),
+          : initialLead === "pi"
+            ? lead?.permission === "read_only" || lead?.permission === "workspace"
+              ? lead.permission
+              : "workspace"
+            : (lead?.permission ?? agentPermissionFromUsageDefault()),
     );
-    setAgentLeadWebSearch(configuringSeed ? "live" : (lead?.web_search ?? "live"));
+    setAgentLeadWebSearch(
+      initialLead === "pi"
+        ? "disabled"
+        : configuringSeed
+          ? "live"
+          : (lead?.web_search ?? "live"),
+    );
     setAgentNotifyFinished(metadata?.notify_finished ?? true);
     setAgentNotifyNeedsInput(metadata?.notify_needs_input ?? true);
     setAgentWorkers(
@@ -4382,12 +4459,18 @@ function App() {
             model: agentModel.trim(),
             reasoning: agentLeadReasoning,
             service_tier:
-              agentLeadHarness === "opencode" ? "default" : agentLeadTier,
+              agentLeadHarness === "opencode" || agentLeadHarness === "pi"
+                ? "default"
+                : agentLeadTier,
             permission:
               agentLeadHarness === "opencode"
                 ? "provider_default"
-                : agentLeadPermission,
-            web_search: agentLeadWebSearch,
+                : agentLeadHarness === "pi"
+                  ? agentLeadPermission === "read_only"
+                    ? "read_only"
+                    : "workspace"
+                  : agentLeadPermission,
+            web_search: agentLeadHarness === "pi" ? "disabled" : agentLeadWebSearch,
           },
           orchestrator: agentOrchestrator ? "lead" : "",
           workers: workers.map(({ worker, maxTurns, timeoutSeconds }) => ({
@@ -5721,7 +5804,7 @@ function App() {
                     const auth = engine.auth;
                     const status = !engine.available
                       ? "Not installed"
-                      : engine.value === "opencode"
+                      : engine.value === "opencode" || engine.value === "pi"
                         ? "Available locally"
                         : !auth
                           ? "Checking sign-in…"
@@ -5751,6 +5834,10 @@ function App() {
                             if (engine.value === "opencode") {
                               setAgentLeadTier("default");
                               setAgentLeadPermission("provider_default");
+                            } else if (engine.value === "pi") {
+                              setAgentLeadTier("default");
+                              setAgentLeadPermission("workspace");
+                              setAgentLeadWebSearch("disabled");
                             } else {
                               setAgentLeadPermission(agentPermissionFromUsageDefault());
                             }
@@ -5911,6 +5998,9 @@ function App() {
                   Agent Computer runtime is configurable later in Settings. It
                   is not installed or started just because you finish setup;
                   opening its view and enabling Agent control are separate choices.
+                  {onboardingLead === "pi"
+                    ? " Pi does not inject Agent Computer into the engine."
+                    : ""}
                 </p>
               </div>
             )}
@@ -5922,6 +6012,8 @@ function App() {
                 <p>
                   {onboardingLead === "opencode"
                     ? "OpenCode uses its configured model tools. Web Search Plus and keyless Hound are independent optional connectors."
+                    : onboardingLead === "pi"
+                      ? "Pi has no native search and does not inject connectors or Agent Computer. Web Search Plus and keyless Hound stay optional and separate."
                     : "The selected lead harness can provide built-in live search. Web Search Plus and keyless Hound add independent optional routes."}{" "}
                   You can change these choices later in Settings.
                 </p>
@@ -5934,6 +6026,8 @@ function App() {
                     nativeSearchMode={
                       onboardingLead === "opencode"
                         ? "opencode"
+                        : onboardingLead === "pi"
+                          ? "pi"
                         : "connected_harness"
                     }
                     onToggle={(connector, enabled) =>
@@ -6196,6 +6290,9 @@ function App() {
                       }
                       if (next === "opencode") {
                         setAgentLeadPermission("provider_default");
+                      } else if (next === "pi") {
+                        setAgentLeadPermission("workspace");
+                        setAgentLeadWebSearch("disabled");
                       } else {
                         setAgentLeadPermission(agentPermissionFromUsageDefault());
                       }
@@ -6204,6 +6301,7 @@ function App() {
 					<option value="grok_build">Grok Build</option>
                     <option value="codex_app_server">Codex App Server</option>
                     <option value="opencode">OpenCode 1.18.10 · starter route</option>
+                    <option value="pi">Pi</option>
                   </select>
                 </label>
                 <div className="builder-model-field">
@@ -6236,7 +6334,7 @@ function App() {
                   Service tier
                   <select
                     value={agentLeadTier}
-                    disabled={agentLeadHarness === "opencode"}
+                    disabled={agentLeadHarness === "opencode" || agentLeadHarness === "pi"}
                     onChange={(event) => setAgentLeadTier(event.target.value)}
                   >
                     <option value="default">Default</option>
@@ -6251,7 +6349,8 @@ function App() {
                 <label>
                   Web search
                   <select
-                    value={agentLeadWebSearch}
+                    value={agentLeadHarness === "pi" ? "disabled" : agentLeadWebSearch}
+                    disabled={agentLeadHarness === "pi"}
                     onChange={(event) =>
                       setAgentLeadWebSearch(
                         event.target.value as "live" | "disabled",
@@ -6271,7 +6370,7 @@ function App() {
                   onChange={(event) => setAgentLeadPermission(event.target.value)}
                 >
                   {agentLeadHarness === "opencode" && <option value="provider_default">OpenCode default</option>}
-                  <option value="ask">Ask through lead</option>
+                  {agentLeadHarness !== "pi" && <option value="ask">Ask through lead</option>}
                   <option value="read_only">Read only</option>
                   <option value="workspace">Workspace</option>
                 </select>
@@ -6279,6 +6378,8 @@ function App() {
               <p className="field-note">
                 {agentLeadHarness === "opencode"
                   ? "OpenCode uses the selected provider/model and its own tool permissions. Web Search Plus and Hound are explicit optional MCP grants."
+                  : agentLeadHarness === "pi"
+                    ? "Pi approvals are read_only or workspace, enforced by --tools. Search connectors and Agent Computer are not injected."
                   : "Reasoning depth applies to the selected model. Live search is native to the lead; Web Search Plus and Hound remain optional connectors."}
               </p>
             </section>
@@ -6311,8 +6412,8 @@ function App() {
                 </button>
               </div>
               <p className="field-note worker-intro">
-                Optional bounded helpers. Only Grok Build and OpenCode are
-                executable here today. Claude, Pi, Codex CLI and Cursor remain
+                Optional bounded helpers. Grok Build, OpenCode, and Pi are
+                executable here today. Claude, Codex CLI and Cursor remain
                 visible as future adapters and never inherit hidden access.
               </p>
               {agentWorkers.length === 0 ? (
@@ -6389,7 +6490,20 @@ function App() {
                         <label>
                           Permission
                           <select value={worker.permission} disabled={worker.harness === "opencode"} onChange={(event) => updateAgentWorker(worker.id, "permission", event.target.value)}>
-                            {worker.harness === "opencode" ? <option value="provider_default">OpenCode default</option> : <><option value="ask">Ask every time</option><option value="read_only">Read only</option><option value="workspace">Workspace</option></>}
+                            {worker.harness === "opencode" ? (
+                              <option value="provider_default">OpenCode default</option>
+                            ) : worker.harness === "pi" ? (
+                              <>
+                                <option value="read_only">Read only</option>
+                                <option value="workspace">Workspace write</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="ask">Ask every time</option>
+                                <option value="read_only">Read only</option>
+                                <option value="workspace">Workspace</option>
+                              </>
+                            )}
                           </select>
                         </label>
                         <label>
@@ -7078,7 +7192,11 @@ function App() {
                       usage: {
                         reasoning_effort: nextReasoning,
                         permission_mode:
-                          next === "opencode" ? "default" : currentPermission,
+                          next === "opencode"
+                            ? "default"
+                            : next === "pi" && currentPermission === "auto"
+                              ? "default"
+                              : currentPermission,
                       },
                     });
                     setWorkspaceModelDraft(null);
@@ -7154,6 +7272,10 @@ function App() {
                   value={
                     selectedLeadChoice?.value === "opencode"
                       ? "default"
+                      : selectedLeadChoice?.value === "pi" &&
+                          (preferences.usage?.permission_mode ?? permissionMode) ===
+                            "auto"
+                        ? "default"
                       : preferences.usage?.permission_mode ?? permissionMode
                   }
                   disabled={selectedLeadChoice?.value === "opencode"}
@@ -7168,11 +7290,15 @@ function App() {
                       ? "OpenCode default"
                       : "Ask"}
                   </option>
-                  {selectedLeadChoice?.value !== "opencode" && (
+                  {selectedLeadChoice?.value !== "opencode" &&
+                    selectedLeadChoice?.value !== "pi" && (
                     <>
                       <option value="auto">Auto</option>
                       <option value="plan">Plan</option>
                     </>
+                  )}
+                  {selectedLeadChoice?.value === "pi" && (
+                    <option value="plan">Plan</option>
                   )}
                 </select>
               </label>
@@ -7437,7 +7563,15 @@ function App() {
                     <div className="eyebrow">Independent routes</div>
                     <h3 id="settings-search-connectors-title">Web Search</h3>
                   </div>
-                  <span className="connector-status on">Native on</span>
+                  <span
+                    className={`connector-status${
+                      selectedLeadChoice?.value === "pi" ? "" : " on"
+                    }`}
+                  >
+                    {selectedLeadChoice?.value === "pi"
+                      ? "Not on Pi"
+                      : "Native on"}
+                  </span>
                 </div>
                 <p>
                   Optional connectors remain separate from lead-native search.
@@ -7450,6 +7584,13 @@ function App() {
                   connectors={searchConnectors}
                   busy={searchConnectorBusy}
                   error={searchConnectorsError}
+                  nativeSearchMode={
+                    selectedLeadChoice?.value === "opencode"
+                      ? "opencode"
+                      : selectedLeadChoice?.value === "pi"
+                        ? "pi"
+                        : "connected_harness"
+                  }
                   onToggle={(connector, enabled) =>
                     void patchSearchConnector(connector, enabled, "settings")
                   }

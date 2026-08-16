@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var runtimeTestLeads = []LeadHarness{LeadGrokBuild, LeadCodexAppServer, LeadOpenCode}
+var runtimeTestLeads = []LeadHarness{LeadGrokBuild, LeadCodexAppServer, LeadOpenCode, LeadPi}
 
 var runtimeTestWorkers = []Worker{
 	WorkerPi,

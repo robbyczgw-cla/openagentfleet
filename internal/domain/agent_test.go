@@ -25,6 +25,50 @@ func TestNormalizeAgentMetadataMigratesLegacyGrokWithoutReinterpretingWorkerIDs(
 	}
 }
 
+func TestNormalizeAgentMetadataAcceptsPiLead(t *testing.T) {
+	metadata, err := NormalizeAgentMetadata(AgentMetadata{Lead: &AgentExecutionProfile{
+		Harness: "pi", Model: "anthropic/claude-sonnet-4-5", Reasoning: "high", Permission: "workspace",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Lead == nil || metadata.Lead.Harness != "pi" || metadata.Lead.Permission != "workspace" {
+		t.Fatalf("Pi lead = %#v", metadata.Lead)
+	}
+	if metadata.Lead.WebSearch != AgentWebSearchDisabled {
+		t.Fatalf("Pi web_search = %q, want disabled", metadata.Lead.WebSearch)
+	}
+	if metadata.Lead.ServiceTier != "default" {
+		t.Fatalf("Pi service tier = %q", metadata.Lead.ServiceTier)
+	}
+}
+
+func TestNormalizeAgentMetadataDefaultsPiLeadPermissionAndDisablesSearch(t *testing.T) {
+	metadata, err := NormalizeAgentMetadata(AgentMetadata{LeadHarness: "pi", Model: "openai/gpt-4o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Lead == nil || metadata.Lead.Harness != "pi" || metadata.Lead.Permission != "workspace" {
+		t.Fatalf("Pi lead defaults = %#v", metadata.Lead)
+	}
+	if metadata.Lead.WebSearch != AgentWebSearchDisabled {
+		t.Fatalf("Pi default web_search = %q, want disabled", metadata.Lead.WebSearch)
+	}
+}
+
+func TestNormalizeAgentMetadataRejectsUnsupportedPiLeadControls(t *testing.T) {
+	for name, lead := range map[string]AgentExecutionProfile{
+		"tier":       {Harness: "pi", ServiceTier: "priority", Permission: "workspace"},
+		"permission": {Harness: "pi", Permission: "provider_default"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NormalizeAgentMetadata(AgentMetadata{Lead: &lead}); err == nil {
+				t.Fatal("unsupported Pi lead configuration was accepted")
+			}
+		})
+	}
+}
+
 func TestNormalizeAgentMetadataDefaultsLeadWebSearchToLive(t *testing.T) {
 	for _, harness := range []string{"grok_build", "codex_app_server", "opencode"} {
 		t.Run(harness, func(t *testing.T) {

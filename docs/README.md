@@ -12,7 +12,7 @@ not earned yet.
 | [Architecture](architecture.md) | Why Go, TypeScript, and Rust are separate, and which layer owns what | Current architecture |
 | [Grok Build parity](grok-build-parity.md) | The feature-by-feature parity contract | Living backlog |
 | [Bot memory](bot-memory.md) | Explicit, reviewable memory semantics, API, and retrieval boundary | Implemented local MVP |
-| [Agent model](agent-model.md) | Adopted chat-first product contract: one workspace engine, Agents, memory, Builder, and lazy Computer | Current product contract |
+| [Agent model](agent-model.md) | Adopted chat-first product contract: one workspace engine (Grok default, optional Pi), Agents, memory, Builder, and lazy Computer | Current product contract |
 | [Workspace engine and optional workers](lead-worker-architecture.md) | Internal controller/engine/worker boundary behind the simple product UX | Current implementation + advanced contract |
 | [Agent Computer backends](macos-agent-computer-backends.md) | Lazy local Computer lifecycle; Colima/Docker, VM, and macOS backend decisions | Implemented backend + product roadmap |
 | [Remote Agent Computer worker](remote-computer-worker.md) | Optional second-host Docker/Colima worker over Tailscale | Implemented optional path |

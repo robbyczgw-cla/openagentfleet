@@ -27,6 +27,7 @@ const (
 	LeadGrokBuild      LeadHarness = "grok_build"
 	LeadCodexAppServer LeadHarness = "codex_app_server"
 	LeadOpenCode       LeadHarness = "opencode"
+	LeadPi             LeadHarness = "pi"
 )
 
 // Worker identifies a model-facing worker a lead may route bounded work to.
@@ -532,7 +533,7 @@ func workerSet(label string, values []Worker) (map[Worker]struct{}, error) {
 }
 
 func validLead(value LeadHarness) bool {
-	return value == LeadGrokBuild || value == LeadCodexAppServer || value == LeadOpenCode
+	return value == LeadGrokBuild || value == LeadCodexAppServer || value == LeadOpenCode || value == LeadPi
 }
 
 func validWorker(value Worker) bool {
