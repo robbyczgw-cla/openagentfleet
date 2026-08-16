@@ -102,7 +102,7 @@ shasum -a 256 "$DMG" > SHA256SUMS
 cat SHA256SUMS
 ```
 
-The current public alpha is [`v0.1.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.1.0-alpha).
+The current public alpha is [`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
 It publishes the Apple Silicon DMG and the matching `SHA256SUMS` file.
 
 For a future release, publish only after the signature, ticket, Gatekeeper and
@@ -117,6 +117,7 @@ gh release create v0.2.0-alpha \
   --prerelease
 ```
 
-The current `v0.1.0-alpha` is public, Apple Silicon-only, and intentionally not
-a production stability promise. Keep the alpha label until the remaining
-runtime, update, and platform gates are complete.
+The current `v0.2.0-alpha` is public, Apple Silicon first, with unsigned Linux
+packages from the same commit. It is intentionally not a production stability
+promise. Keep the alpha label until the remaining runtime, update, and
+platform gates are complete.

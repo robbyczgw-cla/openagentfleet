@@ -2,13 +2,11 @@
 
 All notable OpenAgentFleet changes are recorded here.
 
-## Unreleased
-
-macOS `v0.2.0-alpha` is not published until a Developer ID DMG is notarized
-and stapled from this version. Linux `.deb` / `.rpm` / `.AppImage` can be
-built from the same commit.
-
 ## 0.2.0-alpha
+
+Public prerelease from `87e648c`. The Apple Silicon DMG is signed, notarized
+and stapled. Linux packages are unsigned. See the
+[v0.2.0-alpha release](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
 
 ### Pi as an optional workspace engine
 

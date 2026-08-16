@@ -6,14 +6,13 @@ Use Grok Build, Codex App Server, bundled OpenCode, or optional Pi in one
 local workspace. For browser and desktop tasks, engines that actually receive
 Computer MCP get an isolated Linux computer you can watch, stop, or take over.
 
-**Open-source public alpha.** The Mac runtime is signed through `v0.1.0-alpha`.
-`0.2.0` adds optional Pi, Donsetch, and a Linux host app; the notarized
-`v0.2.0-alpha` DMG is the next Mac publish. The project is not
-feature-complete or production-ready. The project is independent and licensed
-under [Apache-2.0](LICENSE).
+**Open-source public alpha.** `v0.2.0-alpha` is a signed and notarized Apple
+Silicon DMG. Linux ships as unsigned `.deb` / `.rpm` / `.AppImage`. The
+project is not feature-complete or production-ready. It is independent and
+licensed under [Apache-2.0](LICENSE).
 
-[Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.1.0-alpha/OpenAgentFleet_0.1.0_aarch64.dmg) ·
-[Build the Linux packages](docs/linux-release.md) ·
+[Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg) ·
+[Linux packages](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha) ·
 [Visit the product site](https://openagentfleet.xyz) ·
 [Read the security model](docs/architecture.md)
 
@@ -55,10 +54,10 @@ substitutes a different provider.
 
 ## Current provider boundaries
 
-Provider CLIs and harnesses currently run directly on your Mac; the isolated
-Agent Computer is the boundary for browser and desktop work, not full
-provider-process isolation. What "explicit control" means today depends on
-the engine:
+Provider CLIs and harnesses currently run directly on the host (macOS or
+Linux); the isolated Agent Computer is the boundary for browser and desktop
+work, not full provider-process isolation. What "explicit control" means
+today depends on the engine:
 
 - **Grok Build** and **Codex App Server** can use controller-brokered
   approvals: sensitive commands and file changes are routed through `botd`
@@ -77,14 +76,17 @@ the engine:
 
 ## Download
 
-`v0.1.0-alpha` is a signed and notarized DMG for Apple Silicon Macs:
+`v0.2.0-alpha` is a signed and notarized DMG for Apple Silicon Macs:
 
-[**OpenAgentFleet_0.1.0_aarch64.dmg**](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.1.0-alpha/OpenAgentFleet_0.1.0_aarch64.dmg)
+[**OpenAgentFleet_0.2.0_aarch64.dmg**](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg)
 
+SHA-256 `ed466a491051f4facd7696ee67ef2e98235750c5c31a79ff1ffe3060d2f80c06`.
 Checksums and release notes are on the
-[v0.1.0-alpha release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.1.0-alpha).
-Intel Macs are not supported yet. If you would rather build it yourself, or you
-want to contribute, use [the source build](#build-from-source).
+[v0.2.0-alpha release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
+Intel Macs are not supported yet. Linux packages from the same commit are on
+that release when published; otherwise see
+[the Linux release runbook](docs/linux-release.md). If you would rather build
+it yourself, or you want to contribute, use [the source build](#build-from-source).
 
 ## Build from source
 
