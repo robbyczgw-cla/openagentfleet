@@ -73,6 +73,7 @@ func TestHostStoragePreflightFailsBeforeProvisioning(t *testing.T) {
 	t.Cleanup(func() { diskFreeBytes = old })
 
 	docker := NewDocker(workspace, "", true)
+	docker.RuntimeID = RuntimeDocker
 	err := docker.checkHostStorage(ResourceConfig{CPUs: 4, MemoryGiB: 4, DiskGiB: 25, SwapGiB: 1, OSImage: "ubuntu-24.04"})
 	if err == nil {
 		t.Fatal("low host storage was accepted")
@@ -99,6 +100,27 @@ func TestHostStoragePreflightAcceptsSeparateWorkspaceVolume(t *testing.T) {
 	t.Cleanup(func() { diskFreeBytes = old })
 
 	docker := NewDocker(workspace, "", true)
+	docker.RuntimeID = RuntimeColima
+	if err := docker.checkHostStorage(DefaultResourceConfig()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLinuxDockerEngineStorageIgnoresColimaHome(t *testing.T) {
+	colimaHome := filepath.Join(t.TempDir(), "colima")
+	t.Setenv("COLIMA_HOME", colimaHome)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	old := diskFreeBytes
+	diskFreeBytes = func(path string) (uint64, string, error) {
+		if strings.Contains(path, "colima") {
+			return 1 * 1024 * 1024 * 1024, path, nil
+		}
+		return 20 * 1024 * 1024 * 1024, path, nil
+	}
+	t.Cleanup(func() { diskFreeBytes = old })
+
+	docker := NewDocker(workspace, "", true)
+	docker.RuntimeID = RuntimeDocker
 	if err := docker.checkHostStorage(DefaultResourceConfig()); err != nil {
 		t.Fatal(err)
 	}

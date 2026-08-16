@@ -278,6 +278,14 @@ func (d *Docker) runOutput(ctx context.Context, args ...string) (string, error) 
 	return runOutput(ctx, d.Binary, d.commandArgs(args...)...)
 }
 
+func (d *Docker) runOutputWithTimeout(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
+	return runOutputWithTimeout(ctx, timeout, d.Binary, d.commandArgs(args...)...)
+}
+
+func (d *Docker) runOutputWithTimeoutEnv(ctx context.Context, timeout time.Duration, env []string, args ...string) (string, error) {
+	return runOutputWithTimeoutEnv(ctx, timeout, env, d.Binary, d.commandArgs(args...)...)
+}
+
 func (d *Docker) Status(ctx context.Context) Status {
 	d.statusMu.Lock()
 	if d.statusRunning {
@@ -344,14 +352,14 @@ func (d *Docker) probeStatus(ctx context.Context) Status {
 		} else {
 			result.State = ComputerStateError
 			result.CanRetry = true
-			result.Detail = "Docker daemon unavailable: " + compact(err.Error())
+			result.Detail = dockerDaemonUnavailableDetail(err)
 		}
 		return result
 	}
 	result.Available = true
 	result.State = ComputerStateStopped
 	result.CanRetry = true
-	output, err := d.runOutput(statusContext, "ps", "--filter", "name=^/"+d.ContainerName+"$", "--format", "{{.ID}}|{{.Image}}|{{.Status}}")
+	output, err := d.runOutput(statusContext, "ps", "--all", "--filter", "name=^/"+d.ContainerName+"$", "--format", "{{.ID}}|{{.Image}}|{{.Status}}")
 	if err == nil {
 		fields := strings.Split(strings.TrimSpace(output), "|")
 		if len(fields) >= 3 {
@@ -443,7 +451,7 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 	d.runtimeMu.RLock()
 	runtimeID := d.RuntimeID
 	d.runtimeMu.RUnlock()
-	if runtimeID == RuntimeColima {
+	if runtimeID == RuntimeColima || runtime.GOOS == "linux" {
 		if err := d.checkHostStorage(resources); err != nil {
 			status := d.baseStatus()
 			status.State = ComputerStateError
@@ -483,6 +491,14 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		if err := d.stop(ctx); err != nil {
 			return status, fmt.Errorf("replace stale agent computer: %w", err)
 		}
+	} else if status.ContainerID != "" {
+		// A failed or interrupted start leaves the named container behind in
+		// Docker. Treat that exact, stopped container as stale before issuing
+		// the next `docker run`; otherwise Docker rejects the fresh start with
+		// a name-conflict error and the UI can never recover from it.
+		if err := d.stop(ctx); err != nil {
+			return status, fmt.Errorf("remove stale agent computer: %w", err)
+		}
 	}
 	if strings.TrimSpace(d.BrowserProfileVolume) == "" {
 		if err := clearStaleBrowserProfileLocks(profilePath); err != nil {
@@ -495,7 +511,17 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		if d.BuildContext == "" {
 			return status, fmt.Errorf("agent image %s is missing and no build context is configured", d.Image)
 		}
-		if _, err := d.runOutput(ctx, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
+		buildEnv := []string(nil)
+		buildxContext, buildxCancel := context.WithTimeout(ctx, 15*time.Second)
+		_, buildxErr := d.runOutputWithTimeout(buildxContext, 15*time.Second, "buildx", "version")
+		buildxCancel()
+		if buildxErr != nil {
+			// Some Linux Docker packages ship without the buildx CLI plugin. Keep
+			// the local fallback usable there; Docker Desktop and Colima continue
+			// to use BuildKit when buildx is available.
+			buildEnv = []string{"DOCKER_BUILDKIT=0"}
+		}
+		if _, err := d.runOutputWithTimeoutEnv(ctx, 15*time.Minute, buildEnv, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
 			return status, fmt.Errorf("build agent image: %w", err)
 		}
 	}
@@ -1461,9 +1487,20 @@ func run(parent context.Context, program string, args ...string) error {
 }
 
 func runOutput(parent context.Context, program string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	return runOutputWithTimeout(parent, 2*time.Minute, program, args...)
+}
+
+func runOutputWithTimeout(parent context.Context, timeout time.Duration, program string, args ...string) (string, error) {
+	return runOutputWithTimeoutEnv(parent, timeout, nil, program, args...)
+}
+
+func runOutputWithTimeoutEnv(parent context.Context, timeout time.Duration, env []string, program string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	command := newCommandContext(ctx, program, args...)
+	if len(env) > 0 {
+		command.Env = append(os.Environ(), env...)
+	}
 	output, err := command.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 	if err != nil && text != "" {
@@ -1478,6 +1515,24 @@ func compact(value string) string {
 		return value[:240]
 	}
 	return value
+}
+
+func dockerDaemonUnavailableDetail(err error) string {
+	if err == nil {
+		return "Docker daemon unavailable"
+	}
+	detail := compact(err.Error())
+	lower := strings.ToLower(detail)
+	if strings.Contains(lower, "permission denied") {
+		if runtime.GOOS == "linux" {
+			return "Docker is installed but this user cannot talk to the daemon. Add your user to the docker group (`sudo usermod -aG docker $USER`) and start a new login session."
+		}
+		return "Docker daemon permission denied: " + detail
+	}
+	if runtime.GOOS == "linux" && (strings.Contains(lower, "cannot connect") || strings.Contains(lower, "is the docker daemon running") || strings.Contains(lower, "no such file or directory")) {
+		return "Docker daemon is not running. Start it with `sudo systemctl start docker`, or install it with: " + LinuxDockerInstallCommand()
+	}
+	return "Docker daemon unavailable: " + detail
 }
 
 func (s Status) MarshalJSON() ([]byte, error) {

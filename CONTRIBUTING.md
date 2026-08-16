@@ -15,9 +15,10 @@ boundaries and reproducible checks.
 
 ## Development setup
 
-The supported development host is Apple Silicon macOS. The native Tauri path
-requires Go, Node.js with `pnpm`, Rust with the macOS build tools, `uv`, `uvx`
-and OpenCode `1.18.10` for the bundled sidecars:
+The packaged product host is Apple Silicon macOS. Ubuntu x86_64 is the first
+Linux desktop development host; see [docs/linux-desktop.md](docs/linux-desktop.md).
+The native Tauri path requires Go, Node.js with `pnpm`, Rust with the platform
+build tools, `uv`, `uvx` and OpenCode `1.18.10` for the bundled sidecars:
 
 ```sh
 go test ./...

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDisabledComputerDoesNotMutateDocker(t *testing.T) {
@@ -473,5 +474,76 @@ func TestControlTokenPersistsPrivatelyAndRestoresAfterDaemonRestart(t *testing.T
 	}
 	if _, err := os.Stat(restarted.ControlTokenPath); !os.IsNotExist(err) {
 		t.Fatalf("control token should be removed, stat err = %v", err)
+	}
+}
+
+func TestEnsureRemovesStoppedNamedContainerBeforeRun(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "docker.log")
+	removedPath := filepath.Join(dir, "removed")
+	fake := filepath.Join(dir, "docker")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$OPENAGENTFLEET_DOCKER_LOG"
+verb=""
+skip=0
+for arg in "$@"; do
+  if [ "$skip" = 1 ]; then
+    skip=0
+    continue
+  fi
+  case "$arg" in
+    --context) skip=1; continue ;;
+    -*) continue ;;
+    *) verb="$arg"; break ;;
+  esac
+done
+case "$verb" in
+  info)
+    echo "29.1.3"
+    exit 0
+    ;;
+  ps)
+    if [ -f "$OPENAGENTFLEET_DOCKER_REMOVED" ]; then
+      echo ""
+      exit 0
+    fi
+    echo "abc123|openagentfleet-agent-computer:ubuntu-24.04|Exited (1) 3 seconds ago"
+    exit 0
+    ;;
+  rm)
+    : > "$OPENAGENTFLEET_DOCKER_REMOVED"
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OPENAGENTFLEET_DOCKER_LOG", logPath)
+	t.Setenv("OPENAGENTFLEET_DOCKER_REMOVED", removedPath)
+
+	workspace := filepath.Join(dir, "agent-workspace")
+	docker := NewDocker(workspace, "", true)
+	docker.Binary = fake
+	docker.RuntimeID = RuntimeDocker
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = docker.Ensure(ctx)
+
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(logged)
+	if !strings.Contains(output, "ps --all ") {
+		t.Fatalf("status probe did not inspect stopped containers: %s", output)
+	}
+	if !strings.Contains(output, "rm --force "+docker.ContainerName) {
+		t.Fatalf("stopped named container was not removed before run: %s", output)
 	}
 }
