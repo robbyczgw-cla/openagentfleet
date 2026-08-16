@@ -2,9 +2,9 @@
 
 > **Run AI agents on your Mac with explicit control.**
 
-Use Grok Build, Codex App Server, or OpenCode in one local workspace. For
-browser and desktop tasks, OpenAgentFleet gives approved runs access to a
-separate, observable Linux computer you can watch, stop, or take over.
+Use Grok Build, Codex App Server, bundled OpenCode, or optional Pi in one
+local workspace. For browser and desktop tasks, engines that actually receive
+Computer MCP get an isolated Linux computer you can watch, stop, or take over.
 
 **Open-source public alpha.** The Mac-first runtime is real and tested, but
 OpenAgentFleet is not feature-complete or production-ready. Provider login,
@@ -25,9 +25,11 @@ automatically.
 
 ## What you can do today
 
-- Use Grok Build, Codex App Server, or OpenCode in one local workspace.
+- Use Grok Build (the default), Codex App Server, bundled OpenCode, or
+  optional Pi in one local workspace.
 - Give browser and desktop tasks a separate local Linux computer with
-  Chromium, Terminal and Files.
+  Chromium, Terminal and Files, when the selected engine receives Computer
+  MCP. Pi does not.
 - Watch the work live, stop it, take control, and approve sensitive actions.
 - Keep conversations, memory, transcripts and run artifacts in the local
   controller.
@@ -40,13 +42,15 @@ These capabilities are available for users who need them, but are not required
 to understand or use the core product:
 
 - bounded workers below the primary AI engine;
-- native search, Web Search Plus MCP and Hound MCP connectors;
+- native search, Web Search Plus, Hound and Donsetch MCP connectors;
 - Colima, Docker Desktop, OrbStack and optional remote Computer workers;
 - routines, heartbeat runs, plugins, skills and mobile control over Tailscale.
 
-Claude Code, Pi, Codex CLI and Cursor are detected and represented as future
-or bounded worker adapters where their permission contract is not yet fully
-enforceable. The product never silently substitutes a different provider.
+Claude Code, Codex CLI and Cursor remain detected as future or bounded
+worker adapters where their permission contract is not yet fully
+enforceable. Pi is no longer in that set: it is an optional workspace
+engine and an optional bounded worker. The product never silently
+substitutes a different provider.
 
 ## Current provider boundaries
 
@@ -61,6 +65,14 @@ the engine:
 - **Bundled OpenCode** keeps its own default permission handling (its safe
   `ask` mode; its dangerous auto mode is disabled). It does not go through
   the controller's approval broker, and the UI labels it accordingly.
+- **Pi** is opt-in. Install the `pi` CLI and sign in with `pi /login`
+  (credentials stay in `~/.pi`). A Pi lead is `pi --mode rpc --no-session`
+  with `--tools`. Memory stays OpenAgentFleet-owned. Pi has no MCP
+  injection, so Hound, Web Search Plus, Donsetch, and the Agent Computer are
+  unavailable. Lead `ask` confirms through a bundled Pi extension and RPC
+  `extension_ui`, not a native OpenAgentFleet popup. Picking `xai/grok-4.3`
+  or `openai/gpt-5.5` in the Pi picker still runs **through Pi**, not as
+  Grok Build or Codex App Server.
 
 ## Download
 
@@ -122,8 +134,8 @@ controller does not copy them into chat messages or its SQLite store.
 
 ## First run
 
-1. Choose an available AI engine, or use OpenCode with its local provider
-   configuration.
+1. Choose an available AI engine. Grok Build is the default. OpenCode uses
+   its local provider configuration. Pi needs the `pi` CLI and `pi /login`.
 2. Create the first Agent and start chatting.
 3. Add computer access, search connectors and stricter permissions only when
    you need them.
@@ -176,8 +188,9 @@ Tauri macOS app / mobile client
   memory, enabled tools and computer policy. One Agent and one chat is the
   default; extra conversations are optional.
 - **AI engine (Lead)** is the selected primary harness for a run. Current lead
-  routes are Grok Build, Codex App Server and bundled OpenCode. “Lead” is the
-  architecture term; the simple user-facing choice is the AI engine.
+  routes are Grok Build, Codex App Server, bundled OpenCode, and optional Pi.
+  “Lead” is the architecture term; the simple user-facing choice is the AI
+  engine.
 - **Worker** is a bounded helper below the Lead. It receives a task slice,
   explicit model/reasoning/budget/permissions and no hidden credentials.
 - **`botd`** is the local authority. It resolves configuration, applies the
@@ -223,10 +236,11 @@ desktop-frame, takeover and approval acceptance suite.
 
 ## Search, MCP and plugins
 
-Native search stays available to AI engines that support it. Web Search Plus
-and Hound are independent optional MCP connectors with visible per-Agent
-configuration and credentials. Connector IDs are validated before a run and
-their provenance is recorded in [NOTICE.md](NOTICE.md).
+Native search stays available to AI engines that support it. Web Search Plus,
+Hound and Donsetch are independent optional MCP connectors with visible
+per-Agent configuration and credentials. Connector IDs are validated before a
+run and their provenance is recorded in [NOTICE.md](NOTICE.md). Pi receives
+none of them.
 
 The plugin and skill surfaces are deliberately capability-brokered. An Agent
 does not receive arbitrary host applications, folders, browser profiles,

@@ -172,7 +172,7 @@ func NormalizeAgentMetadata(value AgentMetadata) (AgentMetadata, error) {
 			// The first Agent Builder called Grok Build simply "grok". Keep
 			// existing profiles loadable while writing the canonical ID.
 			value.Lead = &AgentExecutionProfile{Harness: "grok_build", Model: value.Model}
-		case "grok_build", "codex_app_server", "opencode":
+		case "grok_build", "codex_app_server", "opencode", "pi":
 			value.Lead = &AgentExecutionProfile{Harness: value.LeadHarness, Model: value.Model}
 		}
 	}
@@ -234,8 +234,8 @@ func normalizeAgentExecutionProfile(label string, value AgentExecutionProfile, l
 		return AgentExecutionProfile{}, err
 	}
 	if lead {
-		if value.Harness != "grok_build" && value.Harness != "codex_app_server" && value.Harness != "opencode" {
-			return AgentExecutionProfile{}, fmt.Errorf("lead harness must be grok_build, codex_app_server, or opencode")
+		if value.Harness != "grok_build" && value.Harness != "codex_app_server" && value.Harness != "opencode" && value.Harness != "pi" {
+			return AgentExecutionProfile{}, fmt.Errorf("lead harness must be grok_build, codex_app_server, opencode, or pi")
 		}
 	} else {
 		switch value.Harness {
@@ -264,7 +264,11 @@ func normalizeAgentExecutionProfile(label string, value AgentExecutionProfile, l
 	}
 	value.Permission = strings.TrimSpace(value.Permission)
 	if value.Permission == "" {
-		value.Permission = "ask"
+		if lead && value.Harness == "pi" {
+			value.Permission = "workspace"
+		} else {
+			value.Permission = "ask"
+		}
 	}
 	switch value.Permission {
 	case "ask", "read_only", "workspace", "provider_default":
@@ -316,6 +320,21 @@ func normalizeAgentExecutionProfile(label string, value AgentExecutionProfile, l
 		}
 		if value.Model != "" && !validOpenCodeModel(value.Model) {
 			return AgentExecutionProfile{}, fmt.Errorf("OpenCode lead model must use provider/model format")
+		}
+	}
+	if lead && value.Harness == "pi" {
+		if value.ServiceTier != "default" {
+			return AgentExecutionProfile{}, fmt.Errorf("Pi lead service tier must be default because pi --mode rpc exposes no service-tier control")
+		}
+		switch value.Permission {
+		case "read_only", "workspace", "ask":
+		default:
+			return AgentExecutionProfile{}, fmt.Errorf("Pi lead permission must be read_only, workspace, or ask so --tools can enforce the sandbox")
+		}
+		// Pi has no native search and no MCP injection. Do not keep a live
+		// search flag that the adapter cannot honor.
+		if value.WebSearch == AgentWebSearchLive {
+			value.WebSearch = AgentWebSearchDisabled
 		}
 	}
 	return value, nil

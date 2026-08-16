@@ -15,6 +15,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 	"github.com/robbyczgw-cla/openagentfleet/internal/events"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
+	"github.com/robbyczgw-cla/openagentfleet/internal/orchestration"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
 )
 
@@ -261,6 +262,60 @@ func TestAgentComputerCapabilityIsBoundToRunAndRevoked(t *testing.T) {
 	}
 }
 
+func TestConfiguredLeadHarnessAcceptsPiAndRejectsClaude(t *testing.T) {
+	lead, err := configuredLeadHarness("pi")
+	if err != nil || lead != orchestration.LeadPi {
+		t.Fatalf("configuredLeadHarness(pi) = %q, %v", lead, err)
+	}
+	if _, err := configuredLeadHarness("claude"); err == nil || !strings.Contains(err.Error(), "unsupported configured lead harness") {
+		t.Fatalf("configuredLeadHarness(claude) = %v, want unsupported lead error", err)
+	}
+}
+
+func TestPiLeadRejectsMCPServersIncludingComputer(t *testing.T) {
+	if err := rejectPiLeadMCP("pi", []harness.MCPServerSpec{{Name: "hound", Command: "hound-mcp"}}); err == nil || !strings.Contains(err.Error(), "does not support MCP") {
+		t.Fatalf("search MCP error = %v", err)
+	}
+	if err := rejectPiLeadMCP("pi", []harness.MCPServerSpec{{Name: browsermcp.MCPServerName, Command: "openagentfleet-browser-mcp"}}); err == nil || !strings.Contains(err.Error(), "Agent Computer") {
+		t.Fatalf("computer MCP error = %v", err)
+	}
+	if err := rejectPiLeadMCP("grok", []harness.MCPServerSpec{{Name: "hound", Command: "hound-mcp"}}); err != nil {
+		t.Fatalf("Grok MCP unexpectedly rejected: %v", err)
+	}
+
+	instance, err := store.Open(t.TempDir() + "/botd.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instance.Close() })
+	if err := instance.Seed(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	conversations, err := instance.ListConversations(t.Context(), "")
+	if err != nil || len(conversations) == 0 {
+		t.Fatalf("seeded conversations = %#v, err = %v", conversations, err)
+	}
+	server := &Server{
+		Store:                   instance,
+		Docker:                  &compute.Docker{},
+		Broker:                  events.New(),
+		HarnessWorkdir:          t.TempDir(),
+		AllowHarnessExecution:   true,
+		RemoteToken:             "run-scoped-token",
+		AgentComputerMCPCommand: executableFixture(t),
+		AgentComputerMCPAPIURL:  "http://127.0.0.1:4317",
+		runExecutorOverride:     &recordingHarnessExecutor{},
+		computerAgentControl:    true,
+	}
+	response := performRequest(server.Handler(), "POST", "/api/messages", `{"conversation_id":"`+conversations[0].ID+`","content":"inspect with computer","provider":"pi","permission_mode":"workspace"}`, "run-scoped-token")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "does not support MCP") {
+		t.Fatalf("Pi lead with Computer MCP = %d, body = %s", response.Code, response.Body.String())
+	}
+	if calls := server.runExecutorOverride.(*recordingHarnessExecutor).snapshot(); len(calls) != 0 {
+		t.Fatalf("Pi lead launched despite MCP: %#v", calls)
+	}
+}
+
 func TestConfiguredBoundedWorkersRejectsAdapterWithoutPermissionEnforcement(t *testing.T) {
 	_, err := configuredBoundedWorkers([]domain.AgentExecutionProfile{{
 		ID: "unsafe-cli", Harness: "claude", Reasoning: "high", ServiceTier: "default",
@@ -268,6 +323,27 @@ func TestConfiguredBoundedWorkersRejectsAdapterWithoutPermissionEnforcement(t *t
 	}})
 	if err == nil || !strings.Contains(err.Error(), "cannot enforce stored permission") {
 		t.Fatalf("error = %v, want fail-closed permission enforcement error", err)
+	}
+}
+
+func TestConfiguredBoundedWorkersAcceptsPiReadOnlyAndWorkspace(t *testing.T) {
+	for _, permission := range []string{"read_only", "workspace"} {
+		workers, err := configuredBoundedWorkers([]domain.AgentExecutionProfile{{
+			ID: "pi-reviewer", Harness: "pi", Model: "openai/gpt-4o", Reasoning: "high",
+			ServiceTier: "default", Permission: permission, MaxTurns: 3, TimeoutSeconds: 30,
+		}})
+		if err != nil {
+			t.Fatalf("permission %s: %v", permission, err)
+		}
+		if len(workers) != 1 || workers[0].Route.Worker != orchestration.WorkerPi {
+			t.Fatalf("permission %s workers = %#v", permission, workers)
+		}
+	}
+	if _, err := configuredBoundedWorkers([]domain.AgentExecutionProfile{{
+		ID: "pi-ask", Harness: "pi", Reasoning: "high", ServiceTier: "default",
+		Permission: "ask", MaxTurns: 3, TimeoutSeconds: 30,
+	}}); err == nil || !strings.Contains(err.Error(), "read_only or workspace") {
+		t.Fatalf("ask error = %v", err)
 	}
 }
 

@@ -691,6 +691,16 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 			s.writeErrorStatus(w, http.StatusBadRequest, err)
 			return
 		}
+	} else if provider == "pi" || provider == string(orchestration.LeadPi) {
+		permissionMode, err = piLeadPermissionMode(permissionMode)
+		if err != nil {
+			s.writeErrorStatus(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := harness.ValidatePiLeadOptions(model, reasoningEffort, serviceTier, permissionMode); err != nil {
+			s.writeErrorStatus(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	if len(request.AttachmentIDs) > 10 {
 		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("at most 10 attachments are allowed"))
@@ -699,6 +709,10 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 	mcpServers, err := s.leadMCPServerSpecs(r.Context(), mcpIDs)
 	if err != nil {
 		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	if err := rejectPiLeadMCP(provider, mcpServers); err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
 		return
 	}
 	computerCapability := computerCapabilityFromMCPServers(mcpServers)
@@ -823,6 +837,8 @@ func configuredLeadProvider(harnessID string) string {
 		return harness.CodexAppServerProvider
 	case harness.OpenCodeProvider:
 		return harness.OpenCodeProvider
+	case "pi":
+		return "pi"
 	default:
 		return harnessID
 	}
@@ -831,10 +847,27 @@ func configuredLeadProvider(harnessID string) string {
 func configuredLeadHarness(harnessID string) (orchestration.LeadHarness, error) {
 	value := orchestration.LeadHarness(harnessID)
 	switch value {
-	case orchestration.LeadGrokBuild, orchestration.LeadCodexAppServer, orchestration.LeadOpenCode:
+	case orchestration.LeadGrokBuild, orchestration.LeadCodexAppServer, orchestration.LeadOpenCode, orchestration.LeadPi:
 		return value, nil
 	default:
 		return "", fmt.Errorf("unsupported configured lead harness %q", harnessID)
+	}
+}
+
+func isPiLeadProvider(provider string) bool {
+	return provider == "pi" || provider == string(orchestration.LeadPi)
+}
+
+func rejectPiLeadMCP(provider string, mcpServers []harness.MCPServerSpec) error {
+	if !isPiLeadProvider(provider) || len(mcpServers) == 0 {
+		return nil
+	}
+	return errors.New("Pi lead does not support MCP injection; OpenAgentFleet will not silently drop selected MCP servers, including Agent Computer")
+}
+
+func applyPiLeadRole(provider string, options *harness.RunOptions) {
+	if isPiLeadProvider(provider) {
+		options.Role = "lead"
 	}
 }
 
@@ -866,12 +899,18 @@ func configuredBoundedWorkers(profiles []domain.AgentExecutionProfile) ([]orches
 	return workers, nil
 }
 
-// validateWorkerAdapterProfile is intentionally fail-closed. The generic Pi,
-// Claude, Codex CLI and Cursor command adapters do not currently translate the
-// stored permission boundary, so this production path must not pretend they do.
+// validateWorkerAdapterProfile is intentionally fail-closed. Claude, Codex CLI
+// and Cursor command adapters do not currently translate the stored permission
+// boundary, so this production path must not pretend they do. Pi is allowed
+// only when --tools can enforce read_only or workspace.
 func validateWorkerAdapterProfile(profile orchestration.BoundedWorker) error {
 	options := profile.Route.Options
 	switch profile.Route.Worker {
+	case orchestration.WorkerPi:
+		if err := harness.ValidatePiOptions(options.Model, string(options.Reasoning), string(options.ServiceTier), string(options.Permission)); err != nil {
+			return fmt.Errorf("worker profile %q: %w", profile.ProfileID, err)
+		}
+		return nil
 	case orchestration.WorkerGrok:
 		if options.ServiceTier != orchestration.ServiceTierDefault {
 			return fmt.Errorf("worker profile %q: Grok ACP does not expose service tier %q", profile.ProfileID, options.ServiceTier)
@@ -897,7 +936,7 @@ func validateWorkerAdapterProfile(profile orchestration.BoundedWorker) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("worker profile %q uses %q, whose current CLI adapter cannot enforce stored permission %q; use Grok or OpenCode until that adapter has an enforceable sandbox", profile.ProfileID, profile.Route.Worker, options.Permission)
+		return fmt.Errorf("worker profile %q uses %q, whose current CLI adapter cannot enforce stored permission %q; use Grok, OpenCode, or Pi until that adapter has an enforceable sandbox", profile.ProfileID, profile.Route.Worker, options.Permission)
 	}
 }
 
@@ -1351,6 +1390,22 @@ func appendSystemPrompt(existing, addition string) string {
 	return existing + "\n\n" + addition
 }
 
+func piLeadPermissionMode(value string) (string, error) {
+	switch value {
+	case "read_only", "workspace", "ask":
+		return value, nil
+	case "", "default", "plan":
+		// Workspace usage defaults are default/plan/auto. Map the safe
+		// defaults onto the Pi --tools sandbox instead of rejecting a
+		// normal Settings permission or pretending auto is available.
+		return "workspace", nil
+	case "auto", "yolo":
+		return "", fmt.Errorf("Pi lead auto permission is disabled because it would require unrestricted tools")
+	default:
+		return "", fmt.Errorf("unsupported Pi lead permission mode %q", value)
+	}
+}
+
 func grokAgentPermissionMode(value string) (string, error) {
 	switch value {
 	case "", "default", "ask":
@@ -1433,7 +1488,13 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 	}
 	run.Status = "running"
 
-	output, err := s.harnessRunExecutor().RunWithOptions(runContext, run.Provider, run.Prompt, s.HarnessWorkdir, harness.RunOptions{
+	if err := rejectPiLeadMCP(run.Provider, mcpServers); err != nil {
+		run.Status, run.Error = "failed", err.Error()
+		payload, _ := json.Marshal(map[string]string{"error": run.Error})
+		_ = s.commitTerminalRunLifecycleEvent(run, run.Status, run.Error, "run.failed", string(payload))
+		return
+	}
+	leadOptions := harness.RunOptions{
 		SessionID:       run.SessionID,
 		SystemPrompt:    systemPrompt,
 		Model:           model,
@@ -1462,7 +1523,9 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 		OnPermission: func(permissionContext context.Context, request harness.PermissionRequest) (harness.PermissionDecision, error) {
 			return s.awaitApproval(permissionContext, run, request)
 		},
-	})
+	}
+	applyPiLeadRole(run.Provider, &leadOptions)
+	output, err := s.harnessRunExecutor().RunWithOptions(runContext, run.Provider, run.Prompt, s.HarnessWorkdir, leadOptions)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			run.Status = "stopped"
@@ -1541,6 +1604,10 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 	}
 	run.Status = "running"
 
+	if err := rejectPiLeadMCP(run.Provider, mcpServers); err != nil {
+		fail(err)
+		return
+	}
 	leadHarness, err := configuredLeadHarness(agentLeadHarnessFromProvider(run.Provider))
 	if err != nil {
 		fail(err)
@@ -1565,12 +1632,14 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 		return s.awaitApproval(permissionContext, run, request)
 	}
 	leadOptions := func(sessionID string, onLine func(harness.OutputLine)) harness.RunOptions {
-		return harness.RunOptions{
+		options := harness.RunOptions{
 			SessionID: sessionID, OnSession: onLeadSession, SystemPrompt: systemPrompt,
 			Model: model, ReasoningEffort: reasoningEffort, ServiceTier: serviceTier,
 			PermissionMode: permissionMode, WebSearch: webSearch, MCPServers: mcpServers,
 			OnLine: onLine, OnPermission: leadPermission,
 		}
+		applyPiLeadRole(run.Provider, &options)
+		return options
 	}
 
 	_, _ = s.emitRunEvent(runContext, run, "lead.draft.started", `{"phase":"draft"}`)
@@ -1655,6 +1724,8 @@ func agentLeadHarnessFromProvider(provider string) string {
 		return string(orchestration.LeadCodexAppServer)
 	case harness.OpenCodeProvider:
 		return string(orchestration.LeadOpenCode)
+	case "pi":
+		return "pi"
 	default:
 		return provider
 	}

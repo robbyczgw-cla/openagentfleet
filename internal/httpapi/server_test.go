@@ -521,7 +521,7 @@ func TestAttachmentUploadAndClaimLifecycle(t *testing.T) {
 		t.Fatalf("attachment disposition = %q", got)
 	}
 
-	messageRequest := httptest.NewRequest(http.MethodPost, "/api/messages", strings.NewReader(`{"conversation_id":"`+conversation.ID+`","content":"Review this","provider":"pi","attachment_ids":["`+attachment.ID+`"]}`))
+	messageRequest := httptest.NewRequest(http.MethodPost, "/api/messages", strings.NewReader(`{"conversation_id":"`+conversation.ID+`","content":"Review this","provider":"pi","permission_mode":"workspace","attachment_ids":["`+attachment.ID+`"]}`))
 	messageRequest.Header.Set("Content-Type", "application/json")
 	messageResponse := httptest.NewRecorder()
 	server.ServeHTTP(messageResponse, messageRequest)

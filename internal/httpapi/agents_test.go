@@ -194,6 +194,7 @@ func TestConfiguredLeadProviderRoutesAllThreeLeadHarnesses(t *testing.T) {
 		"grok_build":             "grok",
 		"codex_app_server":       harness.CodexAppServerProvider,
 		harness.OpenCodeProvider: harness.OpenCodeProvider,
+		"pi":                     "pi",
 	} {
 		if got := configuredLeadProvider(configured); got != want {
 			t.Fatalf("configuredLeadProvider(%q) = %q, want %q", configured, got, want)
@@ -426,6 +427,35 @@ func TestGrokAgentPermissionMappingNeverBroadensWorkspaceToAuto(t *testing.T) {
 		if got != want {
 			t.Fatalf("%s mapped to %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestPiLeadPermissionMappingUsesWorkspaceForUsageDefaults(t *testing.T) {
+	for input, want := range map[string]string{
+		"": "workspace", "default": "workspace", "plan": "workspace",
+		"read_only": "read_only", "workspace": "workspace", "ask": "ask",
+	} {
+		got, err := piLeadPermissionMode(input)
+		if err != nil {
+			t.Fatalf("%s: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("%s mapped to %q, want %q", input, got, want)
+		}
+	}
+	if _, err := piLeadPermissionMode("auto"); err == nil {
+		t.Fatal("Pi lead auto permission was accepted")
+	}
+}
+
+func TestConfiguredPiLeadIsAccepted(t *testing.T) {
+	_, handler := openAgentsAPIServer(t)
+	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{
+		"name":"Pi Lead","title":"Runs Pi as the workspace engine",
+		"metadata":{"lead":{"harness":"pi","model":"openai/gpt-4o","reasoning":"high","service_tier":"default","permission":"workspace"}}
+	}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create Pi lead = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
 	}
 }
 

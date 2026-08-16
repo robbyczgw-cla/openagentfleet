@@ -21,6 +21,8 @@ type CommandOptions struct {
 	SessionID       string
 	Model           string
 	ReasoningEffort string
+	PermissionMode  string
+	Role            string // "" or "worker" = worker sandbox; "lead" = workspace engine
 }
 
 func BuildCommand(provider, prompt, workdir string) (Command, error) {
@@ -34,7 +36,7 @@ func BuildCommandWithOptions(provider, prompt, workdir string, options CommandOp
 	workdir, _ = filepath.Abs(workdir)
 	switch provider {
 	case "pi":
-		return Command{Program: "pi", Args: []string{"--mode", "json", "--print", prompt}, Dir: workdir}, nil
+		return buildPiRPCCommand(workdir, options)
 	case "claude":
 		return Command{Program: "claude", Args: []string{"--print", "--output-format", "stream-json", "--input-format", "text", prompt}, Dir: workdir}, nil
 	case "codex":

@@ -31,16 +31,28 @@ AI model: it is the Mac-local controller that owns authentication, policy,
 timeouts, approvals, memory retrieval, events, artifacts, and computer
 lifecycle.
 
-Current engine adapters are Grok Build, Codex App Server, and bundled
-OpenCode. The controller must fail clearly when the selected engine is missing
-or not signed in. It must never silently substitute another provider.
+Current engine adapters are Grok Build (the default, model `grok-4.6`), Codex
+App Server, bundled OpenCode, and optional Pi. The controller must fail
+clearly when the selected engine is missing or not signed in. It must never
+silently substitute another provider.
+
+A Pi engine starts `pi --mode rpc --no-session` with `--tools`. Memory stays
+OpenAgentFleet-owned; `--no-session` is required so Pi does not keep its own
+chat session. Sign-in is Pi's `pi /login` / `~/.pi`, not OpenAgentFleet
+OAuth. Pi has no MCP injection, so Hound, Web Search Plus, and Computer MCP
+are unavailable, and a Pi lead has no Agent Computer. Lead `ask`, when used,
+confirms through a bundled Pi extension and RPC `extension_ui`, not a native
+permission popup. Bounded worker Pi is a separate path and stays
+`read_only` or `workspace` with no `bash`.
 
 ## Agent Computer is a capability, not a worker
 
-When an Agent needs browser, desktop, terminal, or file-manager work, the
-selected workspace engine uses the local **Agent Computer** after the relevant
-permission is granted. This is the visible Chromium/Linux desktop on the Mac;
-it is not a cloud-only screenshot and not an extra Bot.
+When an Agent needs browser, desktop, terminal, or file-manager work, a
+workspace engine that receives Computer MCP uses the local **Agent Computer**
+after the relevant permission is granted. This is the visible Chromium/Linux
+desktop on the Mac; it is not a cloud-only screenshot and not an extra Bot.
+Pi is not in that set: a Pi lead never receives Computer MCP and cannot drive
+the Agent Computer.
 
 The computer is lazy: opening the app does not start a VM/container. First
 computer use detects or explicitly sets up Colima/Docker, then starts the
@@ -87,10 +99,13 @@ background help without exposing that matrix.
 - **Agent memory:** owned by OpenAgentFleet and shared across that Agent's
   optional chats and future engine changes. The controller passes only an
   approved retrieval snapshot to a run.
-- **Search:** native search belongs to the selected engine. Hound, Donsetch,
-  and Web Search Plus are explicit Agent MCP grants, never invisible fallbacks.
+- **Search:** native search belongs to the selected engine when that engine
+  actually exposes it. Hound, Donsetch, and Web Search Plus are explicit
+  Agent MCP grants, never invisible fallbacks, and they are never injected
+  into Pi.
 - **MCPs/plugins:** resolved and permission-checked by the controller before
-  they are made available. Workers do not automatically inherit them.
+  they are made available. Workers do not automatically inherit them. Pi
+  leads and Pi workers receive no MCP injection.
 - **Computer:** an explicit capability with separate human takeover. A worker
   has no live-desktop access unless a future isolated-worker feature grants it
   a different computer instance.

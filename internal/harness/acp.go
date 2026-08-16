@@ -43,6 +43,7 @@ type RunOptions struct {
 	PermissionMode  string
 	WebSearch       string
 	MCPServers      []MCPServerSpec
+	Role            string // "" or "worker" = worker sandbox; "lead" = workspace engine
 }
 
 type ACPNotification struct {
@@ -876,6 +877,10 @@ func (r *Runner) RunWithOptions(ctx context.Context, provider, prompt, workdir s
 		if err := ValidateOpenCodeOptions(options.Model, options.ReasoningEffort, options.ServiceTier, options.PermissionMode); err != nil {
 			return "", err
 		}
+	}
+	if provider == piProvider {
+		prompt = promptWithSystemFallback(options.SystemPrompt, prompt)
+		return r.runPiRPC(ctx, prompt, workdir, options)
 	}
 	prompt = promptWithSystemFallback(options.SystemPrompt, prompt)
 	return r.runCommand(ctx, provider, prompt, workdir, options)

@@ -254,6 +254,49 @@ func TestWorkerOnlyProviderCannotBecomeWorkspaceLead(t *testing.T) {
 	if _, err := MergePatch(defaults, []byte(`{"workspace":{"engine":"claude"}}`)); err == nil {
 		t.Fatal("worker-only workspace lead was accepted")
 	}
+	if _, err := MergePatch(defaults, []byte(`{"workspace":{"engine":"cursor"}}`)); err == nil {
+		t.Fatal("cursor workspace lead was accepted")
+	}
+}
+
+func TestDefaultsKeepGrokWorkspaceEngine(t *testing.T) {
+	defaults := Defaults()
+	if defaults.Workspace.Engine != ProviderGrok {
+		t.Fatalf("default workspace engine = %q, want %q", defaults.Workspace.Engine, ProviderGrok)
+	}
+	if defaults.Workspace.Model != "grok-4.6" {
+		t.Fatalf("default workspace model = %q, want grok-4.6", defaults.Workspace.Model)
+	}
+	normalized := Preferences{Version: CurrentVersion}.Normalize()
+	if normalized.Workspace.Engine != ProviderGrok {
+		t.Fatalf("normalized empty document changed default lead: %#v", normalized.Workspace)
+	}
+}
+
+func TestWorkspaceEngineAcceptsPiWithoutRewritingGrokDefault(t *testing.T) {
+	defaults := Defaults()
+	if defaults.Workspace.Engine != ProviderGrok {
+		t.Fatalf("default workspace engine = %q, want %q", defaults.Workspace.Engine, ProviderGrok)
+	}
+
+	updated, err := MergePatch(defaults, []byte(`{"workspace":{"engine":"pi"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Workspace.Engine != ProviderPi {
+		t.Fatalf("pi workspace engine = %q", updated.Workspace.Engine)
+	}
+	if updated.Workspace.Model != "" {
+		t.Fatalf("pi default model = %q, want provider automatic", updated.Workspace.Model)
+	}
+
+	untouched, err := MergePatch(defaults, []byte(`{"appearance":{"theme":"dark"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if untouched.Workspace.Engine != ProviderGrok {
+		t.Fatalf("unrelated patch rewrote workspace engine to %q", untouched.Workspace.Engine)
+	}
 }
 
 func TestValidateRejectsInvalidProviderAndAutomaticControl(t *testing.T) {
