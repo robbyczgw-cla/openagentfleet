@@ -77,6 +77,9 @@ func TestPreferencesPersistStrictPatchAndBootstrap(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"preferences"`) || !strings.Contains(response.Body.String(), `"theme":"dark"`) {
 		t.Fatalf("bootstrap preferences = %d, body = %s", response.Code, response.Body.String())
 	}
+	if !strings.Contains(response.Body.String(), `"host_os":"`) {
+		t.Fatalf("bootstrap omitted host_os: %s", response.Body.String())
+	}
 }
 
 func TestLegacyWorkerDefaultsDoNotOverrideWorkspaceLead(t *testing.T) {

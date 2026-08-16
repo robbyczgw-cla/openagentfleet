@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/preferences"
@@ -147,13 +148,33 @@ func formatGiB(bytes uint64) string {
 var diskFreeBytes = platformDiskFreeBytes
 
 const (
-	colimaImageBudgetGiB = 6
-	minimumColimaFreeGiB = 8
-	minimumDataFreeGiB   = 2
+	colimaImageBudgetGiB      = 6
+	minimumColimaFreeGiB      = 8
+	minimumDataFreeGiB        = 2
+	linuxDockerImageBudgetGiB = 8
 )
+
+func (d *Docker) currentRuntimeID() string {
+	d.runtimeMu.RLock()
+	defer d.runtimeMu.RUnlock()
+	if strings.TrimSpace(d.RuntimeID) == "" {
+		if runtime.GOOS == "linux" {
+			return RuntimeDocker
+		}
+		return RuntimeColima
+	}
+	return d.RuntimeID
+}
 
 func (d *Docker) checkHostStorage(resource ResourceConfig) error {
 	resource = resource.Normalize()
+	if d.currentRuntimeID() == RuntimeColima {
+		return d.checkColimaHostStorage(resource)
+	}
+	return d.checkDockerEngineStorage(resource)
+}
+
+func (d *Docker) checkColimaHostStorage(resource ResourceConfig) error {
 	profileRoot, err := colimaStorageRoot()
 	if err != nil {
 		return err
@@ -170,6 +191,35 @@ func (d *Docker) checkHostStorage(resource ResourceConfig) error {
 		dataPath = profileRoot
 	}
 	return requireHostFree(dataPath, uint64(minimumDataFreeGiB)*1024*1024*1024, "the Agent Computer workspace and browser profile")
+}
+
+func (d *Docker) checkDockerEngineStorage(resource ResourceConfig) error {
+	_ = resource
+	dataPath := d.Workspace
+	if strings.TrimSpace(dataPath) == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve home for Agent Computer storage: %w", err)
+		}
+		dataPath = home
+	}
+	if err := requireHostFree(dataPath, uint64(minimumDataFreeGiB)*1024*1024*1024, "the Agent Computer workspace and browser profile"); err != nil {
+		return err
+	}
+	imageRoot := linuxDockerStorageRoot()
+	if imageRoot == "" {
+		imageRoot = dataPath
+	}
+	return requireHostFree(imageRoot, uint64(linuxDockerImageBudgetGiB)*1024*1024*1024, "the Agent Computer image layers")
+}
+
+func linuxDockerStorageRoot() string {
+	for _, candidate := range []string{"/var/lib/docker", "/var/lib/containerd"} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func requireHostFree(path string, need uint64, purpose string) error {

@@ -46,14 +46,19 @@ delete or shrink the profile disk. For example, a profile with 100 GiB stays
 at 100 GiB when the setting is changed to 25 GiB. A new profile can start with
 the requested disk size, and a smaller-than-existing request is safe.
 
-## What happens when the Mac does not have enough free space?
+## What happens when the host does not have enough free space?
 
-Before starting Colima, OpenAgentFleet checks free space on the filesystem that
+On macOS with Colima, OpenAgentFleet checks free space on the filesystem that
 holds Colima and on the Agent Computer workspace/profile location. The check
 includes the requested VM disk and guest swap, image-layer headroom, and
-workspace/profile headroom. If the budget is not available, provisioning is
-blocked before a VM or container is created. The UI shows a specific free-space
-error and a retry path instead of reporting a vague Docker or Chromium error.
+workspace/profile headroom.
+
+On Linux with Docker Engine, the check is for image layers plus the workspace
+and browser profile on the host filesystem. There is no Colima VM disk.
+
+If the budget is not available, provisioning is blocked before a VM or
+container is created. The UI shows a specific free-space error and a retry
+path instead of reporting a vague Docker or Chromium error.
 
 Freeing space and retrying is enough; the preflight does not delete unrelated
 files or automatically resize other runtimes.
@@ -65,6 +70,7 @@ each through Docker-compatible commands:
 
 | Runtime | What OpenAgentFleet controls | What the runtime controls |
 | --- | --- | --- |
+| Docker Engine (Linux default) | Container CPU, RAM and swap limits | Host Docker storage and daemon |
 | Colima | VM CPU, VM RAM, VM disk and guest swap | The underlying macOS/VM lifecycle |
 | Docker Desktop | Container CPU, RAM and swap limits | VM CPU/RAM/storage and its disk image |
 | OrbStack | Container CPU, RAM and swap limits | VM/machine CPU/RAM/storage and its disk management |

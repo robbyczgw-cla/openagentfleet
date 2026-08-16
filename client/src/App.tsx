@@ -635,7 +635,19 @@ type Bootstrap = {
   attachments?: Attachment[];
   stt?: STTStatus;
   memories?: Memory[];
+  host_os?: string;
 };
+
+function isLinuxHost(data?: Bootstrap | null) {
+  if (data?.host_os) return data.host_os === "linux";
+  return typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent);
+}
+
+function hostDeviceName(data?: Bootstrap | null) {
+  if (isLinuxHost(data)) return "computer";
+  if (data?.host_os === "windows") return "PC";
+  return "Mac";
+}
 
 function formatTime(value: string) {
   const date = new Date(value);
@@ -2823,14 +2835,23 @@ function App() {
     return data?.runtimes?.find((runtime) => runtime.id === "colima");
   }
 
-  async function copyColimaInstallCommand() {
-    const command = colimaRuntime()?.install_command ?? "brew install colima docker";
+  function dockerEngineRuntime() {
+    return data?.runtimes?.find((runtime) => runtime.id === "docker");
+  }
+
+  async function copyRuntimeInstallCommand(command: string) {
     try {
       await navigator.clipboard.writeText(command);
       setRuntimeCommandCopied(true);
     } catch {
       setRuntimeInstallError("Copy is unavailable. Select the command and copy it manually.");
     }
+  }
+
+  async function copyColimaInstallCommand() {
+    await copyRuntimeInstallCommand(
+      colimaRuntime()?.install_command ?? "brew install colima docker",
+    );
   }
 
   async function installColima() {
@@ -3806,7 +3827,15 @@ function App() {
     }
     if (!nativeRuntime) {
       setNotice(
-        "Secure password entry is available in the OpenAgentFleet Mac app, not this web preview.",
+        isLinuxHost(data)
+          ? "Secure password entry is a native-app path. This web preview cannot collect it."
+          : "Secure password entry is available in the OpenAgentFleet Mac app, not this web preview.",
+      );
+      return;
+    }
+    if (isLinuxHost(data)) {
+      setNotice(
+        "Secure password entry is macOS-only. Type the password in the Agent Computer after you take control.",
       );
       return;
     }
@@ -3898,7 +3927,7 @@ function App() {
         );
       } else if (target === "grok") {
         setNotice(
-          "Grok Build opened its OAuth flow in the default browser on this Mac.",
+          `Grok Build opened its OAuth flow in the default browser on this ${hostDeviceName(data)}.`,
         );
       } else {
         setNotice(
@@ -5756,7 +5785,8 @@ function App() {
                 <div className="eyebrow">Your lead harnesses</div>
                 <h2 id="onboarding-title">Choose who runs your agents.</h2>
                 <p>
-                  OpenAgentFleet uses the AI tools already available on this Mac.
+                  OpenAgentFleet uses the AI tools already available on this
+                  {isLinuxHost(data) ? " computer" : " Mac"}.
                   Pick one workspace lead; you can change it later in Settings.
                 </p>
                 <div
@@ -5870,7 +5900,7 @@ function App() {
                   })}
                 </div>
                 <div className="onboarding-facts onboarding-engine-facts">
-                  <div><strong>Local control</strong><span>Agents, memory and approvals stay on this Mac.</span></div>
+                  <div><strong>Local control</strong><span>Agents, memory and approvals stay on this {isLinuxHost(data) ? "computer" : "Mac"}.</span></div>
                   <div><strong>One lead harness</strong><span>All agents use this harness and model unless you add an advanced override.</span></div>
                   <div><strong>Open choices</strong><span>Optional tools stay off until you turn them on.</span></div>
                 </div>
@@ -7242,20 +7272,36 @@ function App() {
               <label>
                 Agent Computer runtime
                 <select
-                  value={preferences.computer?.runtime ?? "colima"}
+                  value={
+                    preferences.computer?.runtime ??
+                    (isLinuxHost(data) ? "docker" : "colima")
+                  }
                   onChange={(event) =>
                     void patchPreferences({
                       computer: { runtime: event.target.value },
                     })
                   }
                 >
-                  <option value="colima">Colima + Docker (recommended)</option>
-                  <option value="docker_desktop">Docker Desktop</option>
-                  <option value="orbstack">OrbStack + Docker</option>
-                  <option value="auto">Automatic compatibility fallback</option>
-                  <option value="apple_container" disabled>
-                    Apple Container — experimental adapter pending
-                  </option>
+                  {isLinuxHost(data) ? (
+                    <>
+                      <option value="docker">Docker Engine (recommended)</option>
+                      <option value="auto">Automatic compatibility fallback</option>
+                      <option value="colima">Colima + Docker</option>
+                      <option value="docker_desktop">Docker Desktop</option>
+                      <option value="orbstack">OrbStack + Docker</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="colima">Colima + Docker (recommended)</option>
+                      <option value="docker_desktop">Docker Desktop</option>
+                      <option value="orbstack">OrbStack + Docker</option>
+                      <option value="docker">Docker Engine</option>
+                      <option value="auto">Automatic compatibility fallback</option>
+                      <option value="apple_container" disabled>
+                        Apple Container — experimental adapter pending
+                      </option>
+                    </>
+                  )}
                 </select>
               </label>
               <details className="settings-advanced-section computer-resources-settings">
@@ -7266,9 +7312,9 @@ function App() {
                   </span>
                 </summary>
                 <p className="field-note">
-                  Optional. Colima uses these values for the isolated Linux VM;
-                  Docker Desktop and OrbStack use CPU/RAM/swap as container
-                  limits while their VM disk stays managed by the runtime.
+                  {isLinuxHost(data)
+                    ? "Optional. Docker Engine uses CPU, RAM and swap as container limits. Disk is managed by the Docker host."
+                    : "Optional. Colima uses these values for the isolated Linux VM; Docker Desktop and OrbStack use CPU/RAM/swap as container limits while their VM disk stays managed by the runtime."}
                 </p>
                 <label>
                   Resource preset
@@ -7421,7 +7467,36 @@ function App() {
                   </div>
                 ))}
               </div>
-              {!colimaRuntime()?.available && (
+              {isLinuxHost(data) && !dockerEngineRuntime()?.healthy && (
+                <div className="runtime-install-card compact">
+                  <div>
+                    <strong>Install Docker Engine</strong>
+                    <small>
+                      {dockerEngineRuntime()?.detail ??
+                        "The Agent Computer needs a local Docker Engine. The package recommends Docker but does not start a container until you open Computer View."}
+                    </small>
+                  </div>
+                  <code>
+                    {dockerEngineRuntime()?.install_command ??
+                      "sudo apt update && sudo apt install -y docker.io && sudo usermod -aG docker $USER && sudo systemctl enable --now docker"}
+                  </code>
+                  <div className="runtime-install-actions">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void copyRuntimeInstallCommand(
+                          dockerEngineRuntime()?.install_command ??
+                            "sudo apt update && sudo apt install -y docker.io && sudo usermod -aG docker $USER && sudo systemctl enable --now docker",
+                        )
+                      }
+                    >
+                      {runtimeCommandCopied ? "Copied" : "Copy command"}
+                    </button>
+                  </div>
+                  {runtimeInstallError && <p>{runtimeInstallError}</p>}
+                </div>
+              )}
+              {!isLinuxHost(data) && !colimaRuntime()?.available && (
                 <div className="runtime-install-card compact">
                   <div>
                     <strong>Install the recommended runtime</strong>
@@ -7447,9 +7522,9 @@ function App() {
                 </div>
               )}
               <p className="field-note">
-                Colima starts lazily when Agent Computer is requested. Runtime
-                changes apply after restarting the local controller. Apple Container
-                is discovery-only until its adapter passes the full Chromium/Xfce/Takeover test.
+                {isLinuxHost(data)
+                  ? "On Linux, Docker Engine is the recommended Agent Computer runtime. It starts lazily when Computer View or an approved desktop task needs it."
+                  : "Colima starts lazily when Agent Computer is requested. Runtime changes apply after restarting the local controller. Apple Container is discovery-only until its adapter passes the full Chromium/Xfce/Takeover test."}
               </p>
               <details className="settings-advanced-section">
                 <summary>Advanced computer routing</summary>
@@ -7542,7 +7617,7 @@ function App() {
               </div>
               <p>
                 New authority stays off after install and upgrades. Enable only
-                the systems this Mac should expose.
+                the systems this {hostDeviceName(data)} should expose.
               </p>
               <div className="optional-system-list">
                 {([
@@ -7610,7 +7685,7 @@ function App() {
                 />
               </label>
               <p className="field-note">
-                Enter this Mac&apos;s Tailscale Serve address. It is used only
+                Enter this {hostDeviceName(data)}&apos;s Tailscale Serve address. It is used only
                 to compose the pairing bundle and is not saved as a preference.
               </p>
               <div className="mobile-pairing-form">

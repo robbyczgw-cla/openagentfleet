@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,6 +126,7 @@ type bootstrapResponse struct {
 	Attachments      []domain.Attachment        `json:"attachments"`
 	STT              stt.Status                 `json:"stt"`
 	Preferences      preferences.Preferences    `json:"preferences"`
+	HostOS           string                     `json:"host_os"`
 }
 
 type approvalResolutionRequest struct {
@@ -461,7 +463,7 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		runtimes = compute.DiscoverRuntimes(r.Context(), selectedRuntime)
 	}
-	s.writeJSON(w, http.StatusOK, bootstrapResponse{Bots: bots, Agents: agents, Memories: memories, Conversations: conversations, Conversation: conversation, Messages: messages, Capabilities: capabilities, ModelCatalog: buildModelCatalog(capabilities, auth), Computer: computer, Runtimes: runtimes, Runs: runs, Approvals: approvals, TranscriptBlocks: transcriptBlocks, Sessions: sessions, Skills: skillList, Auth: auth, Attachments: attachments, STT: sttStatus, Preferences: preferenceValues})
+	s.writeJSON(w, http.StatusOK, bootstrapResponse{Bots: bots, Agents: agents, Memories: memories, Conversations: conversations, Conversation: conversation, Messages: messages, Capabilities: capabilities, ModelCatalog: buildModelCatalog(capabilities, auth), Computer: computer, Runtimes: runtimes, Runs: runs, Approvals: approvals, TranscriptBlocks: transcriptBlocks, Sessions: sessions, Skills: skillList, Auth: auth, Attachments: attachments, STT: sttStatus, Preferences: preferenceValues, HostOS: runtime.GOOS})
 }
 
 func (s *Server) runtimes(w http.ResponseWriter, r *http.Request) {

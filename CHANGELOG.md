@@ -7,7 +7,12 @@ All notable OpenAgentFleet changes are recorded here.
 - Added Donsetch as a third optional, off-by-default search connector beside
   Web Search Plus and Hound, launched through a pinned `npx donsetch@2.1.0 mcp`
   contract.
-
+- Started Windows desktop research: NSIS + Docker Desktop/WSL2 is the first
+  alpha contract; see `docs/windows-desktop.md`.
+- Added a native Linux desktop alpha with `.deb`, `.rpm` and `.AppImage`
+  packages. Fresh Linux installs default the Agent Computer to Docker Engine.
+- Docker is recommended by the Linux packages, not silently started; Computer
+  View builds the isolated container on demand.
 - Refined the first-run Agent Computer flow and optional runtime settings.
 - Added configurable CPU, memory, disk and swap limits with host-capacity guards.
 - Improved Colima/Docker lifecycle handling, desktop frames, keyboard input and
