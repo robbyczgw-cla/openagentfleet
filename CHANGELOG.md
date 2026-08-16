@@ -4,6 +4,12 @@ All notable OpenAgentFleet changes are recorded here.
 
 ## Unreleased
 
+macOS `v0.2.0-alpha` is not published until a Developer ID DMG is notarized
+and stapled from this version. Linux `.deb` / `.rpm` / `.AppImage` can be
+built from the same commit.
+
+## 0.2.0-alpha
+
 ### Pi as an optional workspace engine
 
 Pi is now a selectable lead, not a “future worker” placeholder. The default

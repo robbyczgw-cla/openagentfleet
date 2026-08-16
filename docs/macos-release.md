@@ -7,7 +7,7 @@ Developer ID, notarization, stapling, Gatekeeper, and checksum checks below.
 
 ## Measured state of the current checkout
 
-- Product version: `0.1.0`.
+- Product version: `0.2.0`.
 - Target: Apple Silicon macOS.
 - The normal Tauri configuration uses `signingIdentity: "-"` for local
   development, which produces an ad-hoc signature.
@@ -66,7 +66,7 @@ just because its filename matches.
 
 ```sh
 APP='client/src-tauri/target/release/bundle/macos/OpenAgentFleet.app'
-DMG='client/src-tauri/target/release/bundle/dmg/OpenAgentFleet_0.1.0_aarch64.dmg'
+DMG='client/src-tauri/target/release/bundle/dmg/OpenAgentFleet_0.2.0_aarch64.dmg'
 ./scripts/verify-macos-release.sh "$APP" "$DMG"
 ```
 
@@ -109,11 +109,11 @@ For a future release, publish only after the signature, ticket, Gatekeeper and
 checksum gates pass:
 
 ```sh
-gh release create v0.1.0-alpha \
-  "$DMG#OpenAgentFleet 0.1.0 Apple Silicon DMG" \
+gh release create v0.2.0-alpha \
+  "$DMG#OpenAgentFleet 0.2.0 Apple Silicon DMG" \
   SHA256SUMS \
   --repo robbyczgw-cla/openagentfleet \
-  --title 'OpenAgentFleet vX.Y.Z alpha' \
+  --title 'OpenAgentFleet v0.2.0-alpha' \
   --prerelease
 ```
 

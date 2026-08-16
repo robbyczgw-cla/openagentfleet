@@ -1,15 +1,16 @@
 # OpenAgentFleet
 
-> **Run AI agents on your Mac with explicit control.**
+> **Run AI agents on your Mac or Linux computer with explicit control.**
 
 Use Grok Build, Codex App Server, bundled OpenCode, or optional Pi in one
 local workspace. For browser and desktop tasks, engines that actually receive
 Computer MCP get an isolated Linux computer you can watch, stop, or take over.
 
-**Open-source public alpha.** The Mac-first runtime is real and tested, but
-OpenAgentFleet is not feature-complete or production-ready. Provider login,
-model availability, macOS permissions, and local runtime setup depend on your
-machine. The project is independent and licensed under [Apache-2.0](LICENSE).
+**Open-source public alpha.** The Mac runtime is signed through `v0.1.0-alpha`.
+`0.2.0` adds optional Pi, Donsetch, and a Linux host app; the notarized
+`v0.2.0-alpha` DMG is the next Mac publish. The project is not
+feature-complete or production-ready. The project is independent and licensed
+under [Apache-2.0](LICENSE).
 
 [Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.1.0-alpha/OpenAgentFleet_0.1.0_aarch64.dmg) ·
 [Build the Linux packages](docs/linux-release.md) ·
