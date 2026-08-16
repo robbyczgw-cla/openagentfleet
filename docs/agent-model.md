@@ -158,9 +158,10 @@ preflight rather than silently substituted.
 ## Search, permissions, and current boundary
 
 Native web search is an engine capability on Grok Build and Codex App Server.
-Optional Web Search Plus and Hound remain explicit Agent MCP grants; they are
-never silently installed or used as a fallback for disabled native search.
-They are not injected into a Pi engine at all. Search connector configuration
+Optional Web Search Plus, Hound, and Donsetch remain explicit Agent MCP
+grants; they are never silently installed or used as a fallback for disabled
+native search. They are not injected into a Pi engine at all. Search
+connector configuration
 belongs in Agent tools/Settings, not first-run onboarding.
 
 `botd` remains the local policy boundary: it authenticates local clients,

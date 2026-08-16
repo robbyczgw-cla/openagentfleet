@@ -473,10 +473,13 @@ type OnboardingLead = "grok_build" | "codex_app_server" | "opencode" | "pi";
 type SearchConnectorState = {
   web_search_plus_enabled: boolean;
   hound_enabled: boolean;
+  donsetch_enabled: boolean;
   web_search_plus_launcher_ready?: boolean;
   web_search_plus_detail?: string;
   hound_launcher_ready?: boolean;
   hound_detail?: string;
+  donsetch_launcher_ready?: boolean;
+  donsetch_detail?: string;
   web_search_plus_credential_status?: string;
   web_search_plus_credential_masked?: string;
 };
@@ -486,7 +489,7 @@ type SearchConnectorAvailability =
   | "available"
   | "absent"
   | "error";
-type SearchConnectorID = "web_search_plus" | "hound";
+type SearchConnectorID = "web_search_plus" | "hound" | "donsetch";
 type NativeSearchMode = "connected_harness" | "opencode" | "pi";
 type OptionalFeatures = {
   lead_worker_runtime?: boolean;
@@ -1001,7 +1004,8 @@ function searchConnectorStateFrom(value: unknown): SearchConnectorState | null {
   const payload = value as Record<string, unknown>;
   if (
     typeof payload.web_search_plus_enabled !== "boolean" ||
-    typeof payload.hound_enabled !== "boolean"
+    typeof payload.hound_enabled !== "boolean" ||
+    typeof payload.donsetch_enabled !== "boolean"
   ) {
     return null;
   }
@@ -1013,9 +1017,14 @@ function searchConnectorStateFrom(value: unknown): SearchConnectorState | null {
     payload.hound && typeof payload.hound === "object"
       ? (payload.hound as Record<string, unknown>)
       : null;
+  const donsetch =
+    payload.donsetch && typeof payload.donsetch === "object"
+      ? (payload.donsetch as Record<string, unknown>)
+      : null;
   return {
     web_search_plus_enabled: payload.web_search_plus_enabled,
     hound_enabled: payload.hound_enabled,
+    donsetch_enabled: payload.donsetch_enabled,
     web_search_plus_launcher_ready:
       typeof webSearchPlus?.ready === "boolean" ? webSearchPlus.ready : undefined,
     web_search_plus_detail:
@@ -1023,6 +1032,10 @@ function searchConnectorStateFrom(value: unknown): SearchConnectorState | null {
     hound_launcher_ready:
       typeof hound?.ready === "boolean" ? hound.ready : undefined,
     hound_detail: typeof hound?.detail === "string" ? hound.detail : undefined,
+    donsetch_launcher_ready:
+      typeof donsetch?.ready === "boolean" ? donsetch.ready : undefined,
+    donsetch_detail:
+      typeof donsetch?.detail === "string" ? donsetch.detail : undefined,
     web_search_plus_credential_status:
       typeof payload.web_search_plus_credential_status === "string"
         ? payload.web_search_plus_credential_status
@@ -1187,6 +1200,31 @@ function SearchConnectorCards({
             disabled={busy !== null}
             onChange={(event) => onToggle("hound", event.target.checked)}
             aria-label="Enable Hound"
+          />
+        </label>
+      </article>
+      <article className="search-connector-card">
+        <span className="search-connector-mark">D</span>
+        <div>
+          <strong>Donsetch</strong>
+          <small>Independent keyless fetch, search, and crawl connector.</small>
+          <em>No credential required</em>
+          {connectors.donsetch_enabled && (
+            <em>
+              {connectors.donsetch_launcher_ready
+                ? "Launcher verified · MCP starts on use"
+                : connectors.donsetch_detail ?? "Launcher unavailable"}
+            </em>
+          )}
+        </div>
+        <label className="connector-switch">
+          <span>{connectors.donsetch_enabled ? "On" : "Off"}</span>
+          <input
+            type="checkbox"
+            checked={connectors.donsetch_enabled}
+            disabled={busy !== null}
+            onChange={(event) => onToggle("donsetch", event.target.checked)}
+            aria-label="Enable Donsetch"
           />
         </label>
       </article>
@@ -2719,6 +2757,8 @@ function App() {
           : searchConnectors.web_search_plus_enabled,
       hound_enabled:
         connector === "hound" ? enabled : searchConnectors.hound_enabled,
+      donsetch_enabled:
+        connector === "donsetch" ? enabled : searchConnectors.donsetch_enabled,
     };
     setSearchConnectorBusy(connector);
     setSearchConnectorsError(null);
@@ -2729,6 +2769,7 @@ function App() {
         body: JSON.stringify({
           web_search_plus_enabled: requested.web_search_plus_enabled,
           hound_enabled: requested.hound_enabled,
+          donsetch_enabled: requested.donsetch_enabled,
         }),
       });
       const responseText = await response.text();
@@ -2756,8 +2797,15 @@ function App() {
       const confirmedEnabled =
         connector === "web_search_plus"
           ? confirmed.web_search_plus_enabled
-          : confirmed.hound_enabled;
-      const mcpID = connector === "web_search_plus" ? "web-search-plus" : "hound";
+          : connector === "hound"
+            ? confirmed.hound_enabled
+            : confirmed.donsetch_enabled;
+      const mcpID =
+        connector === "web_search_plus"
+          ? "web-search-plus"
+          : connector === "hound"
+            ? "hound"
+            : "donsetch";
       setOnboardingConnectorMCPs((current) => {
         if (!confirmedEnabled) return current.filter((id) => id !== mcpID);
         if (source !== "onboarding" || current.includes(mcpID)) return current;
@@ -6041,10 +6089,10 @@ function App() {
                 <h2 id="onboarding-title">Add search when it helps.</h2>
                 <p>
                   {onboardingLead === "opencode"
-                    ? "OpenCode uses its configured model tools. Web Search Plus and keyless Hound are independent optional connectors."
+                    ? "OpenCode uses its configured model tools. Web Search Plus, keyless Hound, and keyless Donsetch are independent optional connectors."
                     : onboardingLead === "pi"
-                      ? "Pi has no native search and does not inject connectors or Agent Computer. Web Search Plus and keyless Hound stay optional and separate."
-                    : "The selected lead harness can provide built-in live search. Web Search Plus and keyless Hound add independent optional routes."}{" "}
+                      ? "Pi has no native search and does not inject connectors or Agent Computer. Web Search Plus, Hound, and Donsetch stay optional and separate."
+                    : "The selected lead harness can provide built-in live search. Web Search Plus, keyless Hound, and keyless Donsetch add independent optional routes."}{" "}
                   You can change these choices later in Settings.
                 </p>
                 <div className="onboarding-search-connectors">
@@ -6094,6 +6142,7 @@ function App() {
                             ? "Web Search Plus"
                             : "",
                           searchConnectors.hound_enabled ? "Hound" : "",
+                          searchConnectors.donsetch_enabled ? "Donsetch" : "",
                         ].filter(Boolean).join(" + ") || "None enabled"
                       : "Status unavailable"}
                   </strong>
@@ -6407,10 +6456,10 @@ function App() {
               </label>
               <p className="field-note">
                 {agentLeadHarness === "opencode"
-                  ? "OpenCode uses the selected provider/model and its own tool permissions. Web Search Plus and Hound are explicit optional MCP grants."
+                  ? "OpenCode uses the selected provider/model and its own tool permissions. Web Search Plus, Hound, and Donsetch are explicit optional MCP grants."
                   : agentLeadHarness === "pi"
                     ? "Pi approvals are read_only or workspace, enforced by --tools. Search connectors and Agent Computer are not injected."
-                  : "Reasoning depth applies to the selected model. Live search is native to the lead; Web Search Plus and Hound remain optional connectors."}
+                  : "Reasoning depth applies to the selected model. Live search is native to the lead; Web Search Plus, Hound, and Donsetch remain optional connectors."}
               </p>
             </section>
             <label className="builder-toggle">

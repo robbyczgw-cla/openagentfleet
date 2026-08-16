@@ -20,8 +20,8 @@ Lead `ask` confirms through a bundled Pi extension and RPC `extension_ui`,
 not a native OpenAgentFleet permission popup. Workspace usage `default` and
 `plan` map to Pi lead permission `workspace`. `auto` is rejected.
 
-Pi still has no MCP injection: no Hound, no Web Search Plus, and no Computer
-MCP. A Pi engine therefore has no Agent Computer. Enabling those connectors
+Pi still has no MCP injection: no Hound, no Web Search Plus, no Donsetch,
+and no Computer MCP. A Pi engine therefore has no Agent Computer. Enabling those connectors
 on a Pi lead is an error, not a silent drop.
 
 The model picker lists real Pi `provider/model` IDs from `@mariozechner/pi-ai`
@@ -42,6 +42,9 @@ README and the Agent / lead-worker docs now treat Pi as a first-class
 optional engine and state the Computer, MCP, and auth boundaries in the
 same place as Grok, Codex, and OpenCode.
 
+- Added Donsetch as a third optional, off-by-default search connector beside
+  Web Search Plus and Hound, launched through a pinned `npx donsetch@2.1.0 mcp`
+  contract.
 - Started Windows desktop research: NSIS + Docker Desktop/WSL2 is the first
   alpha contract; see `docs/windows-desktop.md`.
 - Added a native Linux desktop alpha with `.deb`, `.rpm` and `.AppImage`

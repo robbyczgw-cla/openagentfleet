@@ -42,7 +42,7 @@ These capabilities are available for users who need them, but are not required
 to understand or use the core product:
 
 - bounded workers below the primary AI engine;
-- native search, Web Search Plus MCP and Hound MCP connectors;
+- native search, Web Search Plus, Hound and Donsetch MCP connectors;
 - Colima, Docker Desktop, OrbStack and optional remote Computer workers;
 - routines, heartbeat runs, plugins, skills and mobile control over Tailscale.
 
@@ -68,7 +68,7 @@ the engine:
 - **Pi** is opt-in. Install the `pi` CLI and sign in with `pi /login`
   (credentials stay in `~/.pi`). A Pi lead is `pi --mode rpc --no-session`
   with `--tools`. Memory stays OpenAgentFleet-owned. Pi has no MCP
-  injection, so Hound, Web Search Plus, and the Agent Computer are
+  injection, so Hound, Web Search Plus, Donsetch, and the Agent Computer are
   unavailable. Lead `ask` confirms through a bundled Pi extension and RPC
   `extension_ui`, not a native OpenAgentFleet popup. Picking `xai/grok-4.3`
   or `openai/gpt-5.5` in the Pi picker still runs **through Pi**, not as
@@ -236,10 +236,11 @@ desktop-frame, takeover and approval acceptance suite.
 
 ## Search, MCP and plugins
 
-Native search stays available to AI engines that support it. Web Search Plus
-and Hound are independent optional MCP connectors with visible per-Agent
-configuration and credentials. Connector IDs are validated before a run and
-their provenance is recorded in [NOTICE.md](NOTICE.md).
+Native search stays available to AI engines that support it. Web Search Plus,
+Hound and Donsetch are independent optional MCP connectors with visible
+per-Agent configuration and credentials. Connector IDs are validated before a
+run and their provenance is recorded in [NOTICE.md](NOTICE.md). Pi receives
+none of them.
 
 The plugin and skill surfaces are deliberately capability-brokered. An Agent
 does not receive arbitrary host applications, folders, browser profiles,

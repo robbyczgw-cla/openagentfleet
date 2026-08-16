@@ -1,6 +1,6 @@
-// Package websearchplus manages the optional, first-party Web Search Plus and
-// Hound MCP launch contracts. It never installs either dependency and never
-// adopts or terminates a process it did not start.
+// Package websearchplus manages the optional Web Search Plus, Hound, and
+// Donsetch MCP launch contracts. It never installs those dependencies and
+// never adopts or terminates a process it did not start.
 package websearchplus
 
 import (
@@ -47,12 +47,24 @@ const (
 	// HoundLicense is the upstream software license identifier.
 	HoundLicense = "MIT"
 
+	// DonsetchMCPVersion is the exact Donsetch npm/GitHub release pin.
+	DonsetchMCPVersion = "2.1.0"
+	// DonsetchUpstreamURL is the canonical Donsetch source repository.
+	DonsetchUpstreamURL = "https://github.com/dondai44423/donsetch"
+	// DonsetchReleaseTag is the audited upstream release tag.
+	DonsetchReleaseTag = "v2.1.0"
+	// DonsetchReleaseCommit is the commit referenced by the v2.1.0 tag.
+	DonsetchReleaseCommit = "2753878cc1f46558f9b9bd50c87cc9efc9bdafba"
+	// DonsetchLicense is the upstream software license identifier.
+	DonsetchLicense = "AGPL-3.0-only"
+
 	// DefaultHoundMCPEndpoint is the only endpoint started by Manager. A caller
 	// may probe another explicitly configured literal loopback port.
 	DefaultHoundMCPEndpoint = "http://127.0.0.1:8765/mcp"
 
 	webSearchPlusServerName = "web-search-plus"
 	houndServerName         = "hound"
+	donsetchServerName      = "donsetch"
 	configFilename          = "web-search-plus.json"
 	maxProbeOutputBytes     = 8 << 10
 	maxHTTPProbeBytes       = 128 << 10
@@ -111,18 +123,21 @@ type BridgeStatus struct {
 	Detail          string   `json:"detail,omitempty"`
 }
 
-// Status is a race-safe snapshot. Web Search Plus and direct Hound are
-// independent connectors; selecting the bridge never enables direct Hound.
+// Status is a race-safe snapshot. Web Search Plus, direct Hound, and Donsetch
+// are independent connectors; selecting the bridge never enables direct Hound.
 type Status struct {
-	UVX           ExecutableStatus `json:"uvx"`
-	LocalHoundCLI ExecutableStatus `json:"local_hound_cli"`
-	WebSearchPlus ConnectorStatus  `json:"web_search_plus"`
-	Hound         ConnectorStatus  `json:"hound"`
-	Bridge        BridgeStatus     `json:"bridge"`
-	ConfigPath    string           `json:"config_path"`
+	UVX              ExecutableStatus `json:"uvx"`
+	NPX              ExecutableStatus `json:"npx"`
+	LocalHoundCLI    ExecutableStatus `json:"local_hound_cli"`
+	LocalDonsetchCLI ExecutableStatus `json:"local_donsetch_cli"`
+	WebSearchPlus    ConnectorStatus  `json:"web_search_plus"`
+	Hound            ConnectorStatus  `json:"hound"`
+	Donsetch         ConnectorStatus  `json:"donsetch"`
+	Bridge           BridgeStatus     `json:"bridge"`
+	ConfigPath       string           `json:"config_path"`
 }
 
-// Config controls only explicit optional runtime behavior. Both MCP servers
+// Config controls only explicit optional runtime behavior. All MCP servers
 // default to disabled. EnableTestedHoundBridge fixes WSP routing to Hound only
 // after a successful compatibility probe; it is never inferred from Hound's
 // direct-MCP toggle.
@@ -130,6 +145,7 @@ type Config struct {
 	StateDir                 string
 	EnableWebSearchPlus      bool
 	EnableHound              bool
+	EnableDonsetch           bool
 	EnableTestedHoundBridge  bool
 	ManageHoundBridgeSidecar bool
 	HoundEndpoint            string
@@ -263,17 +279,25 @@ func (m *Manager) Status(ctx context.Context) Status {
 		ctx = context.Background()
 	}
 
-	var uvxStatus, houndCLIStatus ExecutableStatus
+	var uvxStatus, npxStatus, houndCLIStatus, donsetchCLIStatus ExecutableStatus
 	var bridge BridgeStatus
 	var probes sync.WaitGroup
-	probes.Add(2)
+	probes.Add(4)
 	go func() {
 		defer probes.Done()
 		uvxStatus = m.probeExecutable(ctx, "uvx", "--version", "")
 	}()
 	go func() {
 		defer probes.Done()
+		npxStatus = m.probeExecutable(ctx, "npx", "--version", "")
+	}()
+	go func() {
+		defer probes.Done()
 		houndCLIStatus = m.probeLocalHound(ctx)
+	}()
+	go func() {
+		defer probes.Done()
+		donsetchCLIStatus = m.probeLocalDonsetch()
 	}()
 
 	bridge = BridgeStatus{
@@ -312,20 +336,25 @@ func (m *Manager) Status(ctx context.Context) Status {
 	probes.Wait()
 
 	status := Status{
-		UVX:           uvxStatus,
-		LocalHoundCLI: houndCLIStatus,
-		WebSearchPlus: ConnectorStatus{Enabled: m.config.EnableWebSearchPlus, Version: WebSearchPlusMCPVersion},
-		Hound:         ConnectorStatus{Enabled: m.config.EnableHound, Version: HoundMCPVersion},
-		Bridge:        bridge,
-		ConfigPath:    m.ConfigPath(),
+		UVX:              uvxStatus,
+		NPX:              npxStatus,
+		LocalHoundCLI:    houndCLIStatus,
+		LocalDonsetchCLI: donsetchCLIStatus,
+		WebSearchPlus:    ConnectorStatus{Enabled: m.config.EnableWebSearchPlus, Version: WebSearchPlusMCPVersion},
+		Hound:            ConnectorStatus{Enabled: m.config.EnableHound, Version: HoundMCPVersion},
+		Donsetch:         ConnectorStatus{Enabled: m.config.EnableDonsetch, Version: DonsetchMCPVersion},
+		Bridge:           bridge,
+		ConfigPath:       m.ConfigPath(),
 	}
 	status.WebSearchPlus.Ready = status.WebSearchPlus.Enabled && uvxStatus.Available && uvxStatus.Version != ""
 	if status.WebSearchPlus.Ready && bridge.Selected {
 		status.WebSearchPlus.Ready = bridge.Compatible
 	}
 	status.Hound.Ready = status.Hound.Enabled && uvxStatus.Available && uvxStatus.Version != ""
-	status.WebSearchPlus.Detail = connectorDetail(status.WebSearchPlus, bridge.Selected, bridge.Compatible)
-	status.Hound.Detail = connectorDetail(status.Hound, false, false)
+	status.Donsetch.Ready = status.Donsetch.Enabled && npxStatus.Available && npxStatus.Version != ""
+	status.WebSearchPlus.Detail = connectorDetail(status.WebSearchPlus, "uvx", bridge.Selected, bridge.Compatible)
+	status.Hound.Detail = connectorDetail(status.Hound, "uvx", false, false)
+	status.Donsetch.Detail = connectorDetail(status.Donsetch, "npx", false, false)
 	return status
 }
 
@@ -336,7 +365,7 @@ func endpointWhenSelected(config Config) string {
 	return ""
 }
 
-func connectorDetail(status ConnectorStatus, bridgeSelected, bridgeCompatible bool) string {
+func connectorDetail(status ConnectorStatus, launcher string, bridgeSelected, bridgeCompatible bool) string {
 	if !status.Enabled {
 		return "disabled"
 	}
@@ -346,7 +375,7 @@ func connectorDetail(status ConnectorStatus, bridgeSelected, bridgeCompatible bo
 	if bridgeSelected && !bridgeCompatible {
 		return "waiting for an exact compatible Hound bridge"
 	}
-	return "uvx is unavailable or its version could not be verified"
+	return launcher + " is unavailable or its version could not be verified"
 }
 
 func (m *Manager) probeExecutable(ctx context.Context, name, versionArg, exactVersion string) ExecutableStatus {
@@ -399,15 +428,27 @@ func (m *Manager) probeLocalHound(ctx context.Context) ExecutableStatus {
 	return result
 }
 
-// MCPServerSpecs returns only enabled and currently ready specs. WSP and Hound
-// are evaluated independently. Preparing WSP writes its canonical config
-// atomically; direct Hound never depends on the HTTP bridge.
+func (m *Manager) probeLocalDonsetch() ExecutableStatus {
+	path, err := m.deps.lookPath("donsetch")
+	if err != nil {
+		return ExecutableStatus{Detail: "donsetch not found"}
+	}
+	return ExecutableStatus{
+		Available: true,
+		path:      path,
+		Detail:    "local donsetch found; launch specs still use the exact npx pin",
+	}
+}
+
+// MCPServerSpecs returns only enabled and currently ready specs. WSP, Hound,
+// and Donsetch are evaluated independently. Preparing WSP writes its canonical
+// config atomically; direct Hound never depends on the HTTP bridge.
 func (m *Manager) MCPServerSpecs(ctx context.Context) ([]MCPServerSpec, error) {
 	if m == nil {
 		return nil, errors.New("websearchplus: nil manager")
 	}
 	status := m.Status(ctx)
-	result := make([]MCPServerSpec, 0, 2)
+	result := make([]MCPServerSpec, 0, 3)
 	if status.WebSearchPlus.Ready {
 		configPath, err := m.prepareWebSearchPlusConfig(m.config.EnableTestedHoundBridge)
 		if err != nil {
@@ -429,6 +470,14 @@ func (m *Manager) MCPServerSpecs(ctx context.Context) ([]MCPServerSpec, error) {
 			Name:    houndServerName,
 			Command: status.UVX.path,
 			Args:    []string{"--from", "hound-mcp==" + HoundMCPVersion, "hound"},
+			Env:     map[string]string{},
+		})
+	}
+	if status.Donsetch.Ready {
+		result = append(result, MCPServerSpec{
+			Name:    donsetchServerName,
+			Command: status.NPX.path,
+			Args:    []string{"--yes", "donsetch@" + DonsetchMCPVersion, "mcp"},
 			Env:     map[string]string{},
 		})
 	}

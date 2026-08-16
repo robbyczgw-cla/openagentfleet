@@ -941,11 +941,11 @@ func validateWorkerAdapterProfile(profile orchestration.BoundedWorker) error {
 }
 
 func (s *Server) searchMCPServerSpecs(ctx context.Context, ids []string) ([]harness.MCPServerSpec, error) {
-	requested := make([]string, 0, 2)
-	seen := make(map[string]struct{}, 2)
+	requested := make([]string, 0, 3)
+	seen := make(map[string]struct{}, 3)
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
-		if id != "web-search-plus" && id != "hound" {
+		if id != "web-search-plus" && id != "hound" && id != "donsetch" {
 			return nil, fmt.Errorf("selected MCP %q has no explicit OpenAgentFleet runtime resolver", id)
 		}
 		if _, exists := seen[id]; exists {

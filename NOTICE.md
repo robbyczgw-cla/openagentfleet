@@ -26,13 +26,14 @@ MIT; the upstream project and license texts are:
 
 ## Optional search connectors
 
-Web Search Plus and Hound are not silently installed or enabled. If a user
-explicitly enables one, the controller may resolve its upstream MCP package at
-runtime. Their own license and version information remains with the upstream
-package and must be reviewed again before a public packaged release.
+Web Search Plus, Hound, and Donsetch are not silently installed or enabled. If
+a user explicitly enables one, the controller may resolve its upstream MCP
+package at runtime. Their own license and version information remains with the
+upstream package and must be reviewed again before a public packaged release.
 
 - <https://www.websearchplus.xyz/>
 - <https://github.com/dondai44423/master-fetch>
+- <https://github.com/dondai44423/donsetch> (AGPL-3.0-only)
 
 For every signed/notarized release, maintainers must regenerate the exact
 dependency and binary inventory for that release and include any additional

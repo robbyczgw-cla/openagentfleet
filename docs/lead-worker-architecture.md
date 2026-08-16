@@ -100,8 +100,9 @@ background help without exposing that matrix.
   optional chats and future engine changes. The controller passes only an
   approved retrieval snapshot to a run.
 - **Search:** native search belongs to the selected engine when that engine
-  actually exposes it. Hound and Web Search Plus are explicit Agent MCP
-  grants, never invisible fallbacks, and they are never injected into Pi.
+  actually exposes it. Hound, Donsetch, and Web Search Plus are explicit
+  Agent MCP grants, never invisible fallbacks, and they are never injected
+  into Pi.
 - **MCPs/plugins:** resolved and permission-checked by the controller before
   they are made available. Workers do not automatically inherit them. Pi
   leads and Pi workers receive no MCP injection.

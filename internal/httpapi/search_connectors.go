@@ -32,6 +32,7 @@ func (value *strictOptionalBool) UnmarshalJSON(payload []byte) error {
 type searchConnectorPatchRequest struct {
 	WebSearchPlusEnabled strictOptionalBool `json:"web_search_plus_enabled"`
 	HoundEnabled         strictOptionalBool `json:"hound_enabled"`
+	DonsetchEnabled      strictOptionalBool `json:"donsetch_enabled"`
 }
 
 func (s *Server) getSearchConnectors(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +67,9 @@ func (s *Server) patchSearchConnectors(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.HoundEnabled.set {
 		patch.HoundEnabled = &request.HoundEnabled.value
+	}
+	if request.DonsetchEnabled.set {
+		patch.DonsetchEnabled = &request.DonsetchEnabled.value
 	}
 	status, err := s.SearchConnectors.Patch(r.Context(), patch)
 	if err != nil {

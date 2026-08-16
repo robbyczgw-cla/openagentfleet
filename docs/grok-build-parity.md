@@ -108,9 +108,10 @@ granted MCP path.
 [Web Search Plus](https://www.websearchplus.xyz/) is a complementary, opt-in
 MCP integration rather than a replacement for native tools. Its exact launch
 pin, external provider-key boundary, and the independent keyless
-[Hound](https://github.com/dondai44423/master-fetch) sidecar are documented in
-[`docs/search-connectors.md`](search-connectors.md). WSP and Hound are
-independent toggles, off by default; there is no silent WSP-Hound bridge.
+[Hound](https://github.com/dondai44423/master-fetch) and
+[Donsetch](https://github.com/dondai44423/donsetch) MCPs are documented in
+[`docs/search-connectors.md`](search-connectors.md). WSP, Hound, and Donsetch are
+independent toggles, off by default; there is no silent connector bridge.
 Native search or ordinary MCP activity does not by itself create the product's
 future source-backed Research Run artifact or citation ledger.
 
