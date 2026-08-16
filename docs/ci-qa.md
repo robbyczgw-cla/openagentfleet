@@ -21,6 +21,7 @@ the trailing release comments are only human-readable version labels.
 | `npm --prefix runtime/agent-computer ci --omit=dev --ignore-scripts --no-audit --no-fund` | The isolated Computer image's npm lockfile is complete and reproducible. | The assembled image, Chromium startup, or a graphical session. |
 | Agent Computer Docker image build | The pinned Node base, Chromium/Xfce packages, locked Playwright dependency and non-root entrypoint assemble into a Linux amd64 image. | The macOS Colima arm64 image, live Chromium frame, or host permissions. |
 | `cargo test --manifest-path client/src-tauri/Cargo.toml --locked` | The Tauri Rust crate tests pass with placeholder sidecars. | Launching actual sidecars, OAuth, or the native macOS window. |
+| Linux sidecar script syntax | `scripts/build-tauri-sidecar.sh` and the Linux release scripts parse. | A published `.deb` / `.rpm` / `.AppImage` or a live Docker Computer. |
 
 The Computer smoke test is intentionally secret-free and does not contact a
 Docker daemon. It uses existing fake Docker configuration and `httptest`

@@ -1,9 +1,12 @@
 package compute
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -36,6 +39,58 @@ func TestDockerCommandArgsKeepGlobalContextUntouched(t *testing.T) {
 	docker.Context = "colima-openagentfleet"
 	if got := docker.commandArgs("info"); !reflect.DeepEqual(got, []string{"--context", "colima-openagentfleet", "info"}) {
 		t.Fatalf("explicit context command args = %#v", got)
+	}
+}
+
+func TestReconcilePreferredRuntimeUsesDockerWhenColimaIsMissingOnLinux(t *testing.T) {
+	got := ReconcilePreferredRuntime("colima")
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("colima"); err != nil && got != RuntimeDocker {
+			t.Fatalf("linux without colima = %q, want docker", got)
+		}
+	} else if got != RuntimeColima {
+		t.Fatalf("non-linux colima = %q", got)
+	}
+	if ReconcilePreferredRuntime("docker") != RuntimeDocker {
+		t.Fatalf("reconcile docker = %q", ReconcilePreferredRuntime("docker"))
+	}
+	if ReconcilePreferredRuntime("docker_desktop") != RuntimeDockerDesktop {
+		t.Fatalf("reconcile docker_desktop = %q", ReconcilePreferredRuntime("docker_desktop"))
+	}
+}
+
+func TestLinuxDockerInstallCommandMatchesCommonDistros(t *testing.T) {
+	if LinuxDockerInstallCommand() == "" {
+		t.Fatal("linux docker install command is empty")
+	}
+	if !strings.Contains(LinuxDockerInstallDebian, "docker.io") {
+		t.Fatalf("debian install command = %q", LinuxDockerInstallDebian)
+	}
+	if !strings.Contains(LinuxDockerInstallFedora, "dnf") {
+		t.Fatalf("fedora install command = %q", LinuxDockerInstallFedora)
+	}
+}
+
+func TestDockerDaemonUnavailableDetailExplainsLinuxPermissions(t *testing.T) {
+	detail := dockerDaemonUnavailableDetail(errors.New("permission denied while trying to connect to the docker API"))
+	if !strings.Contains(detail, "docker group") && !strings.Contains(detail, "permission denied") {
+		t.Fatalf("permission detail = %q", detail)
+	}
+}
+
+func TestDiscoverRuntimesAlwaysIncludesDockerEngine(t *testing.T) {
+	inventory := DiscoverRuntimes(t.Context(), RuntimeAuto)
+	found := false
+	for _, item := range inventory {
+		if item.ID == RuntimeDocker {
+			found = true
+			if item.Name != "Docker Engine" || !item.SupportsAgentComputer {
+				t.Fatalf("docker engine inventory = %#v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("docker engine missing from inventory: %#v", inventory)
 	}
 }
 

@@ -352,7 +352,7 @@ func (d *Docker) probeStatus(ctx context.Context) Status {
 		} else {
 			result.State = ComputerStateError
 			result.CanRetry = true
-			result.Detail = "Docker daemon unavailable: " + compact(err.Error())
+			result.Detail = dockerDaemonUnavailableDetail(err)
 		}
 		return result
 	}
@@ -451,7 +451,7 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 	d.runtimeMu.RLock()
 	runtimeID := d.RuntimeID
 	d.runtimeMu.RUnlock()
-	if runtimeID == RuntimeColima {
+	if runtimeID == RuntimeColima || runtime.GOOS == "linux" {
 		if err := d.checkHostStorage(resources); err != nil {
 			status := d.baseStatus()
 			status.State = ComputerStateError
@@ -1515,6 +1515,24 @@ func compact(value string) string {
 		return value[:240]
 	}
 	return value
+}
+
+func dockerDaemonUnavailableDetail(err error) string {
+	if err == nil {
+		return "Docker daemon unavailable"
+	}
+	detail := compact(err.Error())
+	lower := strings.ToLower(detail)
+	if strings.Contains(lower, "permission denied") {
+		if runtime.GOOS == "linux" {
+			return "Docker is installed but this user cannot talk to the daemon. Add your user to the docker group (`sudo usermod -aG docker $USER`) and start a new login session."
+		}
+		return "Docker daemon permission denied: " + detail
+	}
+	if runtime.GOOS == "linux" && (strings.Contains(lower, "cannot connect") || strings.Contains(lower, "is the docker daemon running") || strings.Contains(lower, "no such file or directory")) {
+		return "Docker daemon is not running. Start it with `sudo systemctl start docker`, or install it with: " + LinuxDockerInstallCommand()
+	}
+	return "Docker daemon unavailable: " + detail
 }
 
 func (s Status) MarshalJSON() ([]byte, error) {

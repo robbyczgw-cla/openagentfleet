@@ -121,6 +121,15 @@ func main() {
 		log.Error("load preferences for runtime selection", "error", err)
 		os.Exit(1)
 	}
+	if reconciled := compute.ReconcilePreferredRuntime(configuredPreferences.Computer.Runtime); reconciled != configuredPreferences.Computer.Runtime {
+		configuredPreferences.Computer.Runtime = reconciled
+		if saved, saveErr := storeInstance.SavePreferences(ctx, configuredPreferences); saveErr != nil {
+			log.Warn("persist reconciled computer runtime", "runtime", reconciled, "error", saveErr)
+		} else {
+			configuredPreferences = saved
+			log.Info("reconciled computer runtime for this host", "runtime", reconciled)
+		}
+	}
 
 	capabilities := harness.ProbeAll(ctx)
 	if err := storeInstance.UpsertCapabilities(ctx, capabilities); err != nil {

@@ -2,6 +2,7 @@ package preferences
 
 import (
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,13 +47,26 @@ func TestNormalizeCanonicalizesAndFailsClosedForComputerControl(t *testing.T) {
 	}
 }
 
+func TestNormalizeAcceptsDockerEngineRuntime(t *testing.T) {
+	input := Defaults()
+	input.Computer.Runtime = " DOCKER "
+	got := input.Normalize()
+	if got.Computer.Runtime != RuntimeDocker {
+		t.Fatalf("runtime = %q, want %q", got.Computer.Runtime, RuntimeDocker)
+	}
+}
+
 func TestDefaultsUseColimaWithoutEnablingComputerControl(t *testing.T) {
 	defaults := Defaults()
-	if defaults.Computer.Runtime != RuntimeColima {
-		t.Fatalf("default runtime = %q, want %q", defaults.Computer.Runtime, RuntimeColima)
+	wantRuntime := RuntimeColima
+	if runtime.GOOS == "linux" {
+		wantRuntime = RuntimeDocker
+	}
+	if defaults.Computer.Runtime != wantRuntime {
+		t.Fatalf("default runtime = %q, want %q", defaults.Computer.Runtime, wantRuntime)
 	}
 	if defaults.Computer.AutoTakeover || defaults.Computer.AutoAgentControl {
-		t.Fatalf("Colima default must not grant computer control: %#v", defaults.Computer)
+		t.Fatalf("platform default must not grant computer control: %#v", defaults.Computer)
 	}
 	if defaults.Computer.CPUs != ComputerDefaultCPUs || defaults.Computer.RAMGiB != ComputerDefaultRAMGiB || defaults.Computer.DiskGiB != ComputerDefaultDiskGiB || defaults.Computer.SwapGiB != ComputerDefaultSwapGiB || defaults.Computer.OSImage != OSImageUbuntu2404 {
 		t.Fatalf("computer resource defaults = %#v", defaults.Computer)
@@ -408,7 +422,7 @@ func TestLegacyPreferencesWithoutOnboardingNormalizeToIncompleteCurrentFlow(t *t
 	if got.Onboarding.Version != CurrentOnboardingVersion || got.Onboarding.Completed {
 		t.Fatalf("legacy onboarding migration = %#v", got.Onboarding)
 	}
-	if got.Computer.Runtime != RuntimeColima {
+	if got.Computer.Runtime != defaultComputerRuntime() {
 		t.Fatalf("legacy runtime migration = %#v", got.Computer)
 	}
 }

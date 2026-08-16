@@ -4,6 +4,12 @@ All notable OpenAgentFleet changes are recorded here.
 
 ## Unreleased
 
+- Started Windows desktop research: NSIS + Docker Desktop/WSL2 is the first
+  alpha contract; see `docs/windows-desktop.md`.
+- Added a native Linux desktop alpha with `.deb`, `.rpm` and `.AppImage`
+  packages. Fresh Linux installs default the Agent Computer to Docker Engine.
+- Docker is recommended by the Linux packages, not silently started; Computer
+  View builds the isolated container on demand.
 - Refined the first-run Agent Computer flow and optional runtime settings.
 - Added configurable CPU, memory, disk and swap limits with host-capacity guards.
 - Improved Colima/Docker lifecycle handling, desktop frames, keyboard input and

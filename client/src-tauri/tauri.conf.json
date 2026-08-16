@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenAgentFleet",
+  "mainBinaryName": "OpenAgentFleet",
   "version": "0.1.0",
   "identifier": "com.openagentfleet.desktop",
   "build": {
@@ -26,6 +27,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "OpenAgentFleet",
+    "homepage": "https://openagentfleet.xyz",
+    "category": "DeveloperTool",
+    "shortDescription": "Local-first AI agents with an isolated Linux computer",
+    "longDescription": "OpenAgentFleet runs Grok Build, Codex App Server, or OpenCode in a local workspace and gives approved runs an isolated Linux desktop with Chromium, Terminal and Files. The Linux package starts the local Go controller automatically. Docker Engine is recommended for the Agent Computer and is not started until Computer View or an approved desktop task needs it.",
     "externalBin": ["binaries/botd", "binaries/browser-mcp", "binaries/uv", "binaries/uvx", "binaries/opencode"],
     "resources": {
       "../../runtime/agent-computer/": "agent-computer/"
@@ -35,6 +41,36 @@
       "minimumSystemVersion": "10.15",
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ],
+        "recommends": [
+          "docker.io | docker-ce"
+        ],
+        "section": "utils",
+        "priority": "optional",
+        "desktopTemplate": "../../deploy/linux/openagentfleet.desktop",
+        "postInstallScript": "../../deploy/linux/postinst.sh"
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "libayatana-appindicator-gtk3"
+        ],
+        "recommends": [
+          "docker",
+          "moby-engine"
+        ],
+        "release": "1",
+        "desktopTemplate": "../../deploy/linux/openagentfleet.desktop",
+        "postInstallScript": "../../deploy/linux/postinst.sh"
+      }
     },
     "icon": [
       "icons/32x32.png",
