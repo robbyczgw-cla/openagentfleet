@@ -444,14 +444,35 @@ fn configure_sidecar_environment(
     // but it must not inherit arbitrary API keys or controller credentials.
     command.env_clear();
     for variable in [
-        "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "SHELL",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "SHELL",
+        // Linux desktop and Docker need these when the app is launched from a
+        // .desktop file instead of a login shell. Do not inherit provider API
+        // keys or controller credentials.
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "XDG_RUNTIME_DIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_SESSION_TYPE",
+        "DBUS_SESSION_BUS_ADDRESS",
     ] {
         if let Some(value) = env::var_os(variable) {
             command.env(variable, value);
         }
     }
-    let inherited_path = env::var_os("PATH")
-        .unwrap_or_else(|| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into());
+    let inherited_path = env::var_os("PATH").unwrap_or_else(default_sidecar_path);
     let uv = bundled_executable_path("uv")?;
     let uvx = bundled_executable_path("uvx")?;
     let opencode = bundled_executable_path("opencode")?;
@@ -540,7 +561,7 @@ fn owned_child_is_live(app: &AppHandle) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn request_sigterm(child: &Child) {
     let pid = child.id() as libc::pid_t;
     // The child is retained in DaemonState, so this PID is still owned by the
@@ -550,9 +571,17 @@ fn request_sigterm(child: &Child) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(unix))]
 fn request_sigterm(child: &Child) {
     let _ = child;
+}
+
+fn default_sidecar_path() -> std::ffi::OsString {
+    if cfg!(target_os = "macos") {
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into()
+    } else {
+        "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin".into()
+    }
 }
 
 fn terminate_owned_child(child: &mut Child) {
@@ -815,10 +844,12 @@ pub fn run() {
 mod tests {
     use super::{
         append_bounded_stderr, botd_health_response, new_local_api_token,
-        sanitize_startup_diagnostic, startup_error_with_diagnostic, terminate_owned_child,
-        validate_prompt_request, STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
+        sanitize_startup_diagnostic, startup_error_with_diagnostic, validate_prompt_request,
+        STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
     };
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
+    use super::terminate_owned_child;
+    #[cfg(unix)]
     use std::process::Command;
     use std::{
         collections::VecDeque,
@@ -905,7 +936,7 @@ mod tests {
         assert!(!error.contains("do-not-leak"));
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn graceful_termination_reaps_owned_child() {
         let mut child = Command::new("/bin/sleep")

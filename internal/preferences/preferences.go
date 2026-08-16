@@ -12,8 +12,16 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"runtime"
 	"strings"
 )
+
+func defaultComputerRuntime() string {
+	if runtime.GOOS == "linux" {
+		return RuntimeDocker
+	}
+	return RuntimeColima
+}
 
 const (
 	// CurrentVersion is the only on-disk/API preference schema this package
@@ -49,6 +57,7 @@ const (
 	SurfaceBrowser = "browser"
 
 	RuntimeAuto           = "auto"
+	RuntimeDocker         = "docker"
 	RuntimeDockerDesktop  = "docker_desktop"
 	RuntimeColima         = "colima"
 	RuntimeOrbStack       = "orbstack"
@@ -109,7 +118,7 @@ var (
 	allowedReasoningEfforts = set(ReasoningLow, ReasoningMedium, ReasoningHigh, ReasoningXHigh, ReasoningMax)
 	allowedPermissionModes  = set(PermissionDefault, PermissionAuto, PermissionPlan)
 	allowedSurfaces         = set(SurfaceDesktop, SurfaceBrowser)
-	allowedRuntimes         = set(RuntimeAuto, RuntimeDockerDesktop, RuntimeColima, RuntimeOrbStack, RuntimeAppleContainer)
+	allowedRuntimes         = set(RuntimeAuto, RuntimeDocker, RuntimeDockerDesktop, RuntimeColima, RuntimeOrbStack, RuntimeAppleContainer)
 	allowedOSImages         = set(OSImageUbuntu2404, OSImageUbuntu2604, OSImageDebian13)
 )
 
@@ -292,7 +301,7 @@ func Defaults() Preferences {
 		},
 		Computer: ComputerDefaults{
 			DefaultSurface:   SurfaceDesktop,
-			Runtime:          RuntimeColima,
+			Runtime:          defaultComputerRuntime(),
 			CPUs:             ComputerDefaultCPUs,
 			RAMGiB:           ComputerDefaultRAMGiB,
 			DiskGiB:          ComputerDefaultDiskGiB,
@@ -356,7 +365,7 @@ func (p Preferences) Normalize() Preferences {
 	}
 	runtimeSelection := p.Computer.Runtime
 	if runtimeSelection == "" {
-		runtimeSelection = RuntimeColima
+		runtimeSelection = defaultComputerRuntime()
 	}
 	if value, ok := canonicalAllowed(runtimeSelection, allowedRuntimes); ok {
 		normalized.Computer.Runtime = value
@@ -438,7 +447,7 @@ func (p Preferences) Validate() error {
 	}
 	runtimeSelection := p.Computer.Runtime
 	if runtimeSelection == "" {
-		runtimeSelection = RuntimeColima
+		runtimeSelection = defaultComputerRuntime()
 	}
 	if _, ok := canonicalAllowed(runtimeSelection, allowedRuntimes); !ok {
 		return fmt.Errorf("invalid computer.runtime %q", p.Computer.Runtime)

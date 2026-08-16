@@ -1,0 +1,11 @@
+[Desktop Entry]
+Categories=Development;Utility;
+Comment={{comment}}
+Exec={{exec}}
+Icon={{icon}}
+Name={{name}}
+StartupNotify=true
+StartupWMClass=openagentfleet
+Terminal=false
+Type=Application
+Keywords=AI;agents;docker;local;

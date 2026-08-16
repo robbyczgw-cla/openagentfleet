@@ -19,6 +19,9 @@ not earned yet.
 | [Remote Mac architecture](remote-mac-architecture.md) | Network boundary, Tailscale, and mobile safety rules | Current topology + target boundary |
 | [Mobile remote protocol](mobile-remote.md) | Pairing, device identity, API allowlist, and rollout phases | Implemented alpha + target contract |
 | [ADR 0001: mobile alpha boundary](decisions/0001-mobile-alpha-boundary.md) | What must ship before a remote alpha, and what is intentionally deferred | Accepted |
+| [Linux desktop](linux-desktop.md) | Native Tauri Linux shell, Docker Engine default, and current Linux alpha boundary | Implemented development path |
+| [Linux release](linux-release.md) | deb/rpm/AppImage packaging, Docker Recommends, and Linux Computer install | Implemented alpha packaging |
+| [Windows desktop](windows-desktop.md) | Research for a later Tauri Windows shell, Docker Desktop WSL2, and NSIS alpha boundary | Research only; not implemented |
 | [Mac host install](mac-host-install.md) | LaunchAgent and local host operation | Setup guide |
 | [OpenCode bundling](opencode-bundling.md) | Exact macOS sidecar pin, architecture checks, and upgrade procedure | Implemented packaging contract |
 | [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | Passed for public `v0.1.0-alpha`; repeat for future releases |

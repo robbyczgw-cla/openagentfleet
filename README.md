@@ -12,14 +12,16 @@ model availability, macOS permissions, and local runtime setup depend on your
 machine. The project is independent and licensed under [Apache-2.0](LICENSE).
 
 [Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.1.0-alpha/OpenAgentFleet_0.1.0_aarch64.dmg) ·
+[Build the Linux packages](docs/linux-release.md) ·
 [Visit the product site](https://openagentfleet.xyz) ·
 [Read the security model](docs/architecture.md)
 
-![OpenAgentFleet Computer View: an agent's isolated Linux desktop with Chromium, Terminal and Files](presentation/assets/macos-openagentfleet-computer-ready.png)
+![OpenAgentFleet Computer View: the live isolated Linux desktop with Chromium, Terminal and Files](presentation/assets/openagentfleet-app-computer-view.png)
 
-This preview shows the shared client running in a browser during development.
-The macOS product wraps the same React UI in a native Tauri window and starts
-the local Go controller automatically.
+This preview is from the running OpenAgentFleet app: a live Agent Computer with
+Chromium, Terminal and Files visible in the workspace. The public alpha wraps
+the same React UI in a native Tauri window and starts the local Go controller
+automatically.
 
 ## What you can do today
 
@@ -86,16 +88,20 @@ want to contribute, use [the source build](#build-from-source).
 ## Build from source
 
 Building from source is the contributor path; you do not need it to run the
-alpha. The current supported target is Apple Silicon macOS. The native Tauri
-build requires Go, Node.js with `pnpm`, Rust with the macOS build tools, `uv`,
-`uvx`, and OpenCode exactly at version `1.18.10`. The sidecar preparation step
+alpha. The current signed download is Apple Silicon macOS. Linux ships as
+`.deb`, `.rpm` and `.AppImage` from [the Linux release runbook](docs/linux-release.md);
+see also [Linux desktop development](docs/linux-desktop.md).
+The native Tauri build requires Go, Node.js with `pnpm`, Rust with the native
+platform tools, `uv`, `uvx`, and OpenCode exactly at version `1.18.10`. The
+sidecar preparation step
 packages `botd`, the Agent Computer MCP, Web Search Plus launchers, and the
 bundled OpenCode worker, so these are required for the current full build
 path, not optional provider tools.
 
 Provider logins and provider-specific CLIs remain optional according to the
 engine you choose. A Docker-compatible runtime is only needed when you start
-the Agent Computer; Colima is the recommended option.
+the Agent Computer. Colima is the recommended macOS option; Linux uses Docker
+Engine directly.
 
 ```sh
 git clone https://github.com/robbyczgw-cla/openagentfleet.git

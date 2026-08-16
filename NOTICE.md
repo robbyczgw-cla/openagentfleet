@@ -7,8 +7,8 @@ not product dependencies and are intentionally not listed here.
 
 ## OpenCode 1.18.10
 
-The macOS package may distribute the unmodified architecture-correct OpenCode
-`1.18.10` executable as an optional sidecar. OpenCode is licensed under the MIT
+The macOS and Linux packages may distribute the unmodified architecture-correct
+OpenCode `1.18.10` executable as an optional sidecar. OpenCode is licensed under the MIT
 License; the upstream license is maintained at:
 
 - <https://github.com/anomalyco/opencode/blob/v1.18.10/LICENSE>
@@ -16,7 +16,7 @@ License; the upstream license is maintained at:
 
 ## uv and uvx
 
-The macOS package may include `uv` and `uvx` launchers from Astral for the
+The macOS and Linux packages may include `uv` and `uvx` launchers from Astral for the
 optional search connector runtime. They are dual-licensed under Apache-2.0 and
 MIT; the upstream project and license texts are:
 

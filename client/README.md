@@ -1,7 +1,9 @@
 # OpenAgentFleet client
 
-OpenAgentFleet is the Tauri 2 + React/TypeScript Mac client for the local `botd`
-runtime. It is intentionally a remote-safe client: it talks to the Go API and
+OpenAgentFleet is the Tauri 2 + React/TypeScript desktop client for the local
+`botd` runtime. macOS is the packaged alpha target; Linux desktop support is
+being developed against the same client and controller. It is intentionally
+remote-safe: it talks to the Go API and
 does not launch Docker or provider CLIs directly. The same API boundary is the
 route for later iOS and Android clients.
 
