@@ -4,6 +4,10 @@ All notable OpenAgentFleet changes are recorded here.
 
 ## Unreleased
 
+- Added Donsetch as a third optional, off-by-default search connector beside
+  Web Search Plus and Hound, launched through a pinned `npx donsetch@2.1.0 mcp`
+  contract.
+
 - Refined the first-run Agent Computer flow and optional runtime settings.
 - Added configurable CPU, memory, disk and swap limits with host-capacity guards.
 - Improved Colima/Docker lifecycle handling, desktop frames, keyboard input and

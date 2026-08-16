@@ -22,7 +22,8 @@ func TestSearchConnectorsAPIGetPatchAndPersistence(t *testing.T) {
 
 	response := searchConnectorRequest(handler, http.MethodGet, "")
 	status := decodeSearchConnectorStatus(t, response, http.StatusOK)
-	if status.WebSearchPlusEnabled || status.HoundEnabled || status.WebSearchPlus.Enabled || status.Hound.Enabled {
+	if status.WebSearchPlusEnabled || status.HoundEnabled || status.DonsetchEnabled ||
+		status.WebSearchPlus.Enabled || status.Hound.Enabled || status.Donsetch.Enabled {
 		t.Fatalf("default API status = %#v", status)
 	}
 	if status.WebSearchPlusCredentialStatus != "external/not inspected" {
@@ -31,13 +32,21 @@ func TestSearchConnectorsAPIGetPatchAndPersistence(t *testing.T) {
 
 	response = searchConnectorRequest(handler, http.MethodPatch, `{"web_search_plus_enabled":true}`)
 	status = decodeSearchConnectorStatus(t, response, http.StatusOK)
-	if !status.WebSearchPlusEnabled || status.HoundEnabled || !status.WebSearchPlus.Enabled || status.Hound.Enabled {
+	if !status.WebSearchPlusEnabled || status.HoundEnabled || status.DonsetchEnabled ||
+		!status.WebSearchPlus.Enabled || status.Hound.Enabled || status.Donsetch.Enabled {
 		t.Fatalf("partial WSP PATCH = %#v", status)
 	}
 	response = searchConnectorRequest(handler, http.MethodPatch, `{"hound_enabled":true}`)
 	status = decodeSearchConnectorStatus(t, response, http.StatusOK)
-	if !status.WebSearchPlusEnabled || !status.HoundEnabled || !status.WebSearchPlus.Enabled || !status.Hound.Enabled {
+	if !status.WebSearchPlusEnabled || !status.HoundEnabled || status.DonsetchEnabled ||
+		!status.WebSearchPlus.Enabled || !status.Hound.Enabled || status.Donsetch.Enabled {
 		t.Fatalf("independent Hound PATCH = %#v", status)
+	}
+	response = searchConnectorRequest(handler, http.MethodPatch, `{"donsetch_enabled":true}`)
+	status = decodeSearchConnectorStatus(t, response, http.StatusOK)
+	if !status.WebSearchPlusEnabled || !status.HoundEnabled || !status.DonsetchEnabled ||
+		!status.WebSearchPlus.Enabled || !status.Hound.Enabled || !status.Donsetch.Enabled {
+		t.Fatalf("independent Donsetch PATCH = %#v", status)
 	}
 
 	reopened, err := websearchplus.NewController(stateDir)
@@ -45,7 +54,7 @@ func TestSearchConnectorsAPIGetPatchAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded := reopened.Status(t.Context())
-	if !reloaded.WebSearchPlusEnabled || !reloaded.HoundEnabled {
+	if !reloaded.WebSearchPlusEnabled || !reloaded.HoundEnabled || !reloaded.DonsetchEnabled {
 		t.Fatalf("persisted API status = %#v", reloaded)
 	}
 }
@@ -64,6 +73,7 @@ func TestSearchConnectorsAPIStrictPatch(t *testing.T) {
 		`{"web_search_plus_enabled":null}`,
 		`{"web_search_plus_enabled":1}`,
 		`{"hound_enabled":"true"}`,
+		`{"donsetch_enabled":1}`,
 		`{"unknown":true}`,
 		`{"hound_enabled":true} {"web_search_plus_enabled":true}`,
 	} {
@@ -74,7 +84,7 @@ func TestSearchConnectorsAPIStrictPatch(t *testing.T) {
 	}
 	response := searchConnectorRequest(handler, http.MethodPatch, `{}`)
 	status := decodeSearchConnectorStatus(t, response, http.StatusOK)
-	if status.WebSearchPlusEnabled || status.HoundEnabled {
+	if status.WebSearchPlusEnabled || status.HoundEnabled || status.DonsetchEnabled {
 		t.Fatalf("empty PATCH changed state = %#v", status)
 	}
 }

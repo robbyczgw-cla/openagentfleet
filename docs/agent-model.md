@@ -142,10 +142,10 @@ profiles are rejected at preflight rather than silently substituted.
 
 ## Search, permissions, and current boundary
 
-Native web search is an engine capability. Optional Web Search Plus and Hound
-remain explicit Agent MCP grants; they are never silently installed or used as
-a fallback for disabled native search. Search connector configuration belongs
-in Agent tools/Settings, not first-run onboarding.
+Native web search is an engine capability. Optional Web Search Plus, Hound, and
+Donsetch remain explicit Agent MCP grants; they are never silently installed or
+used as a fallback for disabled native search. Search connector configuration
+belongs in Agent tools/Settings, not first-run onboarding.
 
 `botd` remains the local policy boundary: it authenticates local clients,
 preflights the selected engine, retrieves approved memory, brokers permissions,

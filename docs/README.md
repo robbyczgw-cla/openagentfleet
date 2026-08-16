@@ -22,7 +22,7 @@ not earned yet.
 | [Mac host install](mac-host-install.md) | LaunchAgent and local host operation | Setup guide |
 | [OpenCode bundling](opencode-bundling.md) | Exact macOS sidecar pin, architecture checks, and upgrade procedure | Implemented packaging contract |
 | [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | Passed for public `v0.1.0-alpha`; repeat for future releases |
-| [Search connectors](search-connectors.md) | Optional Web Search Plus and Hound MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
+| [Search connectors](search-connectors.md) | Optional Web Search Plus, Hound, and Donsetch MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
 | [Fresh-user smoke checklist](fresh-user-smoke-test.md) | Short native-app checklist for the simple first-run flow and optional Advanced settings | Current QA runbook |
 | [CI and QA gates](ci-qa.md) | Local and GitHub Actions checks, plus what each gate does not prove | Current release runbook |
 

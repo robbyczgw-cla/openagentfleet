@@ -87,8 +87,8 @@ background help without exposing that matrix.
 - **Agent memory:** owned by OpenAgentFleet and shared across that Agent's
   optional chats and future engine changes. The controller passes only an
   approved retrieval snapshot to a run.
-- **Search:** native search belongs to the selected engine. Hound and Web
-  Search Plus are explicit Agent MCP grants, never invisible fallbacks.
+- **Search:** native search belongs to the selected engine. Hound, Donsetch,
+  and Web Search Plus are explicit Agent MCP grants, never invisible fallbacks.
 - **MCPs/plugins:** resolved and permission-checked by the controller before
   they are made available. Workers do not automatically inherit them.
 - **Computer:** an explicit capability with separate human takeover. A worker

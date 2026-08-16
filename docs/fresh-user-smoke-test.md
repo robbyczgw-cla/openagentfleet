@@ -22,7 +22,7 @@ writable paths only.
 2. **Optional permissions.** Confirm that microphone and Agent Computer access
    are lazy. No runtime, VM, OAuth, or connector setup is required here.
 3. **Optional search.** Native engine search is the default route. Web Search
-   Plus and Hound are separate local MCP options and remain off unless chosen.
+   Plus, Hound, and Donsetch are separate local MCP options and remain off unless chosen.
 4. **Start using OpenAgentFleet.** Finish setup and land in the single seeded
    Agent chat. The Agent Builder must not open automatically.
 
@@ -32,7 +32,7 @@ writable paths only.
 | --- | --- | --- |
 | FRESH-01 | Start with a fresh profile and inspect onboarding. | Exactly four steps appear: engine/model/reasoning, optional permissions, optional search, start. No Colima/Docker gate appears. |
 | FRESH-02 | Select each available engine in turn. | The selected card has a visible and accessible check state. The model list changes with the harness, unavailable/auth-gated models are visibly disabled, and the reasoning options stay valid for that harness. |
-| FRESH-03 | Toggle Hound and Web Search Plus on, then off. | Each confirmed toggle persists without a raw unexplained `401`; failure is inline and actionable. Search options remain optional. |
+| FRESH-03 | Toggle Hound, Donsetch, and Web Search Plus on, then off. | Each confirmed toggle persists without a raw unexplained `401`; failure is inline and actionable. Search options remain optional. |
 | FRESH-04 | Finish setup. | Onboarding closes, exactly one Agent and one default conversation are visible, and no Agent Builder opens. |
 | FRESH-05 | Open Settings. | The global engine is labelled **Default engine**, not worker/lead. Computer runtime, tools, memory, automation, and advanced execution remain available in settings. |
 | FRESH-06 | Send a harmless message. | The run uses the selected workspace engine, model and reasoning depth; the chat remains usable without configuring a worker. |

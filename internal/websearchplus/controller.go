@@ -17,16 +17,18 @@ import (
 const connectorStateFilename = "search-connectors.json"
 
 // ConnectorSettings is the durable, credential-free optional connector state.
-// Web Search Plus and Hound are independent and both default to disabled.
+// Web Search Plus, Hound, and Donsetch are independent and default to disabled.
 type ConnectorSettings struct {
 	WebSearchPlusEnabled bool `json:"web_search_plus_enabled"`
 	HoundEnabled         bool `json:"hound_enabled"`
+	DonsetchEnabled      bool `json:"donsetch_enabled"`
 }
 
 // ConnectorPatch applies only fields that are non-nil.
 type ConnectorPatch struct {
 	WebSearchPlusEnabled *bool
 	HoundEnabled         *bool
+	DonsetchEnabled      *bool
 }
 
 // ControllerStatus preserves Manager's status shape and adds the explicit
@@ -36,6 +38,7 @@ type ControllerStatus struct {
 	Status
 	WebSearchPlusEnabled          bool   `json:"web_search_plus_enabled"`
 	HoundEnabled                  bool   `json:"hound_enabled"`
+	DonsetchEnabled               bool   `json:"donsetch_enabled"`
 	WebSearchPlusCredentialStatus string `json:"web_search_plus_credential_status"`
 }
 
@@ -104,7 +107,7 @@ func (c *Controller) Patch(ctx context.Context, patch ConnectorPatch) (Controlle
 		return ControllerStatus{}, errors.New("websearchplus: nil controller")
 	}
 	c.mu.Lock()
-	if patch.WebSearchPlusEnabled == nil && patch.HoundEnabled == nil {
+	if patch.WebSearchPlusEnabled == nil && patch.HoundEnabled == nil && patch.DonsetchEnabled == nil {
 		settings := c.settings
 		manager := c.manager
 		c.mu.Unlock()
@@ -117,6 +120,9 @@ func (c *Controller) Patch(ctx context.Context, patch ConnectorPatch) (Controlle
 	}
 	if patch.HoundEnabled != nil {
 		next.HoundEnabled = *patch.HoundEnabled
+	}
+	if patch.DonsetchEnabled != nil {
+		next.DonsetchEnabled = *patch.DonsetchEnabled
 	}
 	manager, err := managerForSettings(c.stateDir, next)
 	if err != nil {
@@ -142,6 +148,7 @@ func controllerStatus(ctx context.Context, manager *Manager, settings ConnectorS
 		Status:                        status,
 		WebSearchPlusEnabled:          settings.WebSearchPlusEnabled,
 		HoundEnabled:                  settings.HoundEnabled,
+		DonsetchEnabled:               settings.DonsetchEnabled,
 		WebSearchPlusCredentialStatus: "external/not inspected",
 	}
 }
@@ -151,6 +158,7 @@ func managerForSettings(stateDir string, settings ConnectorSettings) (*Manager, 
 		StateDir:            stateDir,
 		EnableWebSearchPlus: settings.WebSearchPlusEnabled,
 		EnableHound:         settings.HoundEnabled,
+		EnableDonsetch:      settings.DonsetchEnabled,
 	})
 }
 
