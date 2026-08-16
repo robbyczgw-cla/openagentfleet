@@ -21,7 +21,8 @@ func TestControllerDefaultsPersistAndReloadIndependentSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := controller.Status(t.Context())
-	if initial.WebSearchPlusEnabled || initial.HoundEnabled || initial.WebSearchPlus.Enabled || initial.Hound.Enabled {
+	if initial.WebSearchPlusEnabled || initial.HoundEnabled || initial.DonsetchEnabled ||
+		initial.WebSearchPlus.Enabled || initial.Hound.Enabled || initial.Donsetch.Enabled {
 		t.Fatalf("default status = %#v", initial)
 	}
 	if initial.WebSearchPlusCredentialStatus != "external/not inspected" {
@@ -42,7 +43,8 @@ func TestControllerDefaultsPersistAndReloadIndependentSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.WebSearchPlusEnabled || status.HoundEnabled || !status.WebSearchPlus.Enabled || status.Hound.Enabled {
+	if !status.WebSearchPlusEnabled || status.HoundEnabled || status.DonsetchEnabled ||
+		!status.WebSearchPlus.Enabled || status.Hound.Enabled || status.Donsetch.Enabled {
 		t.Fatalf("WSP patch status = %#v", status)
 	}
 	statePath := filepath.Join(stateDir, connectorStateFilename)
@@ -66,15 +68,25 @@ func TestControllerDefaultsPersistAndReloadIndependentSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded := reopened.Status(t.Context())
-	if !reloaded.WebSearchPlusEnabled || reloaded.HoundEnabled || !reloaded.WebSearchPlus.Enabled || reloaded.Hound.Enabled {
+	if !reloaded.WebSearchPlusEnabled || reloaded.HoundEnabled || reloaded.DonsetchEnabled ||
+		!reloaded.WebSearchPlus.Enabled || reloaded.Hound.Enabled || reloaded.Donsetch.Enabled {
 		t.Fatalf("reloaded status = %#v", reloaded)
 	}
 	status, err = reopened.Patch(t.Context(), ConnectorPatch{HoundEnabled: &enabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.WebSearchPlusEnabled || !status.HoundEnabled || !status.WebSearchPlus.Enabled || !status.Hound.Enabled {
+	if !status.WebSearchPlusEnabled || !status.HoundEnabled || status.DonsetchEnabled ||
+		!status.WebSearchPlus.Enabled || !status.Hound.Enabled || status.Donsetch.Enabled {
 		t.Fatalf("independent Hound patch status = %#v", status)
+	}
+	status, err = reopened.Patch(t.Context(), ConnectorPatch{DonsetchEnabled: &enabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.WebSearchPlusEnabled || !status.HoundEnabled || !status.DonsetchEnabled ||
+		!status.WebSearchPlus.Enabled || !status.Hound.Enabled || !status.Donsetch.Enabled {
+		t.Fatalf("independent Donsetch patch status = %#v", status)
 	}
 }
 
@@ -108,6 +120,31 @@ func TestControllerMCPServerSpecsReflectCommittedEnabledSnapshot(t *testing.T) {
 	}
 	if again[0].Args[0] != "--from" {
 		t.Fatalf("controller leaked mutable spec: %#v", again[0])
+	}
+}
+
+func TestControllerMCPServerSpecsDonsetchUsesExactNpxPin(t *testing.T) {
+	binDir := t.TempDir()
+	npx := filepath.Join(binDir, "npx")
+	if err := os.WriteFile(npx, []byte("#!/bin/sh\nprintf '10.9.2\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	controller, err := NewController(filepath.Join(t.TempDir(), "web-search"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err := controller.Patch(t.Context(), ConnectorPatch{DonsetchEnabled: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	specs, err := controller.MCPServerSpecs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 1 || specs[0].Name != "donsetch" || specs[0].Command != npx ||
+		!reflect.DeepEqual(specs[0].Args, []string{"--yes", "donsetch@2.1.0", "mcp"}) {
+		t.Fatalf("specs = %#v", specs)
 	}
 }
 
@@ -255,7 +292,9 @@ func TestControllerConcurrentPatchAndStatusRemainAtomic(t *testing.T) {
 			defer wait.Done()
 			for iteration := 0; iteration < 40; iteration++ {
 				status := controller.Status(ctx)
-				if status.WebSearchPlusEnabled != status.WebSearchPlus.Enabled || status.HoundEnabled != status.Hound.Enabled {
+				if status.WebSearchPlusEnabled != status.WebSearchPlus.Enabled ||
+					status.HoundEnabled != status.Hound.Enabled ||
+					status.DonsetchEnabled != status.Donsetch.Enabled {
 					t.Errorf("incoherent status = %#v", status)
 					return
 				}
@@ -280,7 +319,9 @@ func TestControllerConcurrentPatchAndStatusRemainAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloaded := reopened.Status(t.Context())
-	if current.WebSearchPlusEnabled != reloaded.WebSearchPlusEnabled || current.HoundEnabled != reloaded.HoundEnabled {
+	if current.WebSearchPlusEnabled != reloaded.WebSearchPlusEnabled ||
+		current.HoundEnabled != reloaded.HoundEnabled ||
+		current.DonsetchEnabled != reloaded.DonsetchEnabled {
 		t.Fatalf("memory = %#v, disk = %#v", current, reloaded)
 	}
 }
@@ -294,7 +335,7 @@ func TestControllerStatusOnlyRunsVersionProbes(t *testing.T) {
 		t.Fatal(err)
 	}
 	enabled := true
-	if _, err := controller.Patch(t.Context(), ConnectorPatch{WebSearchPlusEnabled: &enabled, HoundEnabled: &enabled}); err != nil {
+	if _, err := controller.Patch(t.Context(), ConnectorPatch{WebSearchPlusEnabled: &enabled, HoundEnabled: &enabled, DonsetchEnabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -307,6 +348,10 @@ func TestControllerStatusOnlyRunsVersionProbes(t *testing.T) {
 	}
 	hound := filepath.Join(binDir, "hound")
 	if err := os.WriteFile(hound, []byte("#!/bin/sh\nprintf 'must not execute\\n' >> \""+probeLog+"\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	donsetch := filepath.Join(binDir, "donsetch")
+	if err := os.WriteFile(donsetch, []byte("#!/bin/sh\nprintf 'must not execute\\n' >> \""+probeLog+"\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)

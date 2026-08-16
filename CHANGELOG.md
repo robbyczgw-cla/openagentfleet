@@ -4,6 +4,9 @@ All notable OpenAgentFleet changes are recorded here.
 
 ## Unreleased
 
+- Added Donsetch as a third optional, off-by-default search connector beside
+  Web Search Plus and Hound, launched through a pinned `npx donsetch@2.1.0 mcp`
+  contract.
 - Started Windows desktop research: NSIS + Docker Desktop/WSL2 is the first
   alpha contract; see `docs/windows-desktop.md`.
 - Added a native Linux desktop alpha with `.deb`, `.rpm` and `.AppImage`

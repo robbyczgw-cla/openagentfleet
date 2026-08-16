@@ -161,6 +161,33 @@ func TestIndependentSpecsUseExactPinsAndDefaultConfigDoesNotForceHound(t *testin
 	}
 }
 
+func TestDonsetchSpecUsesExactNpxPinAndStaysIndependent(t *testing.T) {
+	t.Parallel()
+
+	manager := newReadyTestManager(t, Config{
+		StateDir:       t.TempDir(),
+		EnableDonsetch: true,
+	}, unreachableBridgeProbe())
+	specs, err := manager.MCPServerSpecs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []MCPServerSpec{
+		{
+			Name:    "donsetch",
+			Command: "/test/npx",
+			Args:    []string{"--yes", "donsetch@2.1.0", "mcp"},
+			Env:     map[string]string{},
+		},
+	}
+	if !reflect.DeepEqual(specs, want) {
+		t.Fatalf("specs = %#v, want %#v", specs, want)
+	}
+	if _, err := os.Stat(manager.ConfigPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("donsetch prepared WSP config: %v", err)
+	}
+}
+
 func TestBridgeSpecRequiresExactCompatibilityAndWritesFixedConfig(t *testing.T) {
 	t.Parallel()
 
@@ -583,6 +610,11 @@ func TestAttributionMetadataIsPinned(t *testing.T) {
 		HoundUpstreamURL != "https://github.com/dondai44423/master-fetch" || HoundLicense != "MIT" {
 		t.Fatal("Hound attribution metadata drifted")
 	}
+	if DonsetchMCPVersion != "2.1.0" || DonsetchReleaseTag != "v2.1.0" ||
+		DonsetchReleaseCommit != "2753878cc1f46558f9b9bd50c87cc9efc9bdafba" ||
+		DonsetchUpstreamURL != "https://github.com/dondai44423/donsetch" || DonsetchLicense != "AGPL-3.0-only" {
+		t.Fatal("Donsetch attribution metadata drifted")
+	}
 }
 
 func newReadyTestManager(t *testing.T, config Config, probe bridgeProbe) *Manager {
@@ -600,8 +632,12 @@ func readyTestDeps(probe bridgeProbe) managerDeps {
 			switch name {
 			case "uvx":
 				return "/test/uvx", nil
+			case "npx":
+				return "/test/npx", nil
 			case "hound":
 				return "/test/hound", nil
+			case "donsetch":
+				return "/test/donsetch", nil
 			default:
 				return "", exec.ErrNotFound
 			}
@@ -609,6 +645,9 @@ func readyTestDeps(probe bridgeProbe) managerDeps {
 		runVersion: func(_ context.Context, path string, _ ...string) (string, error) {
 			if strings.Contains(path, "uvx") {
 				return "uvx 0.9.0", nil
+			}
+			if strings.Contains(path, "npx") {
+				return "10.9.2", nil
 			}
 			return "Hound " + HoundMCPVersion, nil
 		},
