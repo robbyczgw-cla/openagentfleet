@@ -433,6 +433,54 @@ func (r *Recorder) Trace() (Trace, error) {
 	return r.traceLocked(), err
 }
 
+// LoadLatestTrace reads the newest saved JSON trace from a local teach root.
+// It is used to replay a finished recording after the in-memory recorder is idle.
+func LoadLatestTrace(root string) (Trace, error) {
+	root, err := normalizeRoot(root)
+	if err != nil {
+		return Trace{}, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return Trace{}, fmt.Errorf("list teach traces: %w", err)
+	}
+	var newest os.DirEntry
+	var newestTime time.Time
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if !validTraceID(id) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		if newest == nil || info.ModTime().After(newestTime) {
+			newest = entry
+			newestTime = info.ModTime()
+		}
+	}
+	if newest == nil {
+		return Trace{}, ErrNoTrace
+	}
+	path := filepath.Join(root, newest.Name())
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Trace{}, fmt.Errorf("read teach trace: %w", err)
+	}
+	var trace Trace
+	if err := json.Unmarshal(raw, &trace); err != nil {
+		return Trace{}, fmt.Errorf("decode teach trace: %w", err)
+	}
+	if trace.ID == "" || !validTraceID(trace.ID) {
+		return Trace{}, ErrInvalidID
+	}
+	return trace, nil
+}
+
 func (r *Recorder) expireLocked(now time.Time) error {
 	if (r.state != StateRecording && r.state != StatePaused) || now.Before(r.deadlineAt) {
 		return nil

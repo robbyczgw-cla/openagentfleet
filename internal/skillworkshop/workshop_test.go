@@ -267,6 +267,32 @@ func TestRejectsTraversalSecretsAndTamperedContent(t *testing.T) {
 	}
 }
 
+func TestCreateFromTraceWritesRecordedStepsAndStaysDisabled(t *testing.T) {
+	workshop := newWorkshop(t)
+	draft, err := workshop.CreateFromTrace("trace-demo", "File a status update", []DraftStep{
+		{Sequence: 1, Surface: "browser", Action: "open", Target: "status-page"},
+		{Sequence: 2, Surface: "browser", Action: "click", Target: "compose", Redacted: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.State != StateDraft {
+		t.Fatalf("trace draft state = %q, want draft", draft.State)
+	}
+	inspection, err := workshop.Inspect(draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"1. [browser] open on status-page", "2. [browser] click (payload redacted or omitted)"} {
+		if !strings.Contains(inspection.Skill, want) {
+			t.Fatalf("SKILL.md missing %q:\n%s", want, inspection.Skill)
+		}
+	}
+	if strings.Contains(inspection.Skill, "auto_enabled") {
+		t.Fatalf("skill unexpectedly mentions auto enable:\n%s", inspection.Skill)
+	}
+}
+
 func TestListIsStableAndOnlyReturnsVerifiedDrafts(t *testing.T) {
 	workshop := newWorkshop(t)
 	for _, input := range []DraftInput{

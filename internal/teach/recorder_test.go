@@ -106,6 +106,13 @@ func TestRecorderLifecyclePersistsSafeNormalizedTrace(t *testing.T) {
 	if stored.Goal != trace.Goal || stored.State != StateStopped || len(stored.Steps) != 2 {
 		t.Fatalf("stored trace mismatch: %#v", stored)
 	}
+	loaded, err := LoadLatestTrace(recorder.Root())
+	if err != nil {
+		t.Fatalf("LoadLatestTrace() error = %v", err)
+	}
+	if loaded.ID != trace.ID || len(loaded.Steps) != 2 {
+		t.Fatalf("loaded trace = %#v", loaded)
+	}
 }
 
 func TestSensitiveAndPausedActionsNeverRetainTypedText(t *testing.T) {

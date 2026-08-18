@@ -241,6 +241,22 @@ type Message = {
   role: string;
   content: string;
   created_at: string;
+  kind?: string;
+  author_bot_id?: string;
+  mentions?: string[];
+  handoff_id?: string;
+};
+type Handoff = {
+  id: string;
+  source_bot_id: string;
+  source_conversation_id: string;
+  source_message_id: string;
+  target_bot_id: string;
+  target_conversation_id: string;
+  target_message_id: string;
+  target_run_id: string;
+  content: string;
+  created_at: string;
 };
 type Attachment = {
   id: string;
@@ -282,6 +298,8 @@ type Computer = {
   runtime_name?: string;
   runtime_context?: string;
   runtime_detail?: string;
+  snapshot_id?: string;
+  snapshot_name?: string;
   detail?: string;
 };
 type RuntimeInfo = {
@@ -543,10 +561,43 @@ type TeachStatus = {
   saved?: boolean;
   expired?: boolean;
 };
+type TeachStep = {
+  sequence?: number;
+  recorded_at?: string;
+  surface?: string;
+  action?: string;
+  target?: string;
+  url?: string;
+  text?: string;
+  key?: string;
+  omitted?: boolean;
+  redacted?: boolean;
+};
+type TeachTrace = {
+  id?: string;
+  goal?: string;
+  state?: string;
+  steps?: TeachStep[];
+};
 type TeachResponse = {
   status?: TeachStatus;
   detail?: string;
   error?: string;
+  trace?: TeachTrace;
+};
+type ComputerSnapshot = {
+  id: string;
+  name: string;
+  created_at?: string;
+  active?: boolean;
+};
+type SemanticElement = {
+  ref: string;
+  role?: string;
+  name?: string;
+  tag?: string;
+  x?: number;
+  y?: number;
 };
 type SecretPurpose = "password" | "two_factor_code";
 type SecretHandoff = {
@@ -1314,6 +1365,8 @@ function App() {
   const [agentPlugins, setAgentPlugins] = useState("");
   const [agentMCPs, setAgentMCPs] = useState("");
   const [draft, setDraft] = useState("");
+  const [mentionBotID, setMentionBotID] = useState("");
+  const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [computerBusy, setComputerBusy] = useState(false);
   const [computerViewOpen, setComputerViewOpen] = useState(false);
@@ -1398,6 +1451,15 @@ function App() {
   >(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [teach, setTeach] = useState<TeachStatus>({ state: "idle" });
+  const [teachTrace, setTeachTrace] = useState<TeachTrace | null>(null);
+  const [teachReplayIndex, setTeachReplayIndex] = useState(0);
+  const [computerSnapshots, setComputerSnapshots] = useState<ComputerSnapshot[]>(
+    [],
+  );
+  const [snapshotName, setSnapshotName] = useState("");
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [axElements, setAxElements] = useState<SemanticElement[]>([]);
+  const [axBusy, setAxBusy] = useState(false);
   const [teachGoalOpen, setTeachGoalOpen] = useState(false);
   const [teachGoal, setTeachGoal] = useState("");
   const [teachBusy, setTeachBusy] = useState(false);
@@ -2053,6 +2115,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!computerViewOpen || !apiReady) return;
+    void loadComputerSnapshots();
+  }, [computerViewOpen, apiReady]);
+
+  useEffect(() => {
     if (!botMenuID) return;
     const closeOnOutsidePress = () => setBotMenuID(null);
     document.addEventListener("pointerdown", closeOnOutsidePress);
@@ -2105,7 +2172,7 @@ function App() {
       else if (agentBuilderOpen) setAgentBuilderOpen(false);
       else if (teachGoalOpen) setTeachGoalOpen(false);
       else if (settingsOpen) closeSettings();
-      else setComputerViewOpen(false);
+      else closeComputerView();
     };
     window.addEventListener("keydown", onKeyDown);
     const focusTarget = agentBuilderOpen
@@ -2964,7 +3031,13 @@ function App() {
       if (action === "start") {
         setTeachGoalOpen(false);
         setTeachGoal("");
+        setTeachTrace(null);
       }
+      if (action === "stop" && payload.trace) {
+        setTeachTrace(payload.trace);
+        setTeachReplayIndex(0);
+      }
+      if (action === "discard") setTeachTrace(null);
     } catch (teachError) {
       setNotice(
         teachError instanceof Error
@@ -3066,6 +3139,45 @@ function App() {
         );
       } catch {
         // Approval details remain reloadable from bootstrap.
+      }
+      return;
+    }
+    if (event.type === "handoff.created") {
+      try {
+        const handoff = JSON.parse(event.data) as Handoff;
+        setData((current) => {
+          if (!current) return current;
+          const conversationID = current.conversation.id;
+          const incoming: Message | null =
+            conversationID === handoff.target_conversation_id
+              ? {
+                  id: handoff.target_message_id,
+                  role: "user",
+                  content: handoff.content,
+                  created_at: handoff.created_at,
+                  kind: "handoff",
+                  author_bot_id: handoff.source_bot_id,
+                  mentions: [handoff.target_bot_id],
+                  handoff_id: handoff.id,
+                }
+              : conversationID === handoff.source_conversation_id
+                ? {
+                    id: handoff.source_message_id,
+                    role: "user",
+                    content: handoff.content,
+                    created_at: handoff.created_at,
+                    kind: "handoff",
+                    mentions: [handoff.target_bot_id],
+                    handoff_id: handoff.id,
+                  }
+                : null;
+          if (!incoming || current.messages?.some((item) => item.id === incoming.id)) {
+            return current;
+          }
+          return { ...current, messages: [...(current.messages ?? []), incoming] };
+        });
+      } catch {
+        // Handoff rows remain reloadable from bootstrap.
       }
       return;
     }
@@ -3609,6 +3721,13 @@ function App() {
     const attachmentIDs = pendingAttachments.map((attachment) => attachment.id);
     if ((!content && attachmentIDs.length === 0) || !data || sending) return;
     const conversationID = data.conversation.id;
+    const mentioned =
+      mentionBotID ||
+      (data.agents ?? [])
+        .filter((agent) => agent.bot.id !== data.conversation.bot_id)
+        .find((agent) =>
+          content.toLowerCase().includes(`@${agent.bot.name.toLowerCase()}`),
+        )?.bot.id;
     setSending(true);
     setNotice(null);
     setLiveOutput("");
@@ -3620,11 +3739,13 @@ function App() {
           conversation_id: conversationID,
           content,
           attachment_ids: attachmentIDs,
+          mention_bot_ids: mentioned ? [mentioned] : [],
         }),
       });
       const payload = (await response.json()) as {
         message?: Message;
         run?: Run;
+        handoff?: Handoff;
         error?: string;
       };
       if (!response.ok)
@@ -3646,7 +3767,17 @@ function App() {
         );
         setPendingAttachments([]);
       }
-      if (payload.run && stillVisible) {
+      if (payload.handoff) {
+        setMentionBotID("");
+        setMentionPickerOpen(false);
+        setNotice(
+          `Handed off to ${
+            (data.agents ?? []).find((agent) => agent.bot.id === payload.handoff!.target_bot_id)
+              ?.bot.name ?? "the other agent"
+          }. The run continues in that agent's chat.`,
+        );
+      }
+      if (payload.run && stillVisible && payload.run.conversation_id === conversationID) {
         setLastRun(payload.run);
         setData((current) =>
           current
@@ -3738,6 +3869,13 @@ function App() {
     }
   }
 
+  function closeComputerView() {
+    setComputerViewOpen(false);
+    if (data?.computer.takeover) {
+      void setComputerTakeover(false);
+    }
+  }
+
   function openComputerView(ensure = true) {
     setNotice(null);
     setComputerViewOpen(true);
@@ -3824,6 +3962,7 @@ function App() {
       delta_y?: number;
       text?: string;
       key?: string;
+      ref?: string;
       sensitive?: boolean;
     },
     surface: ComputerViewMode = "browser",
@@ -3855,6 +3994,98 @@ function App() {
       );
     } finally {
       setComputerActionBusy(false);
+    }
+  }
+
+  async function loadComputerSnapshots() {
+    try {
+      const response = await apiFetch("/api/computer/snapshots");
+      const payload = (await response.json()) as {
+        snapshots?: ComputerSnapshot[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "snapshots unavailable");
+      setComputerSnapshots(payload.snapshots ?? []);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Computer snapshots unavailable",
+      );
+    }
+  }
+
+  async function saveComputerSnapshot() {
+    const name = snapshotName.trim() || "Checkpoint";
+    setSnapshotBusy(true);
+    try {
+      const response = await apiFetch("/api/computer/snapshots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const payload = (await response.json()) as ComputerSnapshot & {
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(payload.error ?? `snapshot returned ${response.status}`);
+      setSnapshotName("");
+      setNotice(`Saved computer checkpoint “${payload.name}”.`);
+      await loadComputerSnapshots();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not save computer snapshot",
+      );
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
+  async function restoreComputerSnapshot(id: string) {
+    setSnapshotBusy(true);
+    try {
+      const response = await apiFetch(`/api/computer/snapshots/${id}/restore`, {
+        method: "POST",
+      });
+      const payload = (await response.json()) as Computer & { error?: string };
+      if (!response.ok)
+        throw new Error(payload.error ?? `restore returned ${response.status}`);
+      setData((current) =>
+        current ? { ...current, computer: payload } : current,
+      );
+      setNotice(
+        payload.snapshot_name
+          ? `Restored computer checkpoint “${payload.snapshot_name}”.`
+          : "Restored computer checkpoint.",
+      );
+      await loadComputerSnapshots();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not restore snapshot",
+      );
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
+  async function inspectComputerElements() {
+    setAxBusy(true);
+    try {
+      const surface = activeComputerView === "desktop" ? "desktop" : "browser";
+      const response = await apiFetch(
+        `/api/computer/snapshot?surface=${surface}`,
+      );
+      const payload = (await response.json()) as {
+        elements?: SemanticElement[];
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(payload.error ?? `inspect returned ${response.status}`);
+      setAxElements(payload.elements ?? []);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not inspect elements",
+      );
+    } finally {
+      setAxBusy(false);
     }
   }
 
@@ -4162,12 +4393,17 @@ function App() {
     approval: Approval,
     status: "approved" | "denied",
     optionID?: string,
+    persist?: "always_allow" | "always_deny",
   ) {
     try {
       const response = await apiFetch(`/api/approvals/${approval.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, option_id: optionID ?? "" }),
+        body: JSON.stringify({
+          status,
+          option_id: optionID ?? "",
+          persist: persist ?? "",
+        }),
       });
       const payload = (await response.json()) as Approval & { error?: string };
       if (!response.ok)
@@ -4183,9 +4419,13 @@ function App() {
           : current,
       );
       setNotice(
-        status === "approved"
-          ? "Approval sent. The run can continue."
-          : "Approval denied. The run will stop at this action.",
+        persist === "always_allow"
+          ? "Saved an always-allow rule for this exact action. Computer rules never match host-shell commands."
+          : persist === "always_deny"
+            ? "Saved an always-deny rule for this exact action."
+            : status === "approved"
+              ? "Approval sent. The run can continue."
+              : "Approval denied. The run will stop at this action.",
       );
       // Reload the additive transcript read model so the resolved decision
       // remains visible after the pending card disappears.
@@ -5038,6 +5278,63 @@ function App() {
           </div>
         </section>
       ) : null}
+      {teachTrace && (teachTrace.steps?.length ?? 0) > 0 ? (
+        <section className="teach-replay" aria-label="Teach trajectory replay">
+          <div>
+            <strong>Recorded trajectory</strong>
+            <span>
+              {(teachTrace.steps?.length ?? 0) === 0
+                ? "empty"
+                : `${Math.min(teachReplayIndex + 1, teachTrace.steps?.length ?? 1)} / ${teachTrace.steps?.length}`}
+            </span>
+          </div>
+          <p>{teachTrace.goal || "Saved workflow"}</p>
+          <ol>
+            {(teachTrace.steps ?? []).map((step, index) => (
+              <li
+                key={`${step.sequence ?? index}-${step.recorded_at ?? index}`}
+                className={index === teachReplayIndex ? "active" : ""}
+              >
+                <span>{step.surface}</span> {step.action}
+                {step.redacted || step.omitted
+                  ? " · redacted"
+                  : step.target
+                    ? ` · ${step.target}`
+                    : step.url
+                      ? ` · ${step.url}`
+                      : ""}
+              </li>
+            ))}
+          </ol>
+          <div>
+            <button
+              type="button"
+              onClick={() =>
+                setTeachReplayIndex((current) => Math.max(0, current - 1))
+              }
+              disabled={teachReplayIndex <= 0}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setTeachReplayIndex((current) =>
+                  Math.min((teachTrace.steps?.length ?? 1) - 1, current + 1),
+                )
+              }
+              disabled={
+                teachReplayIndex >= (teachTrace.steps?.length ?? 1) - 1
+              }
+            >
+              Next
+            </button>
+            <button type="button" onClick={() => setTeachTrace(null)}>
+              Hide
+            </button>
+          </div>
+        </section>
+      ) : null}
       <details className="advanced-context workspace-tools-context">
         <summary>
           <span>Tools & skills</span>
@@ -5482,6 +5779,26 @@ function App() {
                 </div>
                 <div className="inline-approval-footer">
                   <span>{harnessLabel(approval.provider)} · run waiting</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void resolveApproval(
+                        approval,
+                        "approved",
+                        options[0]?.optionId,
+                        "always_allow",
+                      )
+                    }
+                    disabled={options.length === 0}
+                  >
+                    Always allow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void resolveApproval(approval, "denied", "", "always_deny")}
+                  >
+                    Always deny
+                  </button>
                   <button type="button" onClick={() => void resolveApproval(approval, "denied")}>
                     Deny
                   </button>
@@ -5516,9 +5833,24 @@ function App() {
             </div>
           )}
           {messages.map((message) => (
-            <article className={`message ${message.role}`} key={message.id}>
+            <article className={`message ${message.role}${message.kind === "handoff" ? " handoff" : ""}`} key={message.id}>
               <div className="message-meta">
-                <span>{message.role === "user" ? "You" : bot.name}</span>
+                <span>
+                  {message.kind === "handoff"
+                    ? message.author_bot_id
+                      ? `From ${
+                          (data.agents ?? []).find((agent) => agent.bot.id === message.author_bot_id)
+                            ?.bot.name ?? "another agent"
+                        }`
+                      : `Handed off to ${
+                          (data.agents ?? []).find(
+                            (agent) => agent.bot.id === message.mentions?.[0],
+                          )?.bot.name ?? "another agent"
+                        }`
+                    : message.role === "user"
+                      ? "You"
+                      : bot.name}
+                </span>
                 <time>{formatTime(message.created_at)}</time>
               </div>
               {message.content && (
@@ -5709,6 +6041,45 @@ function App() {
                 >
                   ＋
                 </button>
+                {(data.agents ?? []).filter((agent) => agent.bot.id !== bot.id).length > 0 && (
+                  <div className="composer-model-control">
+                    <button
+                      type="button"
+                      aria-label="Hand off to another agent"
+                      aria-expanded={mentionPickerOpen}
+                      title="Hand off to another agent"
+                      onClick={() => setMentionPickerOpen((open) => !open)}
+                    >
+                      {mentionBotID
+                        ? `@${
+                            (data.agents ?? []).find((agent) => agent.bot.id === mentionBotID)
+                              ?.bot.name ?? "agent"
+                          }`
+                        : "@"}
+                    </button>
+                    {mentionPickerOpen && (
+                      <div className="composer-model-popover" onPointerDown={(event) => event.stopPropagation()}>
+                        <button type="button" onClick={() => { setMentionBotID(""); setMentionPickerOpen(false); }}>
+                          This agent only
+                        </button>
+                        {(data.agents ?? [])
+                          .filter((agent) => agent.bot.id !== bot.id)
+                          .map((agent) => (
+                            <button
+                              type="button"
+                              key={agent.bot.id}
+                              onClick={() => {
+                                setMentionBotID(agent.bot.id);
+                                setMentionPickerOpen(false);
+                              }}
+                            >
+                              @{agent.bot.name}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <button
                   className={`composer-mic ${recording ? "recording" : ""}`}
                   type="button"
@@ -6737,7 +7108,7 @@ function App() {
                 <button
                   ref={computerCloseRef}
                   className="icon-button"
-                  onClick={() => setComputerViewOpen(false)}
+                  onClick={() => closeComputerView()}
                   aria-label="Close computer view"
                 >
                   ×
@@ -6953,7 +7324,79 @@ function App() {
                 >
                   Teach a task
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void inspectComputerElements()}
+                  disabled={!computerReady || axBusy || computerActionBusy}
+                >
+                  {axBusy ? "Inspecting…" : "Inspect elements"}
+                </button>
               </div>
+              {data.computer.snapshot_name && (
+                <p className="computer-snapshot-active">
+                  Restored checkpoint: {data.computer.snapshot_name}
+                </p>
+              )}
+              <div className="computer-snapshots">
+                <input
+                  value={snapshotName}
+                  onChange={(event) => setSnapshotName(event.target.value)}
+                  placeholder="Checkpoint name"
+                  aria-label="Computer checkpoint name"
+                  disabled={!computerReady || snapshotBusy}
+                />
+                <button
+                  type="button"
+                  onClick={() => void saveComputerSnapshot()}
+                  disabled={!computerReady || snapshotBusy}
+                >
+                  {snapshotBusy ? "Saving…" : "Save snapshot"}
+                </button>
+                {computerSnapshots.length > 0 && (
+                  <label>
+                    Restore
+                    <select
+                      aria-label="Restore computer snapshot"
+                      disabled={snapshotBusy}
+                      defaultValue=""
+                      onChange={(event) => {
+                        const id = event.target.value;
+                        event.target.value = "";
+                        if (id) void restoreComputerSnapshot(id);
+                      }}
+                    >
+                      <option value="">Choose checkpoint…</option>
+                      {computerSnapshots.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                          {item.active ? " · current" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {axElements.length > 0 && (
+                <ul className="computer-ax-list">
+                  {axElements.slice(0, 24).map((element) => (
+                    <li key={element.ref}>
+                      <button
+                        type="button"
+                        disabled={!data.computer.takeover || computerActionBusy}
+                        onClick={() =>
+                          void computerAction(
+                            { action: "click", ref: element.ref },
+                            activeComputerView,
+                          )
+                        }
+                      >
+                        {element.ref} · {element.role || "control"}{" "}
+                        {element.name ? `“${element.name}”` : ""}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {data.computer.takeover && (
                 <div className="computer-input-row">
                   <form

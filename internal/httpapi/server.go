@@ -29,6 +29,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/id"
 	"github.com/robbyczgw-cla/openagentfleet/internal/integrations"
 	"github.com/robbyczgw-cla/openagentfleet/internal/orchestration"
+	"github.com/robbyczgw-cla/openagentfleet/internal/policy"
 	"github.com/robbyczgw-cla/openagentfleet/internal/preferences"
 	"github.com/robbyczgw-cla/openagentfleet/internal/secrethandoff"
 	"github.com/robbyczgw-cla/openagentfleet/internal/skills"
@@ -104,6 +105,7 @@ type messageRequest struct {
 	ServiceTier     string   `json:"service_tier"`
 	PermissionMode  string   `json:"permission_mode"`
 	AttachmentIDs   []string `json:"attachment_ids"`
+	MentionBotIDs   []string `json:"mention_bot_ids"`
 }
 
 type bootstrapResponse struct {
@@ -132,6 +134,7 @@ type bootstrapResponse struct {
 type approvalResolutionRequest struct {
 	Status   string `json:"status"`
 	OptionID string `json:"option_id"`
+	Persist  string `json:"persist"`
 }
 
 type conversationRequest struct {
@@ -282,6 +285,8 @@ func (s *Server) Handler() http.Handler {
 			s.teachResume(w, r)
 		case r.URL.Path == "/api/teach/stop" && r.Method == http.MethodPost:
 			s.teachStop(w, r)
+		case r.URL.Path == "/api/teach/trace" && r.Method == http.MethodGet:
+			s.teachTrace(w, r)
 		case r.URL.Path == "/api/teach/discard" && r.Method == http.MethodPost:
 			s.teachDiscard(w, r)
 		case r.URL.Path == "/api/secret-handoffs" && r.Method == http.MethodPost:
@@ -338,6 +343,16 @@ func (s *Server) Handler() http.Handler {
 			s.setComputerTakeover(w, r)
 		case r.URL.Path == "/api/computer/agent-control" && r.Method == http.MethodPost:
 			s.setComputerAgentControl(w, r)
+		case r.URL.Path == "/api/computer/snapshot" && r.Method == http.MethodGet:
+			s.computerSemanticSnapshot(w, r)
+		case r.URL.Path == "/api/computer/snapshots" && r.Method == http.MethodGet:
+			s.listComputerSnapshots(w, r)
+		case r.URL.Path == "/api/computer/snapshots" && r.Method == http.MethodPost:
+			s.createComputerSnapshot(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/computer/snapshots/") && strings.HasSuffix(r.URL.Path, "/restore") && r.Method == http.MethodPost:
+			s.restoreComputerSnapshot(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/computer/snapshots/") && r.Method == http.MethodDelete:
+			s.deleteComputerSnapshot(w, r)
 		case r.URL.Path == "/api/computer/action" && r.Method == http.MethodPost:
 			s.computerAction(w, r)
 		case r.URL.Path == "/api/computer/desktop/frame" && r.Method == http.MethodGet:
@@ -624,6 +639,28 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
+	mentionBotID, err := orchestration.SingleMentionBotID(request.MentionBotIDs)
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	sourceConversation := conversation
+	if mentionBotID != "" {
+		if err := orchestration.ValidateAgentHandoff(sourceConversation.BotID, mentionBotID); err != nil {
+			s.writeErrorStatus(w, http.StatusBadRequest, err)
+			return
+		}
+		if len(request.AttachmentIDs) > 0 {
+			s.writeErrorStatus(w, http.StatusBadRequest, errors.New("handoff cannot include attachments"))
+			return
+		}
+		targetConversation, convErr := s.Store.CanonicalConversationForBot(r.Context(), mentionBotID)
+		if convErr != nil {
+			s.writeError(w, convErr)
+			return
+		}
+		conversation = targetConversation
+	}
 	agent, hasAgent, err := s.agentForBot(r.Context(), conversation.BotID)
 	if err != nil {
 		s.writeError(w, err)
@@ -748,10 +785,58 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 	if computerCapability != "" {
 		systemPrompt = appendSystemPrompt(systemPrompt, computerBoundarySystemPrompt())
 	}
-	message, attachments, run, queuedEvent, err := s.Store.CreateMessageWithAttachmentsAndRun(r.Context(), conversation.ID, conversation.BotID, provider, request.Content, prompt, request.AttachmentIDs)
-	if err != nil {
-		s.writeError(w, err)
-		return
+	var (
+		message     domain.Message
+		run         domain.Run
+		queuedEvent domain.RunEvent
+		handoff     *domain.Handoff
+	)
+	if mentionBotID != "" {
+		sourceBot, sourceErr := s.Store.GetBot(r.Context(), sourceConversation.BotID)
+		if sourceErr != nil {
+			s.writeError(w, sourceErr)
+			return
+		}
+		targetBot, targetErr := s.Store.GetBot(r.Context(), conversation.BotID)
+		if targetErr != nil {
+			s.writeError(w, targetErr)
+			return
+		}
+		prompt = handoffWorkerPrompt(sourceBot, targetBot, prompt)
+		result, handoffErr := s.Store.CreateAgentHandoff(r.Context(), store.CreateAgentHandoffInput{
+			SourceConversationID: sourceConversation.ID,
+			SourceBotID:          sourceConversation.BotID,
+			TargetBotID:          conversation.BotID,
+			TargetConversationID: conversation.ID,
+			Content:              request.Content,
+			TargetProvider:       provider,
+			TargetPrompt:         prompt,
+		})
+		if handoffErr != nil {
+			s.writeError(w, handoffErr)
+			return
+		}
+		message = result.SourceMessage
+		run = result.Run
+		queuedEvent = result.QueuedEvent
+		handoff = &result.Handoff
+		if s.Broker != nil {
+			payload, _ := json.Marshal(result.Handoff)
+			for _, conversationID := range []string{sourceConversation.ID, conversation.ID} {
+				s.Broker.Publish(domain.StreamEvent{
+					ID: id.New("evt"), ConversationID: conversationID,
+					Type: "handoff.created", Data: string(payload),
+					CreatedAt: result.Handoff.CreatedAt,
+				})
+			}
+		}
+	} else {
+		var createErr error
+		message, attachments, run, queuedEvent, createErr = s.Store.CreateMessageWithAttachmentsAndRun(r.Context(), conversation.ID, conversation.BotID, provider, request.Content, prompt, request.AttachmentIDs)
+		if createErr != nil {
+			s.writeError(w, createErr)
+			return
+		}
 	}
 	run.SessionID = sessionID
 	if computerCapability != "" {
@@ -790,7 +875,15 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	s.writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "run": run})
+	response := map[string]any{"message": message, "run": run}
+	if handoff != nil {
+		response["handoff"] = handoff
+	}
+	s.writeJSON(w, http.StatusAccepted, response)
+}
+
+func handoffWorkerPrompt(source, target domain.Bot, prompt string) string {
+	return fmt.Sprintf("OpenAgentFleet agent handoff from %s. You are %s. Do not assume the sender's computer, MCP servers, or approvals.\n\n%s", source.Name, target.Name, prompt)
 }
 
 // applyWorkspaceDefaults makes the workspace lead provider and model the
@@ -1817,6 +1910,16 @@ func (s *Server) stopRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) awaitApproval(ctx context.Context, run domain.Run, request harness.PermissionRequest) (harness.PermissionDecision, error) {
+	if action, classifyErr := classifyPermissionAction(run, request); classifyErr == nil {
+		if rules, listErr := s.Store.ListPolicyRules(ctx); listErr == nil {
+			switch decision := matchPersistedPolicy(ctx, rules, action); decision.Effect {
+			case policy.EffectAllow:
+				return harness.PermissionDecision{Outcome: "selected", OptionID: firstPermissionOptionID(request.Options)}, nil
+			case policy.EffectDeny:
+				return harness.PermissionDecision{Outcome: "cancelled"}, nil
+			}
+		}
+	}
 	var toolCall map[string]any
 	_ = json.Unmarshal(request.ToolCall, &toolCall)
 	action := "tool execution"
@@ -2194,13 +2297,7 @@ func (s *Server) teachStop(w http.ResponseWriter, r *http.Request) {
 	if s.Workshop == nil {
 		response["workshop"] = map[string]any{"available": false, "detail": "Skill Workshop is not configured; the safe trace remains available for later review."}
 	} else {
-		name := strings.Join(strings.Fields(trace.Goal), " ")
-		draft, createErr := s.Workshop.Create(skillworkshop.DraftInput{
-			ID:          trace.ID,
-			Name:        name,
-			Description: "A reviewable skill draft generated from an explicit OpenAgentFleet teaching session.",
-			SourceTask:  fmt.Sprintf("Safe trace %s contains %d OpenAgentFleet-mediated actions. Raw VNC is disabled, so all desktop actions pass through the recorder boundary.", trace.ID, len(trace.Steps)),
-		})
+		draft, createErr := s.Workshop.CreateFromTrace(trace.ID, trace.Goal, draftStepsFromTrace(trace.Steps))
 		if createErr != nil {
 			response["workshop"] = map[string]any{"available": false, "detail": "The trace was saved, but a Skill Workshop draft could not be created: " + createErr.Error()}
 		} else {
@@ -2211,6 +2308,54 @@ func (s *Server) teachStop(w http.ResponseWriter, r *http.Request) {
 		response["detail"] = "The ten-minute teaching window expired; the safe trace was stopped and saved."
 	}
 	s.writeJSON(w, http.StatusOK, response)
+}
+
+func draftStepsFromTrace(steps []teach.Step) []skillworkshop.DraftStep {
+	result := make([]skillworkshop.DraftStep, 0, len(steps))
+	for _, step := range steps {
+		result = append(result, skillworkshop.DraftStep{
+			Sequence: step.Sequence,
+			Surface:  string(step.Surface),
+			Action:   string(step.Action),
+			Target:   step.Target,
+			Omitted:  step.Omitted,
+			Redacted: step.Redacted,
+		})
+	}
+	return result
+}
+
+func (s *Server) teachTrace(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("teach trace takes no query"))
+		return
+	}
+	recorder := s.currentTeachRecorder()
+	if recorder != nil {
+		trace, err := recorder.Trace()
+		if err == nil && trace.State != teach.StateIdle && trace.State != teach.StateDiscarded {
+			s.writeJSON(w, http.StatusOK, map[string]any{"trace": trace, "capture": teachCaptureDisclosure()})
+			return
+		}
+	}
+	root := s.TeachRoot
+	if root == "" && recorder != nil {
+		root = recorder.Root()
+	}
+	if root == "" {
+		s.writeErrorStatus(w, http.StatusNotFound, teach.ErrNoTrace)
+		return
+	}
+	trace, err := teach.LoadLatestTrace(root)
+	if err != nil {
+		status := http.StatusNotFound
+		if !errors.Is(err, teach.ErrNoTrace) {
+			status = http.StatusConflict
+		}
+		s.writeErrorStatus(w, status, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"trace": trace, "capture": teachCaptureDisclosure()})
 }
 
 func (s *Server) teachDiscard(w http.ResponseWriter, r *http.Request) {
@@ -2668,6 +2813,23 @@ func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
+	if request.Persist == persistAlwaysAllow || request.Persist == persistAlwaysDeny {
+		var payload struct {
+			ToolCall json.RawMessage `json:"tool_call"`
+		}
+		_ = json.Unmarshal([]byte(approval.Payload), &payload)
+		if action, classifyErr := classifyPermissionAction(run, harness.PermissionRequest{ToolCall: payload.ToolCall}); classifyErr == nil {
+			effect := policy.EffectAllow
+			if request.Persist == persistAlwaysDeny {
+				effect = policy.EffectDeny
+			}
+			rules, _ := s.Store.ListPolicyRules(r.Context())
+			if upsertErr := s.Store.UpsertPolicyRule(r.Context(), reuseOrCreatePersistedRule(rules, action, effect)); upsertErr != nil {
+				s.writeErrorStatus(w, http.StatusConflict, upsertErr)
+				return
+			}
+		}
+	}
 	s.writeJSON(w, http.StatusOK, approval)
 }
 
@@ -3012,6 +3174,134 @@ func (s *Server) computerDesktop(w http.ResponseWriter, r *http.Request) {
 	s.rawDesktopViewerDisabled(w, r)
 }
 
+func (s *Server) computerSemanticSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.Docker == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("computer provider unavailable"))
+		return
+	}
+	if !s.computerAgentReadAllowed(w, r, "computer snapshot") {
+		return
+	}
+	status := s.computerStatus(r.Context())
+	if !status.Running {
+		s.writeErrorStatus(w, http.StatusConflict, errors.New("start the Agent Computer before inspecting it"))
+		return
+	}
+	surface := r.URL.Query().Get("surface")
+	if surface == "" {
+		surface = "browser"
+	}
+	snapshot, err := s.Docker.SemanticSnapshot(r.Context(), surface)
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusBadGateway, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, snapshot)
+}
+
+func (s *Server) listComputerSnapshots(w http.ResponseWriter, r *http.Request) {
+	if s.Docker == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("computer provider unavailable"))
+		return
+	}
+	if r.Header.Get("X-OpenAgentFleet-Computer-Use") == "agent" {
+		s.writeErrorStatus(w, http.StatusForbidden, errors.New("computer checkpoints are a human action"))
+		return
+	}
+	items, err := s.Docker.ListSnapshots()
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"snapshots": items})
+}
+
+type computerSnapshotRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *Server) createComputerSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.Docker == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("computer provider unavailable"))
+		return
+	}
+	if r.Header.Get("X-OpenAgentFleet-Computer-Use") == "agent" {
+		s.writeErrorStatus(w, http.StatusForbidden, errors.New("computer checkpoints are a human action"))
+		return
+	}
+	var request computerSnapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	item, err := s.Docker.CreateSnapshot(r.Context(), request.Name)
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, item)
+}
+
+func (s *Server) restoreComputerSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.Docker == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("computer provider unavailable"))
+		return
+	}
+	if r.Header.Get("X-OpenAgentFleet-Computer-Use") == "agent" {
+		s.writeErrorStatus(w, http.StatusForbidden, errors.New("computer checkpoints are a human action"))
+		return
+	}
+	id := computerSnapshotID(r.URL.Path, true)
+	if id == "" {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("snapshot id is required"))
+		return
+	}
+	status, err := s.Docker.RestoreSnapshot(r.Context(), id)
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.withComputerTakeover(status))
+}
+
+func (s *Server) deleteComputerSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.Docker == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("computer provider unavailable"))
+		return
+	}
+	if r.Header.Get("X-OpenAgentFleet-Computer-Use") == "agent" {
+		s.writeErrorStatus(w, http.StatusForbidden, errors.New("computer checkpoints are a human action"))
+		return
+	}
+	id := computerSnapshotID(r.URL.Path, false)
+	if id == "" {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("snapshot id is required"))
+		return
+	}
+	if err := s.Docker.DeleteSnapshot(r.Context(), id); err != nil {
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+func computerSnapshotID(path string, restore bool) string {
+	trimmed := strings.TrimPrefix(path, "/api/computer/snapshots/")
+	if restore {
+		trimmed = strings.TrimSuffix(trimmed, "/restore")
+	}
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" || strings.Contains(trimmed, "/") {
+		return ""
+	}
+	for _, r := range trimmed {
+		if (r < 'a' || r > 'f') && (r < '0' || r > '9') {
+			return ""
+		}
+	}
+	return trimmed
+}
+
 func (s *Server) computerAction(w http.ResponseWriter, r *http.Request) {
 	if s.Docker == nil {
 		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("computer provider unavailable"))
@@ -3116,7 +3406,7 @@ func (s *Server) recordTeachAction(surface teach.Surface, action compute.Browser
 	if status.State != teach.StateRecording && status.State != teach.StatePaused {
 		return
 	}
-	normalized := teach.Action{Surface: surface, Sensitive: action.Sensitive || containsPotentialSecret(action.Text)}
+	normalized := teach.Action{Surface: surface, Sensitive: action.Sensitive || containsPotentialSecret(action.Text), Target: strings.TrimSpace(action.Ref)}
 	switch action.Action {
 	case "navigate", "reload", "back", "forward":
 		normalized.Type = teach.ActionNavigate
@@ -3126,7 +3416,13 @@ func (s *Server) recordTeachAction(surface teach.Surface, action compute.Browser
 		}
 	case "click":
 		normalized.Type = teach.ActionClick
+		if view.ResolvedRef != "" {
+			normalized.Target = view.ResolvedRef
+		}
 		normalized.Point = &teach.Point{X: int(action.X), Y: int(action.Y)}
+		if action.Ref != "" && action.X == 0 && action.Y == 0 {
+			normalized.Point = nil
+		}
 	case "type":
 		normalized.Type = teach.ActionTypeText
 		normalized.Text = action.Text

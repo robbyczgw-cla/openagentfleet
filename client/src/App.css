@@ -361,7 +361,20 @@ kbd { color: var(--ink-3); font-size: 11px; }
 .computer-nav button:hover:not(:disabled), .computer-actions button:hover:not(:disabled), .computer-input-row button:hover:not(:disabled) { border-color: #CDBBAC; color: var(--ink); background: var(--surface-2); }
 .computer-nav input, .computer-input-row input { min-width: 0; flex: 1; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; outline: 0; color: var(--ink); background: var(--surface); font-size: 11px; }
 .computer-nav input:focus, .computer-input-row input:focus { border-color: #C9B9AA; }
-.computer-actions { display: flex; gap: 5px; }
+.computer-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+.computer-snapshots { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.computer-snapshots input, .computer-snapshots select { min-height: 29px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 11px; }
+.computer-snapshots button { min-height: 29px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; color: var(--ink-2); background: var(--surface); font-size: 11px; }
+.computer-snapshot-active { margin: 6px 0 0; color: var(--ink-2); font-size: 11px; }
+.computer-ax-list { display: grid; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; max-height: 140px; overflow: auto; }
+.computer-ax-list button { width: 100%; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--ink); font-size: 11px; }
+.teach-replay { margin-top: 11px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.teach-replay > div:first-child { display: flex; justify-content: space-between; gap: 8px; }
+.teach-replay strong { font-size: 12px; }
+.teach-replay p { margin: 6px 0; color: var(--ink-2); font-size: 11px; }
+.teach-replay ol { margin: 0; padding-left: 18px; max-height: 160px; overflow: auto; font-size: 11px; }
+.teach-replay li.active { color: var(--accent-hover); font-weight: 600; }
+.teach-replay > div:last-child { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .computer-actions .takeover-button { border-color: #B49B85; color: #FFF; background: var(--accent); }
 .computer-actions .takeover-button:hover:not(:disabled) { border-color: var(--accent-hover); color: #FFF; background: var(--accent-hover); }
 .computer-actions .takeover-active { border-color: #CDBBAC; color: var(--accent-hover); background: var(--accent-soft); }

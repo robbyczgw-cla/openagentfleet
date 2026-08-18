@@ -47,7 +47,8 @@ for needle in \
   botd \
   browser-mcp \
   '.desktop' \
-  'agent-computer/Dockerfile'
+  'agent-computer/Dockerfile' \
+  'agent-computer/computer-server.mjs'
 do
   if ! grep -q "$needle" <<<"$contents"; then
     printf 'release verification failed: deb is missing %s\n' "$needle" >&2
@@ -76,7 +77,8 @@ if [[ -n "$rpm_path" ]]; then
     '/usr/bin/botd' \
     '/usr/bin/browser-mcp' \
     'OpenAgentFleet.desktop' \
-    'agent-computer/Dockerfile'
+    'agent-computer/Dockerfile' \
+    'agent-computer/computer-server.mjs'
   do
     if ! grep -q "$needle" <<<"$rpm_files"; then
       printf 'release verification failed: rpm is missing %s\n' "$needle" >&2
