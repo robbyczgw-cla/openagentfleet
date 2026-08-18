@@ -3016,11 +3016,12 @@ function App() {
   ) {
     setTeachBusy(true);
     try {
-      const response = await apiFetch(`/api/teach/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body ?? {}),
-      });
+      const request: RequestInit = { method: "POST" };
+      if (body && Object.keys(body).length > 0) {
+        request.headers = { "Content-Type": "application/json" };
+        request.body = JSON.stringify(body);
+      }
+      const response = await apiFetch(`/api/teach/${action}`, request);
       const payload = (await response.json()) as TeachResponse;
       if (!response.ok)
         throw new Error(payload.error ?? `Teach task returned ${response.status}`);
