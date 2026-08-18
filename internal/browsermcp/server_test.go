@@ -101,8 +101,8 @@ func TestServeInitializesListsToolsAndSkipsInitializedNotification(t *testing.T)
 		got[tool.Name] = true
 	}
 	for _, name := range []string{
-		"browser_status", "browser_start", "browser_navigate", "browser_click", "browser_type", "browser_press", "browser_scroll", "browser_screenshot",
-		"computer_screenshot", "computer_click", "computer_type", "computer_press", "computer_scroll",
+		"browser_status", "browser_start", "browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_press", "browser_scroll", "browser_screenshot",
+		"computer_snapshot", "computer_screenshot", "computer_click", "computer_type", "computer_press", "computer_scroll",
 	} {
 		if !got[name] {
 			t.Errorf("tools/list is missing %q", name)

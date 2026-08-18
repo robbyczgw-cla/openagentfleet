@@ -106,6 +106,8 @@ type Status struct {
 	ViewportHeight int            `json:"viewport_height,omitempty"`
 	Takeover       bool           `json:"takeover"`
 	AgentControl   bool           `json:"agent_control"`
+	SnapshotID     string         `json:"snapshot_id,omitempty"`
+	SnapshotName   string         `json:"snapshot_name,omitempty"`
 	Detail         string         `json:"detail,omitempty"`
 }
 
@@ -116,6 +118,8 @@ type ViewStatus struct {
 	ViewportWidth  int    `json:"viewport_width,omitempty"`
 	ViewportHeight int    `json:"viewport_height,omitempty"`
 	Pages          int    `json:"pages,omitempty"`
+	ResolvedRef    string `json:"resolved_ref,omitempty"`
+	Method         string `json:"method,omitempty"`
 }
 
 // TargetBinding is non-secret metadata captured when a human asks the native
@@ -135,6 +139,7 @@ type BrowserAction struct {
 	DeltaY    float64 `json:"delta_y,omitempty"`
 	Text      string  `json:"text,omitempty"`
 	Key       string  `json:"key,omitempty"`
+	Ref       string  `json:"ref,omitempty"`
 	Sensitive bool    `json:"sensitive,omitempty"`
 }
 
@@ -238,7 +243,22 @@ func (d *Docker) remoteEnabled() bool {
 func (d *Docker) baseStatus() Status {
 	status := Status{State: ComputerStateUnavailable, Image: d.Image, Resources: d.resourceConfig()}
 	d.applyRuntimeStatus(&status)
+	d.applySnapshotStatus(&status)
 	return status
+}
+
+func (d *Docker) applySnapshotStatus(status *Status) {
+	catalog, err := d.loadSnapshotCatalog()
+	if err != nil {
+		return
+	}
+	status.SnapshotID = catalog.ActiveID
+	if catalog.ActiveID == "" {
+		return
+	}
+	if item, ok := catalog.find(catalog.ActiveID); ok {
+		status.SnapshotName = item.Name
+	}
 }
 
 func (d *Docker) applyRuntimeStatus(status *Status) {
@@ -481,7 +501,7 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		return status, errors.New(status.Detail)
 	}
 	if status.Running {
-		if status.Image == d.Image && status.BrowserReady && status.DesktopReady && d.usesControllerBrowserProfile(ctx, profilePath) {
+		if status.Image == d.runImage() && status.BrowserReady && status.DesktopReady && d.usesControllerBrowserProfile(ctx, profilePath) {
 			return status, nil
 		}
 		// A running container without the view service is an older Agent
@@ -507,7 +527,10 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 	} else if err := d.ensureBrowserProfileVolume(ctx); err != nil {
 		return status, err
 	}
-	if _, err := d.runOutput(ctx, "image", "inspect", d.Image); err != nil {
+	if _, err := d.runOutput(ctx, "image", "inspect", d.runImage()); err != nil {
+		if d.runImage() != d.Image {
+			return status, fmt.Errorf("restored snapshot image %s is missing; delete that checkpoint or rebuild the Agent Computer", d.runImage())
+		}
 		if d.BuildContext == "" {
 			return status, fmt.Errorf("agent image %s is missing and no build context is configured", d.Image)
 		}
@@ -753,7 +776,7 @@ func (d *Docker) containerRunArgs(controlToken string) []string {
 		"--env", "COMPUTER_CONTROL_TOKEN=" + controlToken,
 		"--mount", "type=bind,source=" + d.Workspace + ",target=/workspace",
 		"--mount", profileMount,
-		"--workdir", "/workspace", d.Image,
+		"--workdir", "/workspace", d.runImage(),
 	}
 }
 
@@ -1087,11 +1110,13 @@ func (d *Docker) performActionBody(ctx context.Context, path string, body []byte
 		return ViewStatus{}, fmt.Errorf("computer action returned HTTP %d", response.StatusCode)
 	}
 	var payload struct {
-		Ready    bool   `json:"ready"`
-		URL      string `json:"url"`
-		Title    string `json:"title"`
-		Pages    int    `json:"pages"`
-		Viewport struct {
+		Ready       bool   `json:"ready"`
+		URL         string `json:"url"`
+		Title       string `json:"title"`
+		Pages       int    `json:"pages"`
+		Method      string `json:"method"`
+		ResolvedRef string `json:"resolved_ref"`
+		Viewport    struct {
 			Width  int `json:"width"`
 			Height int `json:"height"`
 		} `json:"viewport"`
@@ -1099,7 +1124,16 @@ func (d *Docker) performActionBody(ctx context.Context, path string, body []byte
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		return ViewStatus{}, err
 	}
-	return ViewStatus{Ready: payload.Ready, URL: payload.URL, Title: payload.Title, Pages: payload.Pages, ViewportWidth: payload.Viewport.Width, ViewportHeight: payload.Viewport.Height}, nil
+	return ViewStatus{
+		Ready:          payload.Ready,
+		URL:            payload.URL,
+		Title:          payload.Title,
+		Pages:          payload.Pages,
+		ViewportWidth:  payload.Viewport.Width,
+		ViewportHeight: payload.Viewport.Height,
+		ResolvedRef:    payload.ResolvedRef,
+		Method:         payload.Method,
+	}, nil
 }
 
 func (d *Docker) remoteLifecycle(ctx context.Context, method, path string) (Status, error) {
@@ -1155,6 +1189,9 @@ func (d *Docker) viewRequest(ctx context.Context, method, path string, body []by
 	if method == http.MethodGet && path == "/health" {
 		timeout = 2 * time.Second
 	}
+	if method == http.MethodGet && strings.HasPrefix(path, "/snapshot") {
+		timeout = 15 * time.Second
+	}
 	if method == http.MethodPost && (path == "/action" || path == "/desktop/action") {
 		timeout = 40 * time.Second
 	}
@@ -1182,8 +1219,11 @@ func (d *Docker) remoteRequest(ctx context.Context, method, path string, body []
 	if method == http.MethodGet && path == "/health" {
 		timeout = 2 * time.Second
 	}
-	if method == http.MethodPost && (path == "/action" || path == "/desktop/action" || path == "/ensure") {
+	if method == http.MethodPost && (path == "/action" || path == "/desktop/action" || path == "/ensure" || path == "/snapshots" || strings.Contains(path, "/restore")) {
 		timeout = 5 * time.Minute
+	}
+	if method == http.MethodGet && strings.HasPrefix(path, "/snapshot") {
+		timeout = 15 * time.Second
 	}
 	response, err := (&http.Client{
 		Timeout: timeout,
@@ -1419,6 +1459,9 @@ func wipeBytes(value []byte) {
 }
 
 func validateBrowserAction(action BrowserAction) error {
+	if err := validateActionRef(action.Ref); err != nil {
+		return err
+	}
 	switch action.Action {
 	case "navigate":
 		parsed, err := url.Parse(action.URL)
@@ -1429,8 +1472,8 @@ func validateBrowserAction(action BrowserAction) error {
 			return errors.New("navigation URL is too long")
 		}
 	case "click":
-		if !validCoordinate(action.X) || !validCoordinate(action.Y) {
-			return errors.New("click coordinates are invalid")
+		if strings.TrimSpace(action.Ref) == "" && (!validCoordinate(action.X) || !validCoordinate(action.Y)) {
+			return errors.New("click requires an element ref or coordinates")
 		}
 	case "type":
 		if len(action.Text) > 4096 {
@@ -1452,10 +1495,13 @@ func validateBrowserAction(action BrowserAction) error {
 }
 
 func validateDesktopAction(action BrowserAction) error {
+	if err := validateActionRef(action.Ref); err != nil {
+		return err
+	}
 	switch action.Action {
 	case "click":
-		if !validCoordinate(action.X) || !validCoordinate(action.Y) {
-			return errors.New("desktop click coordinates are invalid")
+		if strings.TrimSpace(action.Ref) == "" && (!validCoordinate(action.X) || !validCoordinate(action.Y)) {
+			return errors.New("desktop click requires a window ref or coordinates")
 		}
 	case "type":
 		if len(action.Text) > 4096 {
@@ -1477,6 +1523,25 @@ func validateDesktopAction(action BrowserAction) error {
 
 func validCoordinate(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 10000
+}
+
+func validateActionRef(ref string) error {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	if len(ref) > 32 {
+		return errors.New("element ref is too long")
+	}
+	if len(ref) < 2 || (ref[0] != 'e' && ref[0] != 'w') {
+		return errors.New("element ref is invalid")
+	}
+	for _, r := range ref[1:] {
+		if r < '0' || r > '9' {
+			return errors.New("element ref is invalid")
+		}
+	}
+	return nil
 }
 
 func run(parent context.Context, program string, args ...string) error {

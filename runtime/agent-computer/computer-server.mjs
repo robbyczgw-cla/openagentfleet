@@ -260,45 +260,226 @@ function validWebURL(value) {
   }
 }
 
+function validElementRef(value) {
+  return typeof value === "string" && /^e[0-9]{1,6}$/.test(value);
+}
+
+function validWindowRef(value) {
+  return typeof value === "string" && /^w[0-9]{1,8}$/.test(value);
+}
+
+async function browserSnapshot(activePage) {
+  const payload = await activePage.evaluate(() => {
+    document.querySelectorAll("[data-oaf-ref]").forEach((node) => node.removeAttribute("data-oaf-ref"));
+    const selector = [
+      "a[href]",
+      "button",
+      "input",
+      "textarea",
+      "select",
+      "summary",
+      "[role='button']",
+      "[role='link']",
+      "[role='textbox']",
+      "[role='menuitem']",
+      "[role='tab']",
+      "[contenteditable='true']",
+    ].join(",");
+    const seen = new Set();
+    const elements = [];
+    for (const node of document.querySelectorAll(selector)) {
+      if (!(node instanceof HTMLElement) || seen.has(node) || elements.length >= 80) continue;
+      const style = window.getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      if (style.visibility === "hidden" || style.display === "none" || rect.width < 2 || rect.height < 2) continue;
+      if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth) continue;
+      seen.add(node);
+      const index = elements.length + 1;
+      const ref = `e${index}`;
+      node.setAttribute("data-oaf-ref", ref);
+      const role = node.getAttribute("role")
+        || (node instanceof HTMLInputElement ? (node.type === "submit" || node.type === "button" ? "button" : "textbox")
+          : node.tagName.toLowerCase());
+      const name = (
+        node.getAttribute("aria-label")
+        || node.getAttribute("placeholder")
+        || (node instanceof HTMLInputElement && node.type === "submit" ? node.value : "")
+        || node.innerText
+        || node.getAttribute("title")
+        || node.getAttribute("name")
+        || ""
+      ).replace(/\s+/g, " ").trim().slice(0, 80);
+      elements.push({
+        ref,
+        role,
+        name,
+        tag: node.tagName.toLowerCase(),
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+    return { url: location.href, title: document.title, elements };
+  });
+  return {
+    surface: "browser",
+    url: payload.url,
+    title: payload.title,
+    ladder: ["element", "pixel"],
+    elements: payload.elements ?? [],
+  };
+}
+
+async function clickByRef(activePage, ref) {
+  if (!validElementRef(ref)) return false;
+  const locator = activePage.locator(`[data-oaf-ref="${ref}"]`);
+  if (await locator.count() === 0) return false;
+  await locator.first().click({ timeout: 2500 });
+  return true;
+}
+
+async function focusByRef(activePage, ref) {
+  if (!validElementRef(ref)) return false;
+  const locator = activePage.locator(`[data-oaf-ref="${ref}"]`);
+  if (await locator.count() === 0) return false;
+  await locator.first().click({ timeout: 2500 });
+  return true;
+}
+
+async function desktopSnapshot() {
+  const env = { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" };
+  let ids = [];
+  try {
+    const { stdout } = await execFileAsync("xdotool", ["search", "--onlyvisible", "--name", ""], { env });
+    ids = stdout.trim().split(/\s+/).filter((id) => /^[0-9]+$/.test(id)).slice(0, 40);
+  } catch {
+    ids = [];
+  }
+  const elements = [];
+  for (const id of ids) {
+    try {
+      const [{ stdout: nameOut }, { stdout: geoOut }] = await Promise.all([
+        execFileAsync("xdotool", ["getwindowname", id], { env }),
+        execFileAsync("xdotool", ["getwindowgeometry", "--shell", id], { env }),
+      ]);
+      const geometry = Object.fromEntries(
+        geoOut.trim().split("\n").map((line) => {
+          const [key, value] = line.split("=");
+          return [key, Number(value)];
+        }).filter((entry) => entry[0]),
+      );
+      const name = nameOut.trim().slice(0, 80);
+      const x = Number.isFinite(geometry.X) ? geometry.X : NaN;
+      const y = Number.isFinite(geometry.Y) ? geometry.Y : NaN;
+      const width = Number.isFinite(geometry.WIDTH) ? geometry.WIDTH : 0;
+      const height = Number.isFinite(geometry.HEIGHT) ? geometry.HEIGHT : 0;
+      if (!name || width < 2 || height < 2 || x + width < 0 || y + height < 0) continue;
+      elements.push({
+        ref: `w${id}`,
+        role: "window",
+        name,
+        tag: "window",
+        x,
+        y,
+        width,
+        height,
+      });
+    } catch {
+      continue;
+    }
+  }
+  return {
+    surface: "desktop",
+    ladder: ["element", "pixel"],
+    elements,
+    detail: elements.length ? undefined : "No visible windows were advertised by the desktop.",
+  };
+}
+
+async function activateWindowRef(ref) {
+  if (!validWindowRef(ref)) return false;
+  const id = ref.slice(1);
+  try {
+    await execFileAsync("xdotool", ["windowactivate", "--sync", id], {
+      env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function action(request) {
   const activePage = await currentPage();
+  let method = "pixel";
+  let resolvedRef = "";
+  const ref = typeof request.ref === "string" ? request.ref.trim() : "";
   switch (request.action) {
     case "navigate":
       if (typeof request.url !== "string" || !validWebURL(request.url)) throw new Error("only http(s) navigation is allowed");
       await activePage.goto(request.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      method = "navigate";
       break;
-    case "click":
+    case "click": {
+      const used = await clickByRef(activePage, ref);
+      if (used) {
+        method = "element";
+        resolvedRef = ref;
+        break;
+      }
+      if (!Number.isFinite(Number(request.x)) || !Number.isFinite(Number(request.y))) {
+        throw new Error(ref ? `element ${ref} is gone; click again from a fresh snapshot` : "click requires an element ref or coordinates");
+      }
       await activePage.mouse.click(Number(request.x), Number(request.y));
+      method = ref ? "pixel" : "pixel";
+      resolvedRef = ref;
       break;
+    }
     case "type":
       if (typeof request.text !== "string") throw new Error("text is required");
       if (request.native_handoff === true) {
         if (request.text.length > 4096) throw new Error("secure text is too large");
         await deliverNativeBrowserHandoff(request);
-      } else {
-        await activePage.keyboard.insertText(request.text);
+        method = "secure";
+        break;
       }
+      if (ref && await focusByRef(activePage, ref)) {
+        method = "element";
+        resolvedRef = ref;
+      }
+      await activePage.keyboard.insertText(request.text);
       break;
     case "press":
       if (typeof request.key !== "string" || request.key.length > 64) throw new Error("key is required");
+      if (ref) {
+        await focusByRef(activePage, ref).catch(() => false);
+        resolvedRef = ref;
+        method = "element";
+      }
       await activePage.keyboard.press(request.key);
       break;
     case "scroll":
       await activePage.mouse.wheel(Number(request.delta_x ?? 0), Number(request.delta_y ?? 0));
+      method = "pixel";
       break;
     case "reload":
       await activePage.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+      method = "navigate";
       break;
     case "back":
       await activePage.goBack({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+      method = "navigate";
       break;
     case "forward":
       await activePage.goForward({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+      method = "navigate";
       break;
     default:
       throw new Error(`unsupported action: ${request.action}`);
   }
-  return viewStatus();
+  const status = await viewStatus();
+  return { ...status, method, resolved_ref: resolvedRef };
 }
 
 async function desktopFrame() {
@@ -409,13 +590,43 @@ async function desktopStatus() {
 
 async function desktopAction(request) {
   const run = (args) => execFileAsync("xdotool", args, { env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" } });
+  const ref = typeof request.ref === "string" ? request.ref.trim() : "";
+  let method = "pixel";
+  let resolvedRef = "";
+  if (ref) {
+    const activated = await activateWindowRef(ref);
+    if (activated) {
+      method = "element";
+      resolvedRef = ref;
+    } else if (!Number.isFinite(Number(request.x)) && request.action === "click") {
+      throw new Error(`window ${ref} is gone; inspect the desktop again`);
+    }
+  }
   switch (request.action) {
     case "click": {
+      if (method === "element" && !Number.isFinite(Number(request.x))) {
+        const id = ref.slice(1);
+        const match = (await desktopSnapshot()).elements.find((item) => item.ref === ref);
+        const width = match?.width > 0 ? match.width : 40;
+        const height = match?.height > 0 ? match.height : 40;
+        await run([
+          "mousemove",
+          "--window",
+          id,
+          "--sync",
+          String(Math.max(1, Math.round(width / 2))),
+          String(Math.max(1, Math.round(height / 2))),
+          "click",
+          "1",
+        ]);
+        break;
+      }
       const x = desktopCoordinate(request.x, "x");
       const y = desktopCoordinate(request.y, "y");
       // --sync makes xdotool wait until the X server has applied the move
       // before the following click command is dispatched.
       await run(["mousemove", "--sync", String(x), String(y), "click", "1"]);
+      if (method !== "element") method = "pixel";
       break;
     }
     case "type":
@@ -446,7 +657,8 @@ async function desktopAction(request) {
   await new Promise((resolve) => setTimeout(resolve, 50));
   // Desktop input does not need a CDP round-trip. Keep the last browser
   // metadata for the controller response, but report the X11 desktop geometry.
-  return desktopStatus();
+  const status = await desktopStatus();
+  return { ...status, method, resolved_ref: resolvedRef };
 }
 
 async function handle(req, res) {
@@ -499,6 +711,16 @@ async function handle(req, res) {
         return result;
       });
       json(res, 200, { tabs });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/snapshot") {
+      const surface = url.searchParams.get("surface") ?? "browser";
+      const snapshot = await serialized(async () => {
+        if (surface === "desktop") return desktopSnapshot();
+        if (surface === "browser") return browserSnapshot(await currentPage());
+        throw new Error("snapshot surface must be browser or desktop");
+      });
+      json(res, 200, snapshot);
       return;
     }
     if (req.method === "GET" && url.pathname === "/target") {

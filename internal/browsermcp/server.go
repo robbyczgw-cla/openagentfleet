@@ -289,6 +289,16 @@ func tools() []toolDefinition {
 			}, "url"),
 		},
 		{
+			Name:        "browser_snapshot",
+			Description: "Read interactive browser elements with stable refs. Prefer acting by ref, then fall back to coordinates from a screenshot. Requires Agent control.",
+			InputSchema: objectSchema(nil),
+		},
+		{
+			Name:        "computer_snapshot",
+			Description: "Read visible desktop windows with stable refs. Prefer acting by ref, then fall back to coordinates from a screenshot. Requires Agent control.",
+			InputSchema: objectSchema(nil),
+		},
+		{
 			Name:        "browser_click",
 			Description: "Click a coordinate in the Chromium browser viewport. Requires Agent control in OpenAgentFleet.",
 			InputSchema: clickSchema(),
@@ -360,14 +370,16 @@ func objectSchema(properties map[string]any, required ...string) map[string]any 
 
 func clickSchema() map[string]any {
 	return objectSchema(map[string]any{
-		"x": map[string]any{"type": "number", "description": "Horizontal coordinate in pixels."},
-		"y": map[string]any{"type": "number", "description": "Vertical coordinate in pixels."},
-	}, "x", "y")
+		"ref": map[string]any{"type": "string", "description": "Element or window ref from a snapshot. Prefer this over coordinates."},
+		"x":   map[string]any{"type": "number", "description": "Horizontal coordinate in pixels. Used when ref is missing or stale."},
+		"y":   map[string]any{"type": "number", "description": "Vertical coordinate in pixels. Used when ref is missing or stale."},
+	})
 }
 
 func typeSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"text":      map[string]any{"type": "string", "description": "Text to type."},
+		"ref":       map[string]any{"type": "string", "description": "Optional snapshot ref to focus first."},
 		"sensitive": map[string]any{"type": "boolean", "description": "Mark password-like text as sensitive."},
 	}, "text")
 }
@@ -386,12 +398,14 @@ func browserScrollSchema() map[string]any {
 }
 
 type clickArguments struct {
-	X *float64 `json:"x"`
-	Y *float64 `json:"y"`
+	Ref *string  `json:"ref"`
+	X   *float64 `json:"x"`
+	Y   *float64 `json:"y"`
 }
 
 type typeArguments struct {
 	Text      *string `json:"text"`
+	Ref       *string `json:"ref"`
 	Sensitive bool    `json:"sensitive"`
 }
 
@@ -427,6 +441,10 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 			return toolFailure(fmt.Errorf("url is required"))
 		}
 		return s.browserAction(ctx, map[string]any{"action": "navigate", "url": strings.TrimSpace(*input.URL)})
+	case "browser_snapshot":
+		return s.jsonTool(ctx, http.MethodGet, "/api/computer/snapshot?surface=browser", nil)
+	case "computer_snapshot":
+		return s.jsonTool(ctx, http.MethodGet, "/api/computer/snapshot?surface=desktop", nil)
 	case "browser_click":
 		return s.clickTool(ctx, "/api/computer/action", arguments)
 	case "browser_type":
@@ -475,10 +493,21 @@ func (s *Server) clickTool(ctx context.Context, path string, arguments json.RawM
 	if err := decodeToolArguments(arguments, &input); err != nil {
 		return toolFailure(err)
 	}
-	if input.X == nil || input.Y == nil {
-		return toolFailure(fmt.Errorf("x and y are required"))
+	ref := ""
+	if input.Ref != nil {
+		ref = strings.TrimSpace(*input.Ref)
 	}
-	action := map[string]any{"action": "click", "x": *input.X, "y": *input.Y}
+	if ref == "" && (input.X == nil || input.Y == nil) {
+		return toolFailure(fmt.Errorf("ref or x and y are required"))
+	}
+	action := map[string]any{"action": "click"}
+	if ref != "" {
+		action["ref"] = ref
+	}
+	if input.X != nil && input.Y != nil {
+		action["x"] = *input.X
+		action["y"] = *input.Y
+	}
 	if path == "/api/computer/desktop/action" {
 		return s.desktopAction(ctx, action)
 	}
@@ -494,6 +523,9 @@ func (s *Server) typeTool(ctx context.Context, path string, arguments json.RawMe
 		return toolFailure(fmt.Errorf("text is required"))
 	}
 	action := map[string]any{"action": "type", "text": *input.Text, "sensitive": input.Sensitive}
+	if input.Ref != nil && strings.TrimSpace(*input.Ref) != "" {
+		action["ref"] = strings.TrimSpace(*input.Ref)
+	}
 	if path == "/api/computer/desktop/action" {
 		return s.desktopAction(ctx, action)
 	}

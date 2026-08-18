@@ -27,12 +27,21 @@ type SearchHit struct {
 	CreatedAt      string `json:"created_at"`
 }
 
+const (
+	MessageKindChat    = ""
+	MessageKindHandoff = "handoff"
+)
+
 type Message struct {
-	ID             string `json:"id"`
-	ConversationID string `json:"conversation_id"`
-	Role           string `json:"role"`
-	Content        string `json:"content"`
-	CreatedAt      string `json:"created_at"`
+	ID             string   `json:"id"`
+	ConversationID string   `json:"conversation_id"`
+	Role           string   `json:"role"`
+	Content        string   `json:"content"`
+	CreatedAt      string   `json:"created_at"`
+	Kind           string   `json:"kind,omitempty"`
+	AuthorBotID    string   `json:"author_bot_id,omitempty"`
+	Mentions       []string `json:"mentions,omitempty"`
+	HandoffID      string   `json:"handoff_id,omitempty"`
 }
 
 // Attachment is stored inside the managed workspace so both host workers and

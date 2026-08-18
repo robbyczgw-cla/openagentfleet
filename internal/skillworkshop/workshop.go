@@ -58,11 +58,23 @@ const (
 
 // DraftInput is intentionally limited to non-secret, human-readable context.
 // ID is optional; when omitted, a stable safe ID is derived from Name.
+// DraftStep is a redacted teaching action that may be written into SKILL.md.
+// It must not carry raw typed text, keys, URLs, or screenshot bytes.
+type DraftStep struct {
+	Sequence int
+	Surface  string
+	Action   string
+	Target   string
+	Omitted  bool
+	Redacted bool
+}
+
 type DraftInput struct {
 	ID          string
 	Name        string
 	Description string
 	SourceTask  string
+	Steps       []DraftStep
 }
 
 // Draft is durable metadata for the current revision of a local skill draft.
@@ -211,6 +223,22 @@ func (w *Workshop) Create(input DraftInput) (Draft, error) {
 		return Draft{}, err
 	}
 	return draft, nil
+}
+
+// CreateFromTrace turns a saved teaching trace into a reviewable draft.
+// The draft stays disabled until a human review and safe test pass.
+func (w *Workshop) CreateFromTrace(id, goal string, steps []DraftStep) (Draft, error) {
+	name := strings.Join(strings.Fields(goal), " ")
+	if name == "" {
+		name = "Taught task"
+	}
+	return w.Create(DraftInput{
+		ID:          id,
+		Name:        name,
+		Description: "A reviewable skill draft generated from an explicit OpenAgentFleet teaching session.",
+		SourceTask:  fmt.Sprintf("Safe trace %s contains %d OpenAgentFleet-mediated actions. Raw VNC is disabled, so all desktop actions pass through the recorder boundary.", id, len(steps)),
+		Steps:       steps,
+	})
 }
 
 // Revise creates a new draft revision. Previous review/test records and
@@ -1056,9 +1084,7 @@ func skillMarkdown(input DraftInput) string {
 		"- Confirm the required workspace, account access, and non-secret inputs are available.\n" +
 		"- Ask for approval before any external, destructive, financial, identity, or credential-related action.\n\n" +
 		"## Steps\n\n" +
-		"1. Restate the intended safe outcome.\n" +
-		"2. Follow the source task: " + input.SourceTask + "\n" +
-		"3. Stop for approval at each stated safety boundary.\n\n" +
+		skillStepsMarkdown(input) + "\n" +
 		"## Safety boundaries\n\n" +
 		"- Never request, record, or replay passwords, passkeys, one-time codes, API keys, payment data, or CAPTCHA solutions.\n" +
 		"- Do not perform writes, sends, purchases, or account changes without explicit approval.\n" +
@@ -1066,6 +1092,40 @@ func skillMarkdown(input DraftInput) string {
 		"## Verification\n\n" +
 		"- Verify the expected outcome with safe test data.\n" +
 		"- Report what changed, what was verified, and any remaining approval or follow-up needed.\n"
+}
+
+func skillStepsMarkdown(input DraftInput) string {
+	if len(input.Steps) == 0 {
+		return "1. Restate the intended safe outcome.\n" +
+			"2. Follow the source task: " + input.SourceTask + "\n" +
+			"3. Stop for approval at each stated safety boundary.\n"
+	}
+	var builder strings.Builder
+	for index, step := range input.Steps {
+		sequence := step.Sequence
+		if sequence <= 0 {
+			sequence = index + 1
+		}
+		action := strings.TrimSpace(step.Action)
+		if action == "" {
+			action = "recorded action"
+		}
+		surface := strings.TrimSpace(step.Surface)
+		if surface == "" {
+			surface = "unknown"
+		}
+		builder.WriteString(fmt.Sprintf("%d. [%s] %s", sequence, surface, action))
+		switch {
+		case step.Omitted || step.Redacted:
+			builder.WriteString(" (payload redacted or omitted)")
+		case strings.TrimSpace(step.Target) != "":
+			builder.WriteString(" on ")
+			builder.WriteString(strings.TrimSpace(step.Target))
+		}
+		builder.WriteByte('\n')
+	}
+	builder.WriteString(fmt.Sprintf("%d. Stop for approval at each stated safety boundary.\n", len(input.Steps)+1))
+	return builder.String()
 }
 
 func yamlString(value string) string {

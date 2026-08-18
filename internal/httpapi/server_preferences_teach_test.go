@@ -212,9 +212,10 @@ func TestTeachTraceRedactsSensitiveActionsAndRequiresExplicitSkillEnable(t *test
 	secret := "password=hunter2"
 	serverValue.recordTeachAction(teach.SurfaceBrowser, compute.BrowserAction{Action: "type", Text: secret}, compute.ViewStatus{URL: "https://example.com"})
 	serverValue.recordTeachAction(teach.SurfaceBrowser, compute.BrowserAction{Action: "click", X: 40, Y: 80}, compute.ViewStatus{URL: "https://example.com"})
+	serverValue.recordTeachAction(teach.SurfaceBrowser, compute.BrowserAction{Action: "click", Ref: "e4"}, compute.ViewStatus{URL: "https://example.com", ResolvedRef: "e4", Method: "element"})
 
 	response = performRequest(handler, http.MethodGet, "/api/teach", "", "")
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"direct_novnc_input":false`) || !strings.Contains(response.Body.String(), `"step_count":2`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"direct_novnc_input":false`) || !strings.Contains(response.Body.String(), `"step_count":3`) {
 		t.Fatalf("teach status = %d, body = %s", response.Code, response.Body.String())
 	}
 	response = performRequest(handler, http.MethodPost, "/api/teach/stop", "", "")
@@ -223,6 +224,10 @@ func TestTeachTraceRedactsSensitiveActionsAndRequiresExplicitSkillEnable(t *test
 	}
 	if strings.Contains(response.Body.String(), secret) || !strings.Contains(response.Body.String(), `"redacted":true`) || !strings.Contains(response.Body.String(), `"auto_enabled":false`) || !strings.Contains(response.Body.String(), `"status":{"state":"stopped"`) {
 		t.Fatalf("unsafe teach stop response = %s", response.Body.String())
+	}
+	response = performRequest(handler, http.MethodGet, "/api/teach/trace", "", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"target":"e4"`) || strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("teach trace replay payload = %d %s", response.Code, response.Body.String())
 	}
 	drafts, err := workshop.List()
 	if err != nil || len(drafts) != 1 || drafts[0].State != skillworkshop.StateDraft {
@@ -278,6 +283,19 @@ func TestComputerControlIsExclusiveAndRawVNCIsDisabled(t *testing.T) {
 	rawVNC := performRequest(handler, http.MethodGet, "/api/computer/desktop/vnc_lite.html", "", "remote-secret")
 	if rawVNC.Code != http.StatusGone {
 		t.Fatalf("raw VNC should be disabled even with API authorization = %d, body = %s", rawVNC.Code, rawVNC.Body.String())
+	}
+	snapshots := performRequest(handler, http.MethodGet, "/api/computer/snapshots", "", "remote-secret")
+	if snapshots.Code != http.StatusOK || !strings.Contains(snapshots.Body.String(), `"snapshots"`) {
+		t.Fatalf("snapshot list = %d %s", snapshots.Code, snapshots.Body.String())
+	}
+	agentSnapshot := httptest.NewRequest(http.MethodPost, "/api/computer/snapshots", strings.NewReader(`{"name":"checkpoint"}`))
+	agentSnapshot.Header.Set("Authorization", "Bearer remote-secret")
+	agentSnapshot.Header.Set("X-OpenAgentFleet-Computer-Use", "agent")
+	agentSnapshot.Header.Set("Content-Type", "application/json")
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, agentSnapshot)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("agent snapshot create = %d %s", denied.Code, denied.Body.String())
 	}
 
 	preflight := httptest.NewRequest(http.MethodOptions, "/api/events", nil)

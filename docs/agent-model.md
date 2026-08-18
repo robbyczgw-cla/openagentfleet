@@ -155,6 +155,26 @@ never `bash`. Claude, Codex CLI and Cursor remain declared adapters whose
 enforceable execution path is future work; their profiles are rejected at
 preflight rather than silently substituted.
 
+## Visible Agent handoff
+
+A user can mention one other Agent from chat. That is a visible handoff, not
+worker delegation. The source thread records the handoff; the target Agent’s
+canonical conversation receives the task and starts a run with **that**
+Agent’s lead, MCP grants, and computer. The sender’s computer capability is
+never transferred. Attachments and multi-agent group chat are out of scope.
+
+Saved approval rules are exact: **Allow once** still prompts next time;
+**Always allow** / **Always deny** persist one principal + resource +
+operation. Computer rules do not match host-shell commands.
+
+Teach a Task still writes a Skill Workshop draft with `auto_enabled: false`.
+The draft SKILL.md now includes the redacted recorded steps. After Stop, the
+safe trajectory is replayable in the UI (step through recorded actions; secret
+steps stay redacted). The Agent Computer observes with an AX-first snapshot
+(element/window refs, then pixel fallback) and can save/restore named
+checkpoints of the isolated guest image and browser profile. Checkpoints are a
+human action, not an Agent MCP tool.
+
 ## Search, permissions, and current boundary
 
 Native web search is an engine capability on Grok Build and Codex App Server.

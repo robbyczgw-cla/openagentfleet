@@ -119,7 +119,11 @@ CREATE TABLE IF NOT EXISTS messages (
   conversation_id TEXT NOT NULL REFERENCES conversations(id),
   role TEXT NOT NULL,
   content TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT '',
+  author_bot_id TEXT NOT NULL DEFAULT '',
+  mentions TEXT NOT NULL DEFAULT '',
+  handoff_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages(conversation_id, created_at);
 CREATE TABLE IF NOT EXISTS attachments (
@@ -260,7 +264,10 @@ CREATE INDEX IF NOT EXISTS bot_memories_bot_order_idx
 	if err := s.migrateRemoteAuthVersion(); err != nil {
 		return err
 	}
-	return s.migrateLegacyAttachmentSchema()
+	if err := s.migrateLegacyAttachmentSchema(); err != nil {
+		return err
+	}
+	return s.migrateBotParitySchema()
 }
 
 func (s *Store) migrateRemoteAuthVersion() error {
@@ -599,15 +606,17 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]domain.S
 }
 
 func (s *Store) ListMessages(ctx context.Context, conversationID string) ([]domain.Message, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, conversation_id, role, content, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at, id", conversationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, role, content, created_at,
+		COALESCE(kind, ''), COALESCE(author_bot_id, ''), COALESCE(mentions, ''), COALESCE(handoff_id, '')
+		FROM messages WHERE conversation_id = ? ORDER BY created_at, id`, conversationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := make([]domain.Message, 0)
 	for rows.Next() {
-		var item domain.Message
-		if err := rows.Scan(&item.ID, &item.ConversationID, &item.Role, &item.Content, &item.CreatedAt); err != nil {
+		item, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
 		result = append(result, item)

@@ -195,7 +195,8 @@ func TestBrowserActionValidationKeepsNavigationAndInputBounded(t *testing.T) {
 	valid := []BrowserAction{
 		{Action: "navigate", URL: "https://example.com/path"},
 		{Action: "click", X: 12, Y: 24},
-		{Action: "type", Text: "hello", Sensitive: true},
+		{Action: "click", Ref: "e12"},
+		{Action: "type", Text: "hello", Sensitive: true, Ref: "e2"},
 		{Action: "press", Key: "Enter"},
 		{Action: "scroll", DeltaY: 600},
 		{Action: "reload"},
@@ -209,6 +210,7 @@ func TestBrowserActionValidationKeepsNavigationAndInputBounded(t *testing.T) {
 		{Action: "navigate", URL: "file:///etc/passwd"},
 		{Action: "navigate", URL: "javascript:alert(1)"},
 		{Action: "click", X: -1, Y: 4},
+		{Action: "click", Ref: "../e1"},
 		{Action: "press"},
 		{Action: "scroll", DeltaY: 10001},
 		{Action: "unknown"},
@@ -223,6 +225,9 @@ func TestBrowserActionValidationKeepsNavigationAndInputBounded(t *testing.T) {
 func TestDesktopActionValidationStaysWithinTheVirtualDisplay(t *testing.T) {
 	if err := validateDesktopAction(BrowserAction{Action: "click", X: 50, Y: 50}); err != nil {
 		t.Fatalf("valid desktop click rejected: %v", err)
+	}
+	if err := validateDesktopAction(BrowserAction{Action: "click", Ref: "w42"}); err != nil {
+		t.Fatalf("valid desktop window ref rejected: %v", err)
 	}
 	for _, action := range []BrowserAction{{Action: "navigate", URL: "https://example.com"}, {Action: "click", X: -1, Y: 5}, {Action: "type", Text: string(make([]byte, 4097))}} {
 		if err := validateDesktopAction(action); err == nil {

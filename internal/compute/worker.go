@@ -77,6 +77,49 @@ func (w *RemoteWorker) Handler() http.Handler {
 				return
 			}
 			workerJSON(response, http.StatusOK, binding)
+		case request.Method == http.MethodGet && request.URL.Path == "/snapshot":
+			snapshot, err := w.Docker.SemanticSnapshot(request.Context(), request.URL.Query().Get("surface"))
+			if err != nil {
+				workerError(response, http.StatusBadGateway, err.Error())
+				return
+			}
+			workerJSON(response, http.StatusOK, snapshot)
+		case request.Method == http.MethodGet && request.URL.Path == "/snapshots":
+			items, err := w.Docker.ListSnapshots()
+			if err != nil {
+				workerError(response, http.StatusBadGateway, err.Error())
+				return
+			}
+			workerJSON(response, http.StatusOK, map[string]any{"snapshots": items})
+		case request.Method == http.MethodPost && request.URL.Path == "/snapshots":
+			var body struct {
+				Name string `json:"name"`
+			}
+			if err := json.NewDecoder(io.LimitReader(request.Body, remoteWorkerMaxBodyBytes)).Decode(&body); err != nil {
+				workerError(response, http.StatusBadRequest, "invalid snapshot request")
+				return
+			}
+			item, err := w.Docker.CreateSnapshot(request.Context(), body.Name)
+			if err != nil {
+				workerError(response, http.StatusConflict, err.Error())
+				return
+			}
+			workerJSON(response, http.StatusCreated, item)
+		case request.Method == http.MethodPost && strings.HasPrefix(request.URL.Path, "/snapshots/") && strings.HasSuffix(request.URL.Path, "/restore"):
+			id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/snapshots/"), "/restore")
+			status, err := w.Docker.RestoreSnapshot(request.Context(), id)
+			if err != nil {
+				workerError(response, http.StatusConflict, err.Error())
+				return
+			}
+			workerJSON(response, http.StatusOK, status)
+		case request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/snapshots/"):
+			id := strings.TrimPrefix(request.URL.Path, "/snapshots/")
+			if err := w.Docker.DeleteSnapshot(request.Context(), id); err != nil {
+				workerError(response, http.StatusConflict, err.Error())
+				return
+			}
+			response.WriteHeader(http.StatusNoContent)
 		case request.Method == http.MethodPost && request.URL.Path == "/action":
 			w.browserAction(response, request, false)
 		case request.Method == http.MethodPost && request.URL.Path == "/desktop/action":

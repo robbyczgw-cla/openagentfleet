@@ -5,8 +5,24 @@ All notable OpenAgentFleet changes are recorded here.
 ## 0.2.0-alpha
 
 Public prerelease from `87e648c`. The Apple Silicon DMG is signed, notarized
-and stapled. Linux packages are unsigned. See the
+and stapled. Linux packages are unsigned and may be rebuilt on this same tag
+when the Agent Computer and desktop controller move forward. See the
 [v0.2.0-alpha release](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
+
+### Agent Computer: inspect, checkpoints, teach replay
+
+The isolated computer now observes with an AX-first snapshot (element and
+window refs, then pixel fallback). Humans can save and restore named guest
+checkpoints (image + Chromium profile); Agents cannot. Teach a Task still
+writes a Skill Workshop draft with `auto_enabled: false`, and after Stop the
+redacted trajectory is reviewable in the UI without re-executing it.
+
+### Visible Agent handoff and saved approvals
+
+A user can mention one other Agent from chat. That is a visible handoff, not
+worker delegation. Saved approval rules are exact: Allow once still prompts
+next time; Always allow / Always deny persist one principal + resource +
+operation.
 
 ### Pi as an optional workspace engine
 
