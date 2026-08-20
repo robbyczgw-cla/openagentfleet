@@ -1,10 +1,10 @@
 # OpenAgentFleet
 
-> **Run AI agents on your Mac or Linux computer with explicit control.**
+> **Open-source AI coworkers that can use a real computer, learn your workflows, and collaborate — on infrastructure you control.**
 
 Use Grok Build, Codex App Server, bundled OpenCode, or optional Pi in one
-local workspace. For browser and desktop tasks, engines that actually receive
-Computer MCP get an isolated Linux computer you can watch, stop, or take over.
+local workspace. Give an Agent a real Linux computer for browser and desktop
+work when it needs one. Watch, stop, or take over — on a machine you run.
 
 **Open-source public alpha.** `v0.2.0-alpha` is a signed and notarized Apple
 Silicon DMG. Linux ships as unsigned `.deb` / `.rpm` / `.AppImage`. The
@@ -26,38 +26,39 @@ automatically.
 ## What you can do today
 
 - Use Grok Build (the default), Codex App Server, bundled OpenCode, or
-  optional Pi in one local workspace.
-- Give browser and desktop tasks a separate local Linux computer with
-  Chromium, Terminal and Files, when the selected engine receives Computer
-  MCP. Pi does not.
+  optional Pi in one local workspace. Pi is opt-in; the product never silently
+  substitutes a different provider.
+- Give an Agent a separate local Linux computer with Chromium, Terminal and
+  Files when browser or desktop work is needed. Pi cannot use that computer.
 - Watch the work live, stop it, take control, and approve sensitive actions.
 - Keep conversations, memory, transcripts and run artifacts in the local
   controller.
 - Attach files and images, drag them into chat, and use dictation when the
   selected client and provider support it.
+- Create another Agent when you need a teammate. In this build you can mention
+  them from chat; a shared group chat is not the first-run product.
 
 ### Advanced and experimental
 
 These capabilities are available for users who need them, but are not required
 to understand or use the core product:
 
-- bounded workers below the primary AI engine;
-- native search, Web Search Plus, Hound and Donsetch MCP connectors;
+- bounded workers below the primary AI engine (Advanced);
+- extra search connectors (Web Search Plus, Hound and Donsetch);
 - Colima, Docker Desktop, OrbStack and optional remote Computer workers;
 - routines, heartbeat runs, plugins, skills and mobile control over Tailscale.
 
 Claude Code, Codex CLI and Cursor remain detected as future or bounded
 worker adapters where their permission contract is not yet fully
-enforceable. Pi is no longer in that set: it is an optional workspace
-engine and an optional bounded worker. The product never silently
-substitutes a different provider.
+enforceable. Pi is an optional workspace engine and an optional bounded
+worker. The product never silently substitutes a different provider.
 
 ## Current provider boundaries
 
-Provider CLIs and harnesses currently run directly on the host (macOS or
-Linux); the isolated Agent Computer is the boundary for browser and desktop
-work, not full provider-process isolation. What "explicit control" means
-today depends on the engine:
+Provider CLIs currently run directly on the host (macOS or Linux); the
+isolated Agent Computer is the boundary for browser and desktop work, not
+full provider-process isolation. What "explicit control" means today depends
+on the engine:
 
 - **Grok Build** and **Codex App Server** can use controller-brokered
   approvals: sensitive commands and file changes are routed through `botd`
@@ -66,13 +67,11 @@ today depends on the engine:
   `ask` mode; its dangerous auto mode is disabled). It does not go through
   the controller's approval broker, and the UI labels it accordingly.
 - **Pi** is opt-in. Install the `pi` CLI and sign in with `pi /login`
-  (credentials stay in `~/.pi`). A Pi lead is `pi --mode rpc --no-session`
-  with `--tools`. Memory stays OpenAgentFleet-owned. Pi has no MCP
-  injection, so Hound, Web Search Plus, Donsetch, and the Agent Computer are
-  unavailable. Lead `ask` confirms through a bundled Pi extension and RPC
-  `extension_ui`, not a native OpenAgentFleet popup. Picking `xai/grok-4.3`
-  or `openai/gpt-5.5` in the Pi picker still runs **through Pi**, not as
-  Grok Build or Codex App Server.
+  (credentials stay in `~/.pi`). Memory stays OpenAgentFleet-owned. Pi does
+  not receive extra search connectors or the Agent Computer. Approvals confirm
+  through Pi's own UI, not a native OpenAgentFleet popup. Picking
+  `xai/grok-4.3` or `openai/gpt-5.5` in the Pi picker still runs **through
+  Pi**, not as Grok Build or Codex App Server.
 
 ## Download
 
@@ -137,20 +136,23 @@ controller does not copy them into chat messages or its SQLite store.
 
 ## First run
 
-1. Choose an available AI engine. Grok Build is the default. OpenCode uses
-   its local provider configuration. Pi needs the `pi` CLI and `pi /login`.
-2. Create the first Agent and start chatting.
-3. Add computer access, search connectors and stricter permissions only when
-   you need them.
+1. Choose an AI engine. Grok Build is the default. OpenCode uses its local
+   provider configuration. Pi is opt-in: install the `pi` CLI and sign in
+   with `pi /login`.
+2. Create your first Agent.
+3. Start chatting.
+4. When the Agent needs a computer, the app offers setup. Opening the app,
+   creating an Agent, or choosing an engine does not start a VM or container.
+5. When you need collaboration, create another Agent. In this build you can
+   mention a teammate from chat.
 
 Model, reasoning, service tier, workers and detailed permissions remain
-editable in Agent Builder and Settings; they are deliberately not required
-for the first conversation.
+editable in Agent Builder and Settings (workers stay under **Advanced**);
+they are deliberately not required for the first conversation.
 
-The Agent Computer is lazy. Opening the app, creating an Agent, or selecting a
-provider does not start a VM, container, Chromium session or harness run.
-Computer View starts the selected local runtime only when you explicitly open
-it or an approved task needs browser/desktop work.
+The Agent Computer is lazy. Computer View starts the selected local runtime
+only when you explicitly open it or an approved task needs browser/desktop
+work.
 
 ### Colima first start
 
@@ -177,30 +179,24 @@ default Colima profile, or exposes the Docker socket to the Agent Computer.
 ```text
 Tauri macOS app / mobile client
               |
-       authenticated local API
+   authenticated local API
               |
             botd
         /      |       \
-     Agent   Lead   Computer
-    memory  harness  runtime
-              |
-     bounded optional workers
+     Agent   Engine  Computer
+    memory           runtime
 ```
 
-- **Agent** is the user-facing identity. It owns the role, system context,
-  memory, enabled tools and computer policy. One Agent and one chat is the
-  default; extra conversations are optional.
-- **AI engine (Lead)** is the selected primary harness for a run. Current lead
-  routes are Grok Build, Codex App Server, bundled OpenCode, and optional Pi.
-  “Lead” is the architecture term; the simple user-facing choice is the AI
-  engine.
-- **Worker** is a bounded helper below the Lead. It receives a task slice,
-  explicit model/reasoning/budget/permissions and no hidden credentials.
-- **`botd`** is the local authority. It resolves configuration, applies the
-  capability broker, asks for approvals, injects the approved Computer MCP,
-  records events and revokes run capabilities.
-- **Agent Computer** is a separate Linux execution surface. It is not the
-  Lead, not a second Agent and not a replacement for the controller.
+- **Agent** is the coworker you name and chat with. It owns the role, memory,
+  tools and computer policy. One Agent and one chat is the default.
+- **AI engine** is the workspace-wide runtime: Grok Build (default), Codex App
+  Server, bundled OpenCode, or optional Pi.
+- **Agent Computer** is a separate Linux desktop for browser and desktop work.
+  It starts only when needed, and only for engines that can use it.
+- **`botd`** is the local controller: configuration, approvals, run records,
+  and computer lifecycle on infrastructure you control.
+- **Workers** stay in **Advanced**: optional bounded helpers for large or
+  parallel tasks. They are not required to create an Agent or start chatting.
 
 Read the detailed [Agent model](docs/agent-model.md),
 [Lead/Worker architecture](docs/lead-worker-architecture.md), and
@@ -240,10 +236,10 @@ desktop-frame, takeover and approval acceptance suite.
 ## Search, MCP and plugins
 
 Native search stays available to AI engines that support it. Web Search Plus,
-Hound and Donsetch are independent optional MCP connectors with visible
-per-Agent configuration and credentials. Connector IDs are validated before a
-run and their provenance is recorded in [NOTICE.md](NOTICE.md). Pi receives
-none of them.
+Hound and Donsetch are independent optional connectors with visible per-Agent
+configuration and credentials. Connector IDs are validated before a run and
+their provenance is recorded in [NOTICE.md](NOTICE.md). Pi receives none of
+them.
 
 The plugin and skill surfaces are deliberately capability-brokered. An Agent
 does not receive arbitrary host applications, folders, browser profiles,
@@ -266,8 +262,8 @@ The default boundary is local-first, explicit and observable:
 
 - provider inference may be remote, but controller state and Computer
   lifecycle remain on the user's Mac;
-- provider CLIs and harnesses run as normal macOS processes; the Agent
-  Computer isolates browser and desktop work, not provider processes;
+- provider CLIs run as normal host processes; the Agent Computer isolates
+  browser and desktop work, not provider processes;
 - only the approved workspace is mounted from macOS; browser state stays in a
   private Docker volume owned by the local runtime;
 - the Computer image is non-root and receives no Docker socket;
@@ -305,10 +301,12 @@ see [docs/README.md](docs/README.md).
 
 ## Alpha status and roadmap
 
-The current slice focuses on a trustworthy local Mac runtime: one-Agent chat,
+The current slice focuses on a trustworthy local runtime: one-Agent chat,
 model selection, durable memory/transcripts, attachments, native dictation
 plumbing, visible approvals, a real Chromium/Xfce Computer, optional bounded
-workers, MCP connectors, and a remote-client contract.
+workers (Advanced), extra search connectors, and a remote-client contract.
+Agent-to-Agent mention and handoff exist in this build; a shared group chat
+is not a shipped first-run surface.
 
 Remaining work includes broader provider adapters, universal worker
 isolation, production skill/plugin lifecycle, richer routines and heartbeat

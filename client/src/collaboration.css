@@ -1,0 +1,84 @@
+.collab-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.collab-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+.collab-chip.is-waiting {
+  color: var(--ink-2);
+  background: var(--surface-2);
+}
+
+.collab-chip.is-done {
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+.collab-chip.is-failed,
+.collab-chip.is-cancelled {
+  color: #87534B;
+  background: #F8EDEA;
+}
+
+.collab-open {
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 550;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.collab-open:hover {
+  color: var(--accent-hover);
+}
+
+.collab-target-id {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.message.collab-agent-update {
+  text-align: left;
+}
+
+.message.collab-agent-update .message-meta {
+  justify-content: flex-start;
+}
+
+.collab-result {
+  display: inline-block;
+  max-width: min(90%, 620px);
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 15px 15px 15px 5px;
+  color: var(--ink);
+  background: var(--assistant);
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.collab-result-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 600;
+}

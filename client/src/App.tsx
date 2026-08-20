@@ -12,6 +12,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { agentTemplates, type AgentTemplate } from "./agentTemplates";
+import {
+  applyHandoffStreamEvent,
+  HandoffMessageChrome,
+  HandoffResultUpdate,
+} from "./collaboration";
+import { GroupChatPanel } from "./groupChat";
+import * as onboardingCopy from "./onboardingCopy";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -245,6 +252,11 @@ type Message = {
   author_bot_id?: string;
   mentions?: string[];
   handoff_id?: string;
+  status?: string;
+  mode?: string;
+  depth?: number;
+  target_conversation_id?: string;
+  result?: string;
 };
 type Handoff = {
   id: string;
@@ -257,6 +269,10 @@ type Handoff = {
   target_run_id: string;
   content: string;
   created_at: string;
+  status?: string;
+  mode?: string;
+  depth?: number;
+  result?: string;
 };
 type Attachment = {
   id: string;
@@ -1421,6 +1437,7 @@ function App() {
   );
   const [preferences, setPreferences] = useState<Preferences>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [groupChatOpen, setGroupChatOpen] = useState(false);
   const [mobileDevices, setMobileDevices] = useState<MobileDevice[]>([]);
   const [mobileDevicesLoading, setMobileDevicesLoading] = useState(false);
   const [mobileDevicesError, setMobileDevicesError] = useState<string | null>(
@@ -2287,7 +2304,7 @@ function App() {
       {
         value: "grok_build" as const,
         label: "Grok Build",
-        description: "Grok's local app harness with browser and computer tools.",
+        description: onboardingCopy.engineDescriptions.grok_build,
         available: capability("grok")?.available ?? false,
         authProvider: "grok" as const,
         auth: auth("grok"),
@@ -2295,7 +2312,7 @@ function App() {
       {
         value: "codex_app_server" as const,
         label: "Codex App Server",
-        description: "Rich threads, approvals and ChatGPT OAuth through Codex.",
+        description: onboardingCopy.engineDescriptions.codex_app_server,
         available: capability("codex_app_server")?.available ?? false,
         authProvider: "codex_app_server" as const,
         auth: auth("codex_app_server"),
@@ -2303,8 +2320,7 @@ function App() {
       {
         value: "opencode" as const,
         label: "OpenCode",
-        description:
-          "Open-source local-provider fallback with a starter route whose availability and billing may vary.",
+        description: onboardingCopy.engineDescriptions.opencode,
         available: capability("opencode")?.available ?? false,
         authProvider: null,
         auth: undefined,
@@ -2312,8 +2328,7 @@ function App() {
       {
         value: "pi" as const,
         label: "Pi",
-        description:
-          "Optional Pi RPC engine. Sign in with pi /login. No MCP and no Agent Computer. Approvals: read_only/workspace via --tools.",
+        description: onboardingCopy.engineDescriptions.pi,
         available: capability("pi")?.available ?? false,
         authProvider: null,
         auth: undefined,
@@ -2896,7 +2911,7 @@ function App() {
     );
     if (!selectedEngine?.available) {
       setOnboardingSaveError(
-        "No usable lead harness is selected. Install or connect a lead before finishing setup.",
+        onboardingCopy.noUsableEngine,
       );
       return;
     }
@@ -3143,40 +3158,16 @@ function App() {
       }
       return;
     }
-    if (event.type === "handoff.created") {
+    if (
+      event.type === "handoff.created" ||
+      event.type === "handoff.updated" ||
+      event.type === "handoff.completed"
+    ) {
       try {
         const handoff = JSON.parse(event.data) as Handoff;
-        setData((current) => {
-          if (!current) return current;
-          const conversationID = current.conversation.id;
-          const incoming: Message | null =
-            conversationID === handoff.target_conversation_id
-              ? {
-                  id: handoff.target_message_id,
-                  role: "user",
-                  content: handoff.content,
-                  created_at: handoff.created_at,
-                  kind: "handoff",
-                  author_bot_id: handoff.source_bot_id,
-                  mentions: [handoff.target_bot_id],
-                  handoff_id: handoff.id,
-                }
-              : conversationID === handoff.source_conversation_id
-                ? {
-                    id: handoff.source_message_id,
-                    role: "user",
-                    content: handoff.content,
-                    created_at: handoff.created_at,
-                    kind: "handoff",
-                    mentions: [handoff.target_bot_id],
-                    handoff_id: handoff.id,
-                  }
-                : null;
-          if (!incoming || current.messages?.some((item) => item.id === incoming.id)) {
-            return current;
-          }
-          return { ...current, messages: [...(current.messages ?? []), incoming] };
-        });
+        setData((current) =>
+          current ? applyHandoffStreamEvent(current, handoff, event.type) : current,
+        );
       } catch {
         // Handoff rows remain reloadable from bootstrap.
       }
@@ -5661,6 +5652,12 @@ function App() {
         <div className="sidebar-section muted-section">
           <button
             className="nav-row"
+            onClick={() => setGroupChatOpen(true)}
+          >
+            <span>◈</span> Group chat
+          </button>
+          <button
+            className="nav-row"
             onClick={() => {
               setSearchOpen((current) => !current);
             }}
@@ -5810,11 +5807,8 @@ function App() {
           {messages.length === 0 && (
             <div className="empty-state">
               <div className="empty-orbit">✦</div>
-              <h2>Give OpenAgentFleet a job.</h2>
-              <p>
-                Research, build, organize, or automate something that would
-                otherwise wait for you.
-              </p>
+              <h2>{onboardingCopy.emptyStateTitle}</h2>
+              <p>{onboardingCopy.emptyStateBody}</p>
               <div className="suggestion-grid">
                 <button
                   onClick={() =>
@@ -5834,28 +5828,57 @@ function App() {
             </div>
           )}
           {messages.map((message) => (
-            <article className={`message ${message.role}${message.kind === "handoff" ? " handoff" : ""}`} key={message.id}>
+            <article
+              className={`message ${
+                message.kind === "handoff_result"
+                  ? "assistant collab-agent-update"
+                  : message.role
+              }${message.kind === "handoff" ? " handoff" : ""}`}
+              key={message.id}
+            >
+              {message.kind === "handoff_result" ? (
+                <HandoffResultUpdate
+                  teammateName={
+                    (data.agents ?? []).find(
+                      (agent) =>
+                        agent.bot.id ===
+                        (message.author_bot_id || message.mentions?.[0]),
+                    )?.bot.name ?? "Teammate"
+                  }
+                  content={message.content}
+                  result={message.result}
+                  status={message.status}
+                />
+              ) : (
+                <>
               <div className="message-meta">
+                {message.kind === "handoff" ? (
+                  <HandoffMessageChrome
+                    inbound={Boolean(message.author_bot_id)}
+                    teammateName={
+                      (data.agents ?? []).find(
+                        (agent) =>
+                          agent.bot.id ===
+                          (message.author_bot_id || message.mentions?.[0]),
+                      )?.bot.name ?? "teammate"
+                    }
+                    status={message.status}
+                    targetConversationId={message.target_conversation_id}
+                    onOpenConversation={(conversationId) =>
+                      void selectConversation(conversationId)
+                    }
+                  />
+                ) : (
                 <span>
-                  {message.kind === "handoff"
-                    ? message.author_bot_id
-                      ? `From ${
-                          (data.agents ?? []).find((agent) => agent.bot.id === message.author_bot_id)
-                            ?.bot.name ?? "another agent"
-                        }`
-                      : `Handed off to ${
-                          (data.agents ?? []).find(
-                            (agent) => agent.bot.id === message.mentions?.[0],
-                          )?.bot.name ?? "another agent"
-                        }`
-                    : message.role === "user"
-                      ? "You"
-                      : bot.name}
+                    {message.role === "user" ? "You" : bot.name}
                 </span>
+                )}
                 <time>{formatTime(message.created_at)}</time>
               </div>
               {message.content && (
                 <div className="message-bubble">{message.content}</div>
+              )}
+                </>
               )}
               {(attachmentsByMessage[message.id] ?? []).map((attachment) => (
                 <button
@@ -6231,23 +6254,23 @@ function App() {
                 disabled={onboardingBusy || searchConnectorBusy !== null}
                 onClick={() => void skipOnboarding()}
               >
-                Skip setup
+                {onboardingCopy.skipSetup}
               </button>
             </header>
 
             {onboardingStep === 0 && (
               <div className="onboarding-page">
-                <div className="eyebrow">Your lead harnesses</div>
-                <h2 id="onboarding-title">Choose who runs your agents.</h2>
+                <div className="eyebrow">{onboardingCopy.enginePickerEyebrow}</div>
+                <h2 id="onboarding-title">{onboardingCopy.enginePickerTitle}</h2>
                 <p>
-                  OpenAgentFleet uses the AI tools already available on this
-                  {isLinuxHost(data) ? " computer" : " Mac"}.
-                  Pick one workspace lead; you can change it later in Settings.
+                  {onboardingCopy.enginePickerIntro(
+                    isLinuxHost(data) ? "computer" : "Mac",
+                  )}
                 </p>
                 <div
                   className="onboarding-engines"
                   role="radiogroup"
-                  aria-label="Workspace lead harness"
+                  aria-label={onboardingCopy.enginePickerAriaLabel}
                 >
                   {onboardingEngines.map((engine) => {
                     const selected = onboardingLead === engine.value;
@@ -6359,20 +6382,20 @@ function App() {
                   })}
                 </div>
                 <div className="onboarding-facts onboarding-engine-facts">
-                  <div><strong>Local control</strong><span>Agents, memory and approvals stay on this {isLinuxHost(data) ? "computer" : "Mac"}.</span></div>
-                  <div><strong>One lead harness</strong><span>All agents use this harness and model unless you add an advanced override.</span></div>
-                  <div><strong>Open choices</strong><span>Optional tools stay off until you turn them on.</span></div>
+                  <div><strong>{onboardingCopy.engineFactLocalControl}</strong><span>{onboardingCopy.engineFactLocalControlDetail(isLinuxHost(data) ? "computer" : "Mac")}</span></div>
+                  <div><strong>{onboardingCopy.engineFactOneEngine}</strong><span>{onboardingCopy.engineFactOneEngineDetail}</span></div>
+                  <div><strong>{onboardingCopy.engineFactOpenChoices}</strong><span>{onboardingCopy.engineFactOpenChoicesDetail}</span></div>
                 </div>
                 <section className="onboarding-model-config" aria-labelledby="onboarding-model-title">
                   <div className="onboarding-model-config-heading">
                     <div>
-                      <div className="eyebrow">AI choice inside the lead</div>
-                      <h3 id="onboarding-model-title">Choose the model that does the work.</h3>
+                      <div className="eyebrow">{onboardingCopy.modelConfigEyebrow}</div>
+                      <h3 id="onboarding-model-title">{onboardingCopy.modelConfigTitle}</h3>
                     </div>
                     <span className="execution-badge">Optional</span>
                   </div>
                   <p className="field-note">
-                    The harness is the execution system; the model is the AI. Start with the recommended model and change it later per workspace or agent.
+                    {onboardingCopy.modelConfigNote}
                   </p>
                   <ModelPicker
                     key={`onboarding-${onboardingLead}`}
@@ -6404,21 +6427,18 @@ function App() {
 
             {onboardingStep === 1 && (
               <div className="onboarding-page">
-                <div className="eyebrow">Optional permissions</div>
-                <h2 id="onboarding-title">Give agents access when you need it.</h2>
+                <div className="eyebrow">{onboardingCopy.permissionsEyebrow}</div>
+                <h2 id="onboarding-title">{onboardingCopy.permissionsTitle}</h2>
                 <p>
-                  OpenAgentFleet asks for local access only when you use the
-                  feature. Nothing here is required to start chatting.
+                  {onboardingCopy.permissionsIntro}
                 </p>
                 <div className="onboarding-permissions">
                   <article className="onboarding-permission-card">
                     <span className="onboarding-permission-icon" aria-hidden="true">◉</span>
                     <div>
-                      <strong>Microphone & speech</strong>
+                      <strong>{onboardingCopy.micCardTitle}</strong>
                       <small>
-                        On Mac, dictation stays on-device when Apple supports the
-                        current locale. Browser clients use browser speech
-                        recognition when available, or the configured fallback.
+                        {onboardingCopy.micCardDetailMac}
                       </small>
                     </div>
                     <em>
@@ -6430,26 +6450,24 @@ function App() {
                   <article className="onboarding-permission-card">
                     <span className="onboarding-permission-icon" aria-hidden="true">▣</span>
                     <div>
-                      <strong>Agent Computer</strong>
-                      <small>Chromium, Terminal and Files start lazily. Enable Agent control when an agent should operate them.</small>
+                      <strong>{onboardingCopy.computerCardTitle}</strong>
+                      <small>{onboardingCopy.computerCardDetail}</small>
                     </div>
-                    <em>Set up later</em>
+                    <em>{onboardingCopy.computerCardStatus}</em>
                   </article>
                   <article className="onboarding-permission-card">
                     <span className="onboarding-permission-icon" aria-hidden="true">✓</span>
                     <div>
-                      <strong>Local control plane</strong>
-                      <small>Chats, memory, attachments and approvals are stored by your local OpenAgentFleet service.</small>
+                      <strong>{onboardingCopy.controlCardTitle}</strong>
+                      <small>{onboardingCopy.controlCardDetail}</small>
                     </div>
                     <em>Always on</em>
                   </article>
                 </div>
                 <p className="onboarding-note">
-                  Agent Computer runtime is configurable later in Settings. It
-                  is not installed or started just because you finish setup;
-                  opening its view and enabling Agent control are separate choices.
+                  {onboardingCopy.computerNote}
                   {onboardingLead === "pi"
-                    ? " Pi does not inject Agent Computer into the engine."
+                    ? onboardingCopy.computerNotePi
                     : ""}
                 </p>
               </div>
@@ -6457,14 +6475,14 @@ function App() {
 
             {onboardingStep === 2 && (
               <div className="onboarding-page">
-                <div className="eyebrow">Optional web search</div>
-                <h2 id="onboarding-title">Add search when it helps.</h2>
+                <div className="eyebrow">{onboardingCopy.searchEyebrow}</div>
+                <h2 id="onboarding-title">{onboardingCopy.searchTitle}</h2>
                 <p>
                   {onboardingLead === "opencode"
-                    ? "OpenCode uses its configured model tools. Web Search Plus, keyless Hound, and keyless Donsetch are independent optional connectors."
+                    ? onboardingCopy.searchIntroOpenCode
                     : onboardingLead === "pi"
-                      ? "Pi has no native search and does not inject connectors or Agent Computer. Web Search Plus, Hound, and Donsetch stay optional and separate."
-                    : "The selected lead harness can provide built-in live search. Web Search Plus, keyless Hound, and keyless Donsetch add independent optional routes."}{" "}
+                      ? onboardingCopy.searchIntroPi
+                      : onboardingCopy.searchIntroDefault}{" "}
                   You can change these choices later in Settings.
                 </p>
                 <div className="onboarding-search-connectors">
@@ -6490,22 +6508,20 @@ function App() {
 
             {onboardingStep === 3 && (
               <div className="onboarding-page onboarding-ready-page">
-                <div className="eyebrow">Ready</div>
-                <h2 id="onboarding-title">Start using OpenAgentFleet.</h2>
+                <div className="eyebrow">{onboardingCopy.readyEyebrow}</div>
+                <h2 id="onboarding-title">{onboardingCopy.readyTitle}</h2>
                 <p>
-                  Your default chat is ready. You can create more agents from
-                  New agent whenever you want; each agent keeps its own role and
-                  memory while using this workspace lead harness.
+                  {onboardingCopy.readyBody}
                 </p>
                 <div className="onboarding-summary">
-                  <span>Lead harness</span>
+                  <span>{onboardingCopy.readyEngineLabel}</span>
                   <strong>{harnessLabel(onboardingLead)}</strong>
                   <span>AI model</span>
                   <strong>{modelChoiceLabel(onboardingLead, onboardingModel, data?.model_catalog ?? [])}</strong>
                   <span>Reasoning depth</span>
                   <strong>{onboardingReasoning}</strong>
                   <span>Agent Computer</span>
-                  <strong>Lazy — configure when first used</strong>
+                  <strong>{onboardingCopy.readyComputerValue}</strong>
                   <span>Optional search</span>
                   <strong>
                     {searchConnectorAvailability === "available" && searchConnectors
@@ -6576,7 +6592,7 @@ function App() {
                   disabled={onboardingBusy || searchConnectorBusy !== null}
                   onClick={() => void finishOnboarding()}
                 >
-                  {onboardingBusy ? "Saving setup…" : "Start using OpenAgentFleet"}
+                  {onboardingBusy ? onboardingCopy.finishBusy : onboardingCopy.finishButton}
                 </button>
               )}
             </footer>
@@ -8721,6 +8737,13 @@ function App() {
             </p>
           </section>
         </div>
+      )}
+      {groupChatOpen && (
+        <GroupChatPanel
+          bots={data.bots}
+          apiFetch={apiFetch}
+          onClose={() => setGroupChatOpen(false)}
+        />
       )}
     </main>
   );
