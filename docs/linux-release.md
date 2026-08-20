@@ -58,9 +58,9 @@ task, builds and starts the isolated container on demand.
 ```sh
 export OPENAGENTFLEET_OPENCODE_BINARY=/path/to/opencode-1.18.10
 ./scripts/build-linux-release.sh
-./scripts/verify-linux-release.sh dist/linux/OpenAgentFleet_0.2.0_amd64.deb \
-  dist/linux/OpenAgentFleet-0.2.0-1.x86_64.rpm \
-  dist/linux/OpenAgentFleet_0.2.0_amd64.AppImage
+./scripts/verify-linux-release.sh dist/linux/OpenAgentFleet_0.3.0_amd64.deb \
+  dist/linux/OpenAgentFleet-0.3.0-1.x86_64.rpm \
+  dist/linux/OpenAgentFleet_0.3.0_amd64.AppImage
 ```
 
 `scripts/build-linux-release.sh` uses Tauri only for the `.deb`. The `.rpm`
@@ -74,14 +74,14 @@ optional.
 
 ```sh
 # Debian / Ubuntu
-sudo apt install ./OpenAgentFleet_0.2.0_amd64.deb
+sudo apt install ./OpenAgentFleet_0.3.0_amd64.deb
 
 # Fedora
-sudo dnf install ./OpenAgentFleet-0.2.0-1.x86_64.rpm
+sudo dnf install ./OpenAgentFleet-0.3.0-1.x86_64.rpm
 
 # Portable
-chmod +x OpenAgentFleet_0.2.0_amd64.AppImage
-./OpenAgentFleet_0.2.0_amd64.AppImage
+chmod +x OpenAgentFleet_0.3.0_amd64.AppImage
+./OpenAgentFleet_0.3.0_amd64.AppImage
 ```
 
 Then install/start Docker if Computer View is needed. The first Computer start

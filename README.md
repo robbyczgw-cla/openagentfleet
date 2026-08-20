@@ -6,10 +6,12 @@ Use Grok Build, Codex App Server, bundled OpenCode, or optional Pi in one
 local workspace. Give an Agent a real Linux computer for browser and desktop
 work when it needs one. Watch, stop, or take over — on a machine you run.
 
-**Open-source public alpha.** `v0.2.0-alpha` is a signed and notarized Apple
-Silicon DMG. Linux ships as unsigned `.deb` / `.rpm` / `.AppImage`. The
-project is not feature-complete or production-ready. It is independent and
-licensed under [Apache-2.0](LICENSE).
+**Open-source public alpha.** The signed Mac download is still
+`v0.2.0-alpha`. `0.3.0` adds group chats, opt-in Agent collaboration,
+Routines from enabled Skills, and a Fleet Host MVP; the notarized
+`v0.3.0-alpha` DMG is the next Mac publish. The project is not
+feature-complete or production-ready. It is independent and licensed under
+[Apache-2.0](LICENSE).
 
 [Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg) ·
 [Linux packages](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha) ·
@@ -35,8 +37,9 @@ automatically.
   controller.
 - Attach files and images, drag them into chat, and use dictation when the
   selected client and provider support it.
-- Create another Agent when you need a teammate. In this build you can mention
-  them from chat; a shared group chat is not the first-run product.
+- Create another Agent when you need a teammate. Mention them from a private
+  chat, or start a group chat. Agent-to-Agent tools stay off until you enable
+  collaboration on that Agent.
 
 ### Advanced and experimental
 
@@ -46,7 +49,10 @@ to understand or use the core product:
 - bounded workers below the primary AI engine (Advanced);
 - extra search connectors (Web Search Plus, Hound and Donsetch);
 - Colima, Docker Desktop, OrbStack and optional remote Computer workers;
-- routines, heartbeat runs, plugins, skills and mobile control over Tailscale.
+- Routines created from an enabled Skill, heartbeat runs, plugins, and
+  mobile control over Tailscale;
+- an always-on Fleet Host (the local controller as authority) for pairing;
+  the laptop app still starts a local controller by default.
 
 Claude Code, Codex CLI and Cursor remain detected as future or bounded
 worker adapters where their permission contract is not yet fully
@@ -143,8 +149,9 @@ controller does not copy them into chat messages or its SQLite store.
 3. Start chatting.
 4. When the Agent needs a computer, the app offers setup. Opening the app,
    creating an Agent, or choosing an engine does not start a VM or container.
-5. When you need collaboration, create another Agent. In this build you can
-   mention a teammate from chat.
+5. When you need a teammate, create another Agent. Mention them from chat, or
+   open **Group chat**. Collaboration tools between Agents stay off until you
+   enable them on that Agent.
 
 Model, reasoning, service tier, workers and detailed permissions remain
 editable in Agent Builder and Settings (workers stay under **Advanced**);
@@ -301,19 +308,19 @@ see [docs/README.md](docs/README.md).
 
 ## Alpha status and roadmap
 
-The current slice focuses on a trustworthy local runtime: one-Agent chat,
-model selection, durable memory/transcripts, attachments, native dictation
-plumbing, visible approvals, a real Chromium/Xfce Computer, optional bounded
-workers (Advanced), extra search connectors, and a remote-client contract.
-Agent-to-Agent mention and handoff exist in this build; a shared group chat
-is not a shipped first-run surface.
+The current slice focuses on a trustworthy local runtime: coworker chat
+(including group threads), model selection, durable memory/transcripts,
+attachments, native dictation plumbing, visible approvals, a real
+Chromium/Xfce Computer, optional bounded workers (Advanced), extra search
+connectors, opt-in Agent collaboration, Routines from enabled Skills, and a
+remote-client / Fleet Host contract.
 
 Remaining work includes broader provider adapters, universal worker
-isolation, production skill/plugin lifecycle, richer routines and heartbeat
-execution, native mobile releases, Intel Mac support, and complete product
-parity. The honest current-vs-planned boundary lives in the
-[Grok Build parity contract](docs/grok-build-parity.md), the QA runbooks and
-the architecture documents.
+isolation, production skill/plugin lifecycle, a Routine scheduler, using the
+desktop app as a remote client of an always-on host, native mobile releases,
+Intel Mac support, and complete product parity. The honest current-vs-planned
+boundary lives in the [Grok Build parity contract](docs/grok-build-parity.md),
+the QA runbooks and the architecture documents.
 
 ## License
 

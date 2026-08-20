@@ -50,6 +50,8 @@ writable paths only.
   default and does not replace Agent memory.
 - Enable a worker pool only from Advanced settings. Workers are helpers, not
   additional Agents or conversations, and do not inherit hidden access.
+- Create a second Agent, open **Group chat**, mention only one member, and
+  confirm the reply stays in the group thread (not the private chats).
 - Run `go test ./...`, `pnpm --dir client build`, and `git diff --check` before
   recording a release result.
 
