@@ -75,6 +75,52 @@ func TestCreateRemotePairingGrantStoresHashOnlyAndPublicJSONCannotLeakSecret(t *
 	}
 }
 
+func TestClaimRemotePairingGrantDesktopCreatesDeviceAndStoresHashOnly(t *testing.T) {
+	ctx := context.Background()
+	instance := openRemotePairingTestStore(t)
+	grant, rawSecret, err := instance.CreateRemotePairingGrant(ctx, domain.RemoteScopeController, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bearer := "ofb_alpha_desktop_bearer_0123456789abcdef"
+	device, err := instance.ClaimRemotePairingGrant(ctx, grant.ID, rawSecret, " Studio Laptop ", "DESKTOP", bearer, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if device.DisplayName != "Studio Laptop" || device.Platform != domain.RemotePlatformDesktop || device.ScopeProfile != domain.RemoteScopeController || device.Status != domain.RemoteDeviceActive {
+		t.Fatalf("unexpected paired desktop: %#v", device)
+	}
+	wantedHash := sha256.Sum256([]byte(rawSecret))
+	var storedSecret []byte
+	if err := instance.db.QueryRowContext(ctx, "SELECT secret_hash FROM remote_pairing_grants WHERE id = ?", grant.ID).Scan(&storedSecret); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(storedSecret, wantedHash[:]) {
+		t.Fatal("desktop claim did not keep the hashed pairing secret")
+	}
+	if bytes.Equal(storedSecret, []byte(rawSecret)) {
+		t.Fatal("raw pairing secret was persisted for a desktop claim")
+	}
+	bearerHash := sha256.Sum256([]byte(bearer))
+	var storedBearer []byte
+	if err := instance.db.QueryRowContext(ctx, "SELECT token_hash FROM remote_credentials WHERE device_id = ?", device.ID).Scan(&storedBearer); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(storedBearer, bearerHash[:]) {
+		t.Fatal("desktop bearer was not stored as a hash")
+	}
+	authenticated, err := instance.AuthenticateRemoteCredential(ctx, bearer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authenticated.ID != device.ID || authenticated.Platform != domain.RemotePlatformDesktop {
+		t.Fatalf("authenticated desktop = %#v", authenticated)
+	}
+	if _, err := instance.ClaimRemotePairingGrant(ctx, grant.ID, rawSecret, "Another laptop", domain.RemotePlatformDesktop, "ofb_alpha_desktop_bearer_fedcba9876543210", time.Now().Add(time.Hour)); err != ErrRemotePairingGrantInvalid {
+		t.Fatalf("reused desktop grant error = %v, want exact invalid-grant sentinel", err)
+	}
+}
+
 func TestClaimRemotePairingGrantCreatesDeviceCredentialAndRevocationStillWorks(t *testing.T) {
 	ctx := context.Background()
 	instance := openRemotePairingTestStore(t)

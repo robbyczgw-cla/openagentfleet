@@ -28,8 +28,9 @@ type SearchHit struct {
 }
 
 const (
-	MessageKindChat    = ""
-	MessageKindHandoff = "handoff"
+	MessageKindChat          = ""
+	MessageKindHandoff       = "handoff"
+	MessageKindHandoffResult = "handoff_result"
 )
 
 type Message struct {

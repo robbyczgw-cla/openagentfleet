@@ -23,6 +23,13 @@ const (
 	MaxAgentAvatarEmojiBytes        = 32
 	MaxAgentAvatarURLBytes          = 2048
 
+	DefaultAgentCollaborationMaxDepth           uint8  = 2
+	MaxAgentCollaborationMaxDepth               uint8  = 4
+	DefaultAgentCollaborationMaxActivePeerTasks uint8  = 2
+	MaxAgentCollaborationMaxActivePeerTasks     uint8  = 4
+	DefaultAgentCollaborationTimeoutSeconds     uint32 = 300
+	MaxAgentCollaborationTimeoutSeconds         uint32 = 3600
+
 	AgentMetadataPersisted = "persisted"
 	// AgentMetadataNotPersisted is retained for older clients that observed the
 	// initial request-only metadata prototype.
@@ -92,6 +99,15 @@ type AgentMetadata struct {
 	NotifyFinished   bool                 `json:"notify_finished"`
 	NotifyNeedsInput bool                 `json:"notify_needs_input"`
 	Avatar           *AgentAvatarMetadata `json:"avatar,omitempty"`
+	Collaboration    *AgentCollaboration  `json:"collaboration,omitempty"`
+}
+
+type AgentCollaboration struct {
+	Enabled            bool     `json:"enabled"`
+	AllowAgentIDs      []string `json:"allow_agent_ids,omitempty"`
+	MaxDepth           uint8    `json:"max_depth,omitempty"`
+	MaxActivePeerTasks uint8    `json:"max_active_peer_tasks,omitempty"`
+	TimeoutSeconds     uint32   `json:"timeout_seconds,omitempty"`
 }
 
 // AgentExecutionProfile pins every execution choice that otherwise tends to
@@ -219,7 +235,57 @@ func NormalizeAgentMetadata(value AgentMetadata) (AgentMetadata, error) {
 		}
 		value.Avatar = &avatar
 	}
+	if value.Collaboration != nil {
+		collaboration, err := NormalizeAgentCollaboration(*value.Collaboration)
+		if err != nil {
+			return AgentMetadata{}, err
+		}
+		value.Collaboration = &collaboration
+	}
 	return value, nil
+}
+
+func NormalizeAgentCollaboration(value AgentCollaboration) (AgentCollaboration, error) {
+	var err error
+	if value.AllowAgentIDs, err = normalizeAgentMetadataIdentifiers("collaboration allow agent ids", value.AllowAgentIDs); err != nil {
+		return AgentCollaboration{}, err
+	}
+	value.MaxDepth = clampCollaborationBound(value.MaxDepth, DefaultAgentCollaborationMaxDepth, MaxAgentCollaborationMaxDepth)
+	value.MaxActivePeerTasks = clampCollaborationBound(value.MaxActivePeerTasks, DefaultAgentCollaborationMaxActivePeerTasks, MaxAgentCollaborationMaxActivePeerTasks)
+	if value.TimeoutSeconds == 0 {
+		value.TimeoutSeconds = DefaultAgentCollaborationTimeoutSeconds
+	} else if value.TimeoutSeconds > MaxAgentCollaborationTimeoutSeconds {
+		value.TimeoutSeconds = MaxAgentCollaborationTimeoutSeconds
+	}
+	return value, nil
+}
+
+func clampCollaborationBound(value, fallback, maximum uint8) uint8 {
+	if value == 0 {
+		return fallback
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
+func (value AgentCollaboration) EffectiveMaxDepth() uint8 {
+	return clampCollaborationBound(value.MaxDepth, DefaultAgentCollaborationMaxDepth, MaxAgentCollaborationMaxDepth)
+}
+
+func (value AgentCollaboration) EffectiveMaxActivePeerTasks() uint8 {
+	return clampCollaborationBound(value.MaxActivePeerTasks, DefaultAgentCollaborationMaxActivePeerTasks, MaxAgentCollaborationMaxActivePeerTasks)
+}
+
+func (value AgentCollaboration) EffectiveTimeoutSeconds() uint32 {
+	if value.TimeoutSeconds == 0 {
+		return DefaultAgentCollaborationTimeoutSeconds
+	}
+	if value.TimeoutSeconds > MaxAgentCollaborationTimeoutSeconds {
+		return MaxAgentCollaborationTimeoutSeconds
+	}
+	return value.TimeoutSeconds
 }
 
 func normalizeAgentExecutionProfile(label string, value AgentExecutionProfile, lead bool) (AgentExecutionProfile, error) {

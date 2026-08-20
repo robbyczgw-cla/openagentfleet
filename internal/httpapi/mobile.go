@@ -851,7 +851,7 @@ func validMobilePairRequest(request mobilePairRequest) bool {
 	if len(request.GrantID) > maxMobilePairingFieldBytes || len(request.PairingSecret) > maxMobilePairingFieldBytes || len([]rune(request.DeviceName)) > 128 {
 		return false
 	}
-	return request.Platform == domain.RemotePlatformIOS || request.Platform == domain.RemotePlatformAndroid
+	return domain.ValidRemotePlatform(request.Platform)
 }
 
 func newMobileBearer() (string, error) {

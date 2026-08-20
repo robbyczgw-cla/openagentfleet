@@ -104,6 +104,12 @@ GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOOS="$target_os" GOARCH="$go_arch" \
 chmod 755 "$browser_mcp_path"
 printf 'Built Agent Computer MCP sidecar: %s\n' "$browser_mcp_path"
 
+collab_mcp_path="$sidecar_dir/collaboration-mcp-$target_triple"
+GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOOS="$target_os" GOARCH="$go_arch" \
+  go build -trimpath -buildvcs=false -o "$collab_mcp_path" "$repo_root/cmd/openagentfleet-collaboration-mcp"
+chmod 755 "$collab_mcp_path"
+printf 'Built Agent collaboration MCP sidecar: %s\n' "$collab_mcp_path"
+
 uv_path="$sidecar_dir/uv-$target_triple"
 uvx_path="$sidecar_dir/uvx-$target_triple"
 opencode_path="$sidecar_dir/opencode-$target_triple"

@@ -5,6 +5,7 @@ import "encoding/json"
 const (
 	RemotePlatformIOS     = "ios"
 	RemotePlatformAndroid = "android"
+	RemotePlatformDesktop = "desktop"
 
 	RemoteScopeObserver   = "observer"
 	RemoteScopeController = "controller"
@@ -18,8 +19,21 @@ const (
 	RemotePairingLocked  = "locked"
 	RemotePairingExpired = "expired"
 
+	// RemoteAuthVersionBearer is hashed-bearer alpha auth. Bump auth_version
+	// before refresh-token rotation; DPoP is not implemented on this version.
 	RemoteAuthVersionBearer = 1
 )
+
+// ValidRemotePlatform reports whether platform is a paired-client identity
+// (phones or a desktop client). The fleet host itself is not a remote device.
+func ValidRemotePlatform(platform string) bool {
+	switch platform {
+	case RemotePlatformIOS, RemotePlatformAndroid, RemotePlatformDesktop:
+		return true
+	default:
+		return false
+	}
+}
 
 // RemoteDevice is the public, durable identity of a paired mobile client.
 // Credentials are stored separately and are never included in device views.

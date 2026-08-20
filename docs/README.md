@@ -23,6 +23,7 @@ not earned yet.
 | [Linux release](linux-release.md) | deb/rpm/AppImage packaging, Docker Recommends, and Linux Computer install | Implemented alpha packaging |
 | [Windows desktop](windows-desktop.md) | Research for a later Tauri Windows shell, Docker Desktop WSL2, and NSIS alpha boundary | Research only; not implemented |
 | [Mac host install](mac-host-install.md) | LaunchAgent and local host operation | Setup guide |
+| [Fleet Host MVP](fleet-host.md) | Always-on Linux/Mac controller, pairing, and loopback Serve rules | Implemented host status + install script |
 | [OpenCode bundling](opencode-bundling.md) | Exact macOS sidecar pin, architecture checks, and upgrade procedure | Implemented packaging contract |
 | [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | Passed for public `v0.2.0-alpha` |
 | [Search connectors](search-connectors.md) | Optional Web Search Plus, Hound, and Donsetch MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
