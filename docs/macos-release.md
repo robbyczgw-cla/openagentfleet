@@ -7,7 +7,7 @@ Developer ID, notarization, stapling, Gatekeeper, and checksum checks below.
 
 ## Measured state of the current checkout
 
-- Product version: `0.2.0`.
+- Product version: `0.3.0`.
 - Target: Apple Silicon macOS.
 - The normal Tauri configuration uses `signingIdentity: "-"` for local
   development, which produces an ad-hoc signature.
@@ -15,8 +15,9 @@ Developer ID, notarization, stapling, Gatekeeper, and checksum checks below.
   for the public alpha.
 - A notarization submission was accepted by Apple, and the ticket was stapled
   to both the app and DMG.
-- The public GitHub prerelease contains the signed Apple Silicon DMG and its
-  matching SHA-256 checksum file.
+- The public GitHub prerelease `v0.2.0-alpha` still contains the signed
+  Apple Silicon DMG and its matching SHA-256 checksum file. `v0.3.0-alpha`
+  is the next publish from this version.
 
 Do not change the default Tauri identity merely to make a local build look
 released. Use the release override below only after the correct distribution
@@ -66,7 +67,7 @@ just because its filename matches.
 
 ```sh
 APP='client/src-tauri/target/release/bundle/macos/OpenAgentFleet.app'
-DMG='client/src-tauri/target/release/bundle/dmg/OpenAgentFleet_0.2.0_aarch64.dmg'
+DMG='client/src-tauri/target/release/bundle/dmg/OpenAgentFleet_0.3.0_aarch64.dmg'
 ./scripts/verify-macos-release.sh "$APP" "$DMG"
 ```
 
@@ -102,22 +103,20 @@ shasum -a 256 "$DMG" > SHA256SUMS
 cat SHA256SUMS
 ```
 
-The current public alpha is [`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
-It publishes the Apple Silicon DMG and the matching `SHA256SUMS` file.
-
-For a future release, publish only after the signature, ticket, Gatekeeper and
+The current public download remains [`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha)
+until this version is notarized. After the signature, ticket, Gatekeeper and
 checksum gates pass:
 
 ```sh
-gh release create v0.2.0-alpha \
-  "$DMG#OpenAgentFleet 0.2.0 Apple Silicon DMG" \
+gh release create v0.3.0-alpha \
+  "$DMG#OpenAgentFleet 0.3.0 Apple Silicon DMG" \
   SHA256SUMS \
   --repo robbyczgw-cla/openagentfleet \
-  --title 'OpenAgentFleet v0.2.0-alpha' \
+  --title 'OpenAgentFleet v0.3.0-alpha' \
   --prerelease
 ```
 
-The current `v0.2.0-alpha` is public, Apple Silicon first, with unsigned Linux
-packages from the same commit. It is intentionally not a production stability
-promise. Keep the alpha label until the remaining runtime, update, and
-platform gates are complete.
+Paste the `0.3.0-alpha` section of [CHANGELOG.md](../CHANGELOG.md) as the
+prerelease notes. Keep the alpha label. This checkout is source-ready, not a
+claim that Gatekeeper already passed for `0.3.0`. Unsigned Linux packages from
+the same commit go on that same prerelease.

@@ -2,6 +2,68 @@
 
 All notable OpenAgentFleet changes are recorded here.
 
+## Unreleased
+
+macOS `v0.3.0-alpha` is not published until a Developer ID DMG is notarized
+and stapled from this version. Linux `.deb` / `.rpm` / `.AppImage` can be
+built from the same commit. The current public download remains
+[`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
+
+## 0.3.0-alpha
+
+Coworkers first: Agents can share a group chat, opt into agent-to-agent work,
+turn an enabled Skill into a Routine, and run an always-on Fleet Host. This
+is still a public alpha, not a production stability promise.
+
+### Group chat
+
+Create a group, pick members, and talk in one thread from the sidebar. Group
+messages stay in that group; they never land in an Agent’s private chat.
+Only Agents you mention on a send start work. Mentioning a teammate from a
+group does **not** require collaboration to be enabled — that gate is for
+Agents tasking each other.
+
+### Opt-in Agent collaboration
+
+A user `@mention` is still a visible handoff. Agent-to-Agent tools
+(message, delegate, cancel) stay off until collaboration is enabled on that
+Agent. Enabled Agents get an allowlist, a depth cap, ping-pong rejection, and
+a limit on concurrent peer tasks. Collaboration is not a hidden worker pool
+and is not on by default.
+
+### Teach → Skill → Routine
+
+Inspect an enabled Skill, create a Routine from it, and enable the Routine
+explicitly. Create always starts disabled. A Skill that is not enabled cannot
+become a Routine. Heartbeat Routines still require the heartbeat opt-in.
+Skills never auto-enable. This ships the inspect/create/enable contract; a
+full scheduler is remaining work.
+
+### Fleet Host MVP
+
+`GET /api/host/status` reports the controller as `authority`. Pairing accepts
+`desktop` alongside `ios` and `android`. Linux can install an always-on user
+systemd unit that stays on loopback. The Agent Computer worker is not the
+host. The desktop app still starts a local controller for a laptop-owned
+workspace; using that laptop as a remote client of a Fleet Host is the
+intended shape, not the first-run default. Tailscale Serve stays on the
+mobile listener (`:4318`), not the desktop API (`:4317`). Funnel is out of
+scope.
+
+### Copy
+
+Onboarding and the README lead with coworkers: a real computer, learned
+workflows, and collaboration — on infrastructure you control.
+
+### Boundaries
+
+- Group work that needs a live engine still needs that engine actually
+  running; otherwise mentioned members stay queued.
+- Native signed packages for this version are the Mac/Linux publish step;
+  this commit is source-ready, not a claim that Gatekeeper or Linux packages
+  are already published.
+- Intel Macs are still unsupported. Linux packages remain unsigned.
+
 ## 0.2.0-alpha
 
 Public prerelease from `87e648c`. The Apple Silicon DMG is signed, notarized
