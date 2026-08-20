@@ -260,7 +260,7 @@ func validateRemoteDevice(displayName, platform, scopeProfile string) error {
 	if len([]rune(displayName)) > maxRemoteDisplayName {
 		return fmt.Errorf("remote device display name must be at most %d characters", maxRemoteDisplayName)
 	}
-	if platform != domain.RemotePlatformIOS && platform != domain.RemotePlatformAndroid {
+	if !domain.ValidRemotePlatform(platform) {
 		return fmt.Errorf("unsupported remote device platform %q", platform)
 	}
 	if scopeProfile != domain.RemoteScopeObserver && scopeProfile != domain.RemoteScopeController && scopeProfile != domain.RemoteScopeOwner {

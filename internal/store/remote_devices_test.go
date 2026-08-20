@@ -216,6 +216,14 @@ func TestRemoteCredentialExpiryAndValidation(t *testing.T) {
 		}
 	}
 
+	desktop, err := instance.CreateRemoteDevice(ctx, "Studio Laptop", domain.RemotePlatformDesktop, domain.RemoteScopeObserver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desktop.Platform != domain.RemotePlatformDesktop {
+		t.Fatalf("desktop platform = %q", desktop.Platform)
+	}
+
 	device, err := instance.CreateRemoteDevice(ctx, "Pixel", domain.RemotePlatformAndroid, domain.RemoteScopeObserver)
 	if err != nil {
 		t.Fatal(err)
@@ -249,6 +257,55 @@ func TestRemoteCredentialExpiryAndValidation(t *testing.T) {
 	}
 	if err := instance.TouchRemoteDeviceLastUsed(ctx, "missing-device"); !errors.Is(err, ErrRemoteDeviceNotFound) {
 		t.Fatalf("missing touch error = %v, want %v", err, ErrRemoteDeviceNotFound)
+	}
+}
+
+func TestRemoteDevicePlatformCheckMigratesToAllowDesktop(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy-platform.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE remote_devices (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('ios', 'android')),
+  scope_profile TEXT NOT NULL CHECK(scope_profile IN ('observer', 'controller', 'owner')),
+  status TEXT NOT NULL CHECK(status IN ('active', 'revoked')),
+  created_at TEXT NOT NULL,
+  revoked_at TEXT NOT NULL DEFAULT '',
+  last_used_at TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO remote_devices (id, display_name, platform, scope_profile, status, created_at, revoked_at, last_used_at)
+VALUES ('device-legacy', 'Old Phone', 'ios', 'observer', 'active', '2026-01-01T00:00:00Z', '', '');`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	instance, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	devices, err := instance.ListRemoteDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].ID != "device-legacy" || devices[0].Platform != domain.RemotePlatformIOS {
+		t.Fatalf("preserved devices = %#v", devices)
+	}
+	desktop, err := instance.CreateRemoteDevice(ctx, "Migrated Laptop", domain.RemotePlatformDesktop, domain.RemoteScopeController)
+	if err != nil {
+		t.Fatalf("desktop insert after migration: %v", err)
+	}
+	if desktop.Platform != domain.RemotePlatformDesktop {
+		t.Fatalf("migrated desktop = %#v", desktop)
 	}
 }
 

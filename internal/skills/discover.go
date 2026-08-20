@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +21,49 @@ type root struct {
 }
 
 func Discover(workspace string) ([]domain.Skill, error) {
+	return discoverRoots(workspaceRoots(workspace))
+}
+
+func DiscoverEnabled(enabledRoot string) ([]domain.Skill, error) {
+	enabledRoot = strings.TrimSpace(enabledRoot)
+	if enabledRoot == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(enabledRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.Skill, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillDir := filepath.Join(enabledRoot, entry.Name())
+		activeRaw, readErr := os.ReadFile(filepath.Join(skillDir, "active.json"))
+		if readErr != nil {
+			continue
+		}
+		var active struct {
+			Active  bool `json:"active"`
+			Version int  `json:"version"`
+		}
+		if json.Unmarshal(activeRaw, &active) != nil || !active.Active {
+			continue
+		}
+		skillPath := filepath.Join(skillDir, "versions", fmt.Sprintf("v%06d", active.Version), "SKILL.md")
+		item, parseErr := parse(skillPath, "enabled", entry.Name())
+		if parseErr != nil {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func workspaceRoots(workspace string) []root {
 	roots := []root{
 		{path: filepath.Join(workspace, ".agents", "skills"), source: "workspace/.agents"},
 		{path: filepath.Join(workspace, ".claude", "skills"), source: "workspace/.claude"},
@@ -34,7 +78,10 @@ func Discover(workspace string) ([]domain.Skill, error) {
 			root{path: filepath.Join(home, ".openclaw", "skills"), source: "managed/openclaw"},
 		)
 	}
+	return roots
+}
 
+func discoverRoots(roots []root) ([]domain.Skill, error) {
 	result := make([]domain.Skill, 0)
 	seen := make(map[string]struct{})
 	var firstErr error

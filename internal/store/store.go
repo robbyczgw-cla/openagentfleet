@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS remote_host_identity (
 CREATE TABLE IF NOT EXISTS remote_devices (
   id TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
-  platform TEXT NOT NULL CHECK(platform IN ('ios', 'android')),
+  platform TEXT NOT NULL CHECK(platform IN ('ios', 'android', 'desktop')),
   scope_profile TEXT NOT NULL CHECK(scope_profile IN ('observer', 'controller', 'owner')),
   status TEXT NOT NULL CHECK(status IN ('active', 'revoked')),
   created_at TEXT NOT NULL,
@@ -262,6 +262,9 @@ CREATE INDEX IF NOT EXISTS bot_memories_bot_order_idx
 		return fmt.Errorf("backfill agent metadata: %w", err)
 	}
 	if err := s.migrateRemoteAuthVersion(); err != nil {
+		return err
+	}
+	if err := s.migrateRemoteDeviceDesktopPlatform(); err != nil {
 		return err
 	}
 	if err := s.migrateLegacyAttachmentSchema(); err != nil {
@@ -346,6 +349,90 @@ func hasRemoteAuthVersion(ctx context.Context, queryer sqliteQueryer) (bool, err
 		return false, fmt.Errorf("close remote credential schema: %w", err)
 	}
 	return found, nil
+}
+
+const remoteDevicesTableBody = `id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('ios', 'android', 'desktop')),
+  scope_profile TEXT NOT NULL CHECK(scope_profile IN ('observer', 'controller', 'owner')),
+  status TEXT NOT NULL CHECK(status IN ('active', 'revoked')),
+  created_at TEXT NOT NULL,
+  revoked_at TEXT NOT NULL DEFAULT '',
+  last_used_at TEXT NOT NULL DEFAULT ''`
+
+func (s *Store) migrateRemoteDeviceDesktopPlatform() error {
+	ctx := context.Background()
+	allowsDesktop, err := remoteDevicesAllowsDesktop(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	if allowsDesktop {
+		return nil
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire remote device platform migration connection: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("disable foreign keys for remote device platform migration: %w", err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON") }()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin remote device platform migration: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	allowsDesktop, err = remoteDevicesAllowsDesktop(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if !allowsDesktop {
+		if _, err := conn.ExecContext(ctx, "CREATE TABLE remote_devices_replacement ("+remoteDevicesTableBody+")"); err != nil {
+			return fmt.Errorf("create replacement remote devices table: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `INSERT INTO remote_devices_replacement
+(id, display_name, platform, scope_profile, status, created_at, revoked_at, last_used_at)
+SELECT id, display_name, platform, scope_profile, status, created_at, revoked_at, last_used_at FROM remote_devices`); err != nil {
+			return fmt.Errorf("copy remote devices for platform migration: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, "DROP TABLE remote_devices"); err != nil {
+			return fmt.Errorf("drop legacy remote devices table: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, "ALTER TABLE remote_devices_replacement RENAME TO remote_devices"); err != nil {
+			return fmt.Errorf("rename replacement remote devices table: %w", err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("commit remote device platform migration: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+func remoteDevicesAllowsDesktop(ctx context.Context, queryer sqliteQueryer) (bool, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'remote_devices'`)
+	if err != nil {
+		return false, fmt.Errorf("inspect remote device schema: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, fmt.Errorf("inspect remote device schema: %w", err)
+		}
+		return true, nil
+	}
+	var createSQL string
+	if err := rows.Scan(&createSQL); err != nil {
+		return false, fmt.Errorf("scan remote device schema: %w", err)
+	}
+	return strings.Contains(createSQL, "'desktop'"), nil
 }
 
 // migrateLegacyAttachmentSchema fixes the first attachment schema, which used
@@ -1080,6 +1167,10 @@ func (s *Store) ResolveApproval(ctx context.Context, approvalID, status, optionI
 // context and harness process have disappeared, so recovery is deliberately
 // fail-closed: the run becomes stopped and every pending approval is
 // cancelled in the same transaction. The operation is idempotent.
+//
+// This is host-botd restart recovery. A remote client's SSE drop or laptop
+// going offline does not cancel a run; only the authority process restart
+// does. Do not treat client disconnect as interrupted-run recovery.
 func (s *Store) RecoverInterruptedRuns(ctx context.Context) (int, error) {
 	timestamp := now()
 	tx, err := s.db.BeginTx(ctx, nil)

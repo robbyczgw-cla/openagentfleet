@@ -75,6 +75,8 @@ type Server struct {
 	// bundled/installed command name and botd's loopback API respectively.
 	AgentComputerMCPCommand string
 	AgentComputerMCPAPIURL  string
+	CollaborationMCPCommand string
+	CollaborationMCPAPIURL  string
 	activeMu                sync.Mutex
 	activeRuns              map[string]context.CancelFunc
 	computerMu              sync.RWMutex
@@ -83,6 +85,8 @@ type Server struct {
 	computerAgentControl    bool
 	computerCapabilityMu    sync.RWMutex
 	computerCapabilities    map[string]computerCapability
+	collabCapabilityMu      sync.RWMutex
+	collabCapabilities      map[string]computerCapability
 	remoteComputerLeaseMu   sync.Mutex
 	remoteComputerOwner     string
 	remoteComputerDeviceID  string
@@ -249,6 +253,16 @@ func (s *Server) Handler() http.Handler {
 			s.renameConversation(w, r)
 		case r.URL.Path == "/api/search" && r.Method == http.MethodGet:
 			s.search(w, r)
+		case r.URL.Path == "/api/collaboration/agents" && r.Method == http.MethodGet:
+			s.listCollaborationAgents(w, r)
+		case r.URL.Path == "/api/collaboration/message" && r.Method == http.MethodPost:
+			s.createCollaborationMessage(w, r)
+		case r.URL.Path == "/api/collaboration/delegate" && r.Method == http.MethodPost:
+			s.createCollaborationDelegate(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/collaboration/tasks/") && strings.HasSuffix(r.URL.Path, "/cancel") && r.Method == http.MethodPost:
+			s.cancelCollaborationTask(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/collaboration/tasks/") && r.Method == http.MethodGet:
+			s.getCollaborationTask(w, r)
 		case r.URL.Path == "/api/messages" && r.Method == http.MethodPost:
 			s.createMessage(w, r)
 		case r.URL.Path == "/api/attachments" && r.Method == http.MethodPost:
@@ -269,8 +283,20 @@ func (s *Server) Handler() http.Handler {
 			s.resolveApproval(w, r)
 		case r.URL.Path == "/api/sessions" && r.Method == http.MethodGet:
 			s.listSessions(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/groups"):
+			s.handleGroupRoutes(w, r)
+		case r.URL.Path == "/api/host/status" && r.Method == http.MethodGet:
+			s.hostStatus(w, r)
+		case r.URL.Path == "/api/routines" && r.Method == http.MethodGet:
+			s.listRoutines(w, r)
+		case r.URL.Path == "/api/routines" && r.Method == http.MethodPost:
+			s.createRoutine(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/routines/") && strings.HasSuffix(r.URL.Path, "/enable") && r.Method == http.MethodPost:
+			s.enableRoutine(w, r)
 		case r.URL.Path == "/api/skills" && r.Method == http.MethodGet:
 			s.listSkills(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/skills/") && r.Method == http.MethodGet:
+			s.inspectSkill(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/skills/") && r.Method == http.MethodPost:
 			s.workshopAction(w, r)
 		case r.URL.Path == "/api/integrations" && r.Method == http.MethodGet:
@@ -748,6 +774,11 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusConflict, err)
 		return
 	}
+	collabCapability, mcpServers, err := s.appendCollaborationMCP(r.Context(), mcpServers, agent, hasAgent)
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
 	if err := rejectPiLeadMCP(provider, mcpServers); err != nil {
 		s.writeErrorStatus(w, http.StatusBadRequest, err)
 		return
@@ -757,6 +788,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if !capabilityTransferred {
 			s.revokeComputerCapability(computerCapability)
+			s.revokeCollabCapability(collabCapability)
 		}
 	}()
 	memories, err := s.Store.RetrieveBotMemories(r.Context(), conversation.BotID, memoryPromptMaxCount, memoryPromptMaxBytes)
@@ -846,6 +878,14 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		s.bindComputerCapability(computerCapability, run.ID, leaseTTL)
 		setComputerRunID(mcpServers, run.ID)
+	}
+	if collabCapability != "" {
+		leaseTTL := time.Duration(timeoutSeconds) * time.Second
+		if leaseTTL <= 0 {
+			leaseTTL = s.RunTimeout
+		}
+		s.bindCollabCapability(collabCapability, run.ID, leaseTTL)
+		setCollabRunID(mcpServers, run.ID)
 	}
 	s.publishStoredRunEvent(run, queuedEvent)
 	if !s.AllowHarnessExecution {
@@ -1905,6 +1945,7 @@ func (s *Server) stopRun(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusConflict, err)
 		return
 	}
+	s.finishCollaborationHandoff(run, "stopped", "cancelled")
 	cancel()
 	s.writeJSON(w, http.StatusAccepted, map[string]string{"run_id": runID, "status": "stopping"})
 }
@@ -2026,6 +2067,30 @@ func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeErrorStatus(w, http.StatusInternalServerError, err)
 		return
+	}
+	if s.EnabledSkillsRoot != "" {
+		enabled, enabledErr := skills.DiscoverEnabled(s.EnabledSkillsRoot)
+		if enabledErr != nil {
+			s.writeErrorStatus(w, http.StatusInternalServerError, enabledErr)
+			return
+		}
+		seen := make(map[string]struct{}, len(items)+len(enabled))
+		merged := make([]domain.Skill, 0, len(items)+len(enabled))
+		for _, item := range enabled {
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+			merged = append(merged, item)
+		}
+		for _, item := range items {
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+			merged = append(merged, item)
+		}
+		items = merged
 	}
 	workshopState := map[string]any{
 		"available":   s.Workshop != nil,
@@ -2859,6 +2924,7 @@ func (s *Server) commitTerminalRunLifecycleEvent(run domain.Run, status, runErro
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if _, err := s.commitRunLifecycleEvent(ctx, run, status, runError, eventType, data); err == nil {
+			s.finishCollaborationHandoff(run, status, runError)
 			return nil
 		} else {
 			lastErr = err
@@ -3501,7 +3567,7 @@ func setHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Add("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID, X-OpenAgentFleet-Computer-Use, X-OpenAgentFleet-Computer-Run-ID, X-OpenAgentFleet-Computer-Run-Token")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID, X-OpenAgentFleet-Computer-Use, X-OpenAgentFleet-Computer-Run-ID, X-OpenAgentFleet-Computer-Run-Token, X-OpenAgentFleet-Collab-Run-ID, X-OpenAgentFleet-Collab-Run-Token")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
 }
 

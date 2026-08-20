@@ -59,6 +59,14 @@ a separate per-Agent model matrix. A provider that is installed but not signed
 in must say so plainly and offer its provider-owned sign-in action; it must not
 be displayed as connected merely because the binary exists.
 
+Ideal first-run sequence (no internals required):
+
+- Choose an AI engine (Grok Build default; Pi opt-in).
+- Create the first Agent.
+- Start chatting.
+- When computer access is first needed, offer setup.
+- When collaboration is first needed, offer another Agent.
+
 Changing the workspace engine affects subsequent runs for every Agent. It does
 not create a new Agent, erase an Agent's memory, or silently move credentials.
 An explicit preflight prevents an unauthenticated or unavailable engine from
@@ -162,6 +170,14 @@ worker delegation. The source thread records the handoff; the target Agent’s
 canonical conversation receives the task and starts a run with **that**
 Agent’s lead, MCP grants, and computer. The sender’s computer capability is
 never transferred. Attachments and multi-agent group chat are out of scope.
+
+When an Agent has collaboration enabled, the controller also injects
+`list_agents`, `message_agent`, `delegate_to_agent`, and
+`get_agent_task_status`. Those tools talk only to botd. The target Agent
+keeps its own memory, skills, MCP grants, permissions, and computer. Depth,
+allowlists, cancellation, and ping-pong rejection are enforced by the
+controller. Results return to the source chat as a teammate update, not as
+raw orchestration JSON.
 
 Saved approval rules are exact: **Allow once** still prompts next time;
 **Always allow** / **Always deny** persist one principal + resource +

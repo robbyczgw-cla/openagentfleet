@@ -50,6 +50,47 @@ CREATE TABLE IF NOT EXISTS policy_rules (
 	if _, err := s.db.Exec(extra); err != nil {
 		return fmt.Errorf("migrate bot parity schema: %w", err)
 	}
+	handoffColumns := []struct {
+		name       string
+		definition string
+	}{
+		{"status", "TEXT NOT NULL DEFAULT 'queued'"},
+		{"mode", "TEXT NOT NULL DEFAULT 'user'"},
+		{"parent_handoff_id", "TEXT NOT NULL DEFAULT ''"},
+		{"depth", "INTEGER NOT NULL DEFAULT 0"},
+		{"origin_run_id", "TEXT NOT NULL DEFAULT ''"},
+		{"source_run_id", "TEXT NOT NULL DEFAULT ''"},
+		{"result", "TEXT NOT NULL DEFAULT ''"},
+		{"completed_at", "TEXT NOT NULL DEFAULT ''"},
+		{"timeout_seconds", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range handoffColumns {
+		if err := s.ensureHandoffColumn(column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	const handoffIndexes = `
+CREATE INDEX IF NOT EXISTS agent_handoffs_origin_run_idx ON agent_handoffs(origin_run_id);
+CREATE INDEX IF NOT EXISTS agent_handoffs_source_run_idx ON agent_handoffs(source_run_id);
+CREATE INDEX IF NOT EXISTS agent_handoffs_status_idx ON agent_handoffs(status);
+`
+	if _, err := s.db.Exec(handoffIndexes); err != nil {
+		return fmt.Errorf("migrate bot parity schema: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureHandoffColumn(name, definition string) error {
+	found, err := hasSQLiteColumn(s.db, "agent_handoffs", name)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.Exec("ALTER TABLE agent_handoffs ADD COLUMN " + name + " " + definition); err != nil {
+		return fmt.Errorf("add agent_handoffs.%s: %w", name, err)
+	}
 	return nil
 }
 
@@ -146,6 +187,15 @@ type CreateAgentHandoffInput struct {
 	Content              string
 	TargetProvider       string
 	TargetPrompt         string
+	Status               string
+	Mode                 string
+	ParentHandoffID      string
+	Depth                int
+	OriginRunID          string
+	SourceRunID          string
+	Result               string
+	CompletedAt          string
+	TimeoutSeconds       int
 }
 
 type CreateAgentHandoffResult struct {
@@ -196,10 +246,21 @@ func (s *Store) CreateAgentHandoff(ctx context.Context, input CreateAgentHandoff
 		CreatedAt: timestamp, UpdatedAt: timestamp,
 	}
 	event := domain.RunEvent{ID: id.New("evt"), RunID: run.ID, Type: "run.queued", Data: `{"status":"queued"}`, CreatedAt: timestamp}
+	status := input.Status
+	if status == "" {
+		status = "queued"
+	}
+	mode := input.Mode
+	if mode == "" {
+		mode = "user"
+	}
 	handoff := domain.Handoff{
 		ID: handoffID, SourceBotID: input.SourceBotID, SourceConversationID: input.SourceConversationID,
 		SourceMessageID: source.ID, TargetBotID: input.TargetBotID, TargetConversationID: input.TargetConversationID,
 		TargetMessageID: target.ID, TargetRunID: run.ID, Content: input.Content, CreatedAt: timestamp,
+		Status: status, Mode: mode, ParentHandoffID: input.ParentHandoffID, Depth: input.Depth,
+		OriginRunID: input.OriginRunID, SourceRunID: input.SourceRunID, Result: input.Result,
+		CompletedAt: input.CompletedAt, TimeoutSeconds: input.TimeoutSeconds,
 	}
 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO messages
@@ -227,11 +288,13 @@ func (s *Store) CreateAgentHandoff(ctx context.Context, input CreateAgentHandoff
 		return empty, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_handoffs
-		(id, source_bot_id, source_conversation_id, source_message_id, target_bot_id, target_conversation_id, target_message_id, target_run_id, content, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, source_bot_id, source_conversation_id, source_message_id, target_bot_id, target_conversation_id, target_message_id, target_run_id, content, created_at,
+		 status, mode, parent_handoff_id, depth, origin_run_id, source_run_id, result, completed_at, timeout_seconds)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		handoff.ID, handoff.SourceBotID, handoff.SourceConversationID, handoff.SourceMessageID,
 		handoff.TargetBotID, handoff.TargetConversationID, handoff.TargetMessageID, handoff.TargetRunID,
-		handoff.Content, handoff.CreatedAt); err != nil {
+		handoff.Content, handoff.CreatedAt, handoff.Status, handoff.Mode, handoff.ParentHandoffID, handoff.Depth,
+		handoff.OriginRunID, handoff.SourceRunID, handoff.Result, handoff.CompletedAt, handoff.TimeoutSeconds); err != nil {
 		return empty, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -37,6 +37,7 @@ type agentMetadataRequest struct {
 	NotifyFinished   *bool                          `json:"notify_finished"`
 	NotifyNeedsInput *bool                          `json:"notify_needs_input"`
 	Avatar           *domain.AgentAvatarMetadata    `json:"avatar"`
+	Collaboration    *domain.AgentCollaboration     `json:"collaboration"`
 }
 
 type agentMetadataPatchRequest struct {
@@ -51,6 +52,7 @@ type agentMetadataPatchRequest struct {
 	NotifyFinished   *bool                           `json:"notify_finished"`
 	NotifyNeedsInput *bool                           `json:"notify_needs_input"`
 	Avatar           *domain.AgentAvatarMetadata     `json:"avatar"`
+	Collaboration    *domain.AgentCollaboration      `json:"collaboration"`
 }
 
 type agentExecutionProfilePatch struct {
@@ -232,6 +234,10 @@ func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMet
 		metadata.Avatar = patch.Avatar
 		changed = true
 	}
+	if patch.Collaboration != nil {
+		metadata.Collaboration = patch.Collaboration
+		changed = true
+	}
 	if !changed {
 		return domain.AgentMetadata{}, errors.New("at least one agent metadata field is required")
 	}
@@ -268,6 +274,7 @@ func normalizeAgentMetadataRequest(request *agentMetadataRequest) (domain.AgentM
 	metadata.PluginIDs = request.PluginIDs
 	metadata.MCPIDs = request.MCPIDs
 	metadata.Avatar = request.Avatar
+	metadata.Collaboration = request.Collaboration
 	if request.NotifyFinished != nil {
 		metadata.NotifyFinished = *request.NotifyFinished
 	}

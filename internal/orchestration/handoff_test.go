@@ -30,3 +30,9 @@ func TestSingleMentionBotIDAllowsOneDistinctAgent(t *testing.T) {
 		t.Fatalf("empty mentions = %q, %v", id, err)
 	}
 }
+
+func TestValidateAgentHandoffDoesNotRequireCollaboration(t *testing.T) {
+	if err := ValidateAgentHandoff("bot-a", "bot-b"); err != nil {
+		t.Fatalf("user mention without collaboration error = %v", err)
+	}
+}
