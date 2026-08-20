@@ -218,7 +218,7 @@ FROM mobile_message_idempotency WHERE device_id = ? AND key_hash = ?`, deviceID,
 	timestamp := now()
 	message := domain.Message{ID: id.New("msg"), ConversationID: conversationID, Role: "user", Content: content, CreatedAt: timestamp}
 	run := domain.Run{ID: id.New("run"), ConversationID: conversationID, BotID: botID, Provider: "grok", Status: "queued", Prompt: content, CreatedAt: timestamp, UpdatedAt: timestamp}
-	event := domain.StreamEvent{ID: id.New("evt"), RunID: run.ID, ConversationID: conversationID, Type: "run.queued", Data: `{"status":"queued"}`, CreatedAt: timestamp}
+	event := domain.StreamEvent{ID: id.New("evt"), RunID: run.ID, BotID: botID, ConversationID: conversationID, Type: "run.queued", Data: `{"status":"queued"}`, CreatedAt: timestamp}
 	if _, err := conn.ExecContext(ctx, `INSERT INTO messages
 (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)`, message.ID, message.ConversationID, message.Role, message.Content, message.CreatedAt); err != nil {
 		return domain.MobileMessageResponse{}, domain.Run{}, domain.StreamEvent{}, false, fmt.Errorf("create mobile message: %w", err)

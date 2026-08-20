@@ -53,6 +53,7 @@ type agentMetadataPatchRequest struct {
 	NotifyNeedsInput *bool                           `json:"notify_needs_input"`
 	Avatar           *domain.AgentAvatarMetadata     `json:"avatar"`
 	Collaboration    *domain.AgentCollaboration      `json:"collaboration"`
+	ClearLead        *bool                           `json:"clear_lead"`
 }
 
 type agentExecutionProfilePatch struct {
@@ -94,7 +95,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusConflict, err)
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, agent)
+	s.writeJSON(w, http.StatusCreated, s.decorateOneAgent(r.Context(), agent))
 }
 
 func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +135,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusBadRequest, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, agent)
+	s.writeJSON(w, http.StatusOK, s.decorateOneAgent(r.Context(), agent))
 }
 
 func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMetadataPatchRequest) (domain.AgentMetadata, error) {
@@ -146,6 +147,12 @@ func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMet
 		metadata = *existing
 	}
 	changed := false
+	if patch.ClearLead != nil && *patch.ClearLead {
+		metadata.Lead = nil
+		metadata.LeadHarness = ""
+		metadata.Model = ""
+		changed = true
+	}
 	if patch.Lead != nil {
 		lead := domain.AgentExecutionProfile{}
 		if metadata.Lead != nil {
@@ -254,7 +261,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
+	s.writeJSON(w, http.StatusOK, map[string]any{"agents": s.decorateAgentPresence(r.Context(), agents)})
 }
 
 func normalizeAgentMetadataRequest(request *agentMetadataRequest) (domain.AgentMetadata, error) {

@@ -44,6 +44,14 @@ objc2-app-kit = { version = "0.3.2", features = [
   "NSView",
 ] }
 objc2-foundation = { version = "0.3.2", features = ["NSGeometry", "NSString"] }
+objc2-user-notifications = { version = "0.3.2", features = [
+  "UNUserNotificationCenter",
+  "UNNotificationRequest",
+  "UNNotificationContent",
+  "UNNotificationSound",
+  "UNNotificationTrigger",
+  "block2",
+] }
 objc2-avf-audio = "0.3.2"
 objc2-speech = "0.3.2"
 zeroize = "1"

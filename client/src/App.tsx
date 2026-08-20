@@ -19,6 +19,11 @@ import {
 } from "./collaboration";
 import { GroupChatPanel } from "./groupChat";
 import * as onboardingCopy from "./onboardingCopy";
+import {
+  deriveAgentPresence,
+  engineShortLabel,
+  type AgentPresence,
+} from "./presence";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -112,6 +117,16 @@ async function isNearBlankFrame(blob: Blob): Promise<boolean> {
   } finally {
     bitmap?.close();
   }
+}
+
+async function readAPIError(response: Response, fallback: string) {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error?.trim()) return payload.error;
+  } catch {
+    // Non-JSON error bodies keep the fallback.
+  }
+  return `${fallback} (${response.status})`;
 }
 
 async function apiFetch(path: string, init: RequestInit = {}) {
@@ -234,6 +249,7 @@ type Agent = {
     notify_finished?: boolean;
     notify_needs_input?: boolean;
   };
+  presence?: AgentPresence;
 };
 
 type Conversation = {
@@ -339,6 +355,7 @@ type RuntimeInfo = {
 type Run = {
   id: string;
   conversation_id?: string;
+  bot_id?: string;
   provider: string;
   status: string;
   prompt?: string;
@@ -349,10 +366,20 @@ type Run = {
 type StreamEvent = {
   id: string;
   run_id?: string;
+  bot_id?: string;
   conversation_id?: string;
   type: string;
   data: string;
   created_at: string;
+};
+type DesktopAlert = {
+  id: string;
+  kind: "approval" | "finished" | "failed" | "blocked";
+  title: string;
+  body: string;
+  botID?: string;
+  runID?: string;
+  approvalID?: string;
 };
 type ApprovalOption = { optionId: string; name: string; kind: string };
 type Approval = {
@@ -408,6 +435,66 @@ type Skill = {
   eligible: boolean;
   detail?: string;
   updated_at?: string;
+};
+type RoutineKind = "cron" | "heartbeat";
+type RoutineStatus =
+  | "disabled"
+  | "enabled"
+  | "paused"
+  | "needs_attention";
+type Routine = {
+  id: string;
+  bot_id: string;
+  name: string;
+  description?: string;
+  kind: RoutineKind;
+  status: RoutineStatus;
+  cron_expression?: string;
+  time_zone: string;
+  heartbeat_opt_in?: boolean;
+  heartbeat_interval_seconds?: number;
+  lead_harness: string;
+  worker: string;
+  approval_policy: string;
+  next_run_at?: string;
+  last_run_at?: string;
+  attention_reason?: string;
+  created_at: string;
+  updated_at: string;
+};
+type RoutineRun = {
+  id: string;
+  routine_id: string;
+  state: string;
+  scheduled_for: string;
+  attempt: number;
+  outcome_reason?: string;
+  claimed_at: string;
+  started_at?: string;
+  finished_at?: string;
+};
+type RoutineEvent = {
+  id: string;
+  routine_id: string;
+  run_id?: string;
+  type: string;
+  message?: string;
+  created_at: string;
+};
+type RoutineDraftForm = {
+  name: string;
+  bot_id: string;
+  kind: RoutineKind;
+  cron_expression: string;
+  time_zone: string;
+  start_now: boolean;
+  enable_after_create: boolean;
+  heartbeat_interval_seconds: string;
+  heartbeat_opt_in: boolean;
+  lead_harness: "grok_build" | "codex_app_server";
+  worker: string;
+  approval_policy: "never" | "on_risk" | "always";
+  description: string;
 };
 type HarnessAuth = {
   provider: string;
@@ -703,6 +790,9 @@ type Bootstrap = {
   stt?: STTStatus;
   memories?: Memory[];
   host_os?: string;
+  latest_runs?: Run[];
+  active_handoffs?: Handoff[];
+  routines?: Routine[];
 };
 
 function isLinuxHost(data?: Bootstrap | null) {
@@ -773,6 +863,59 @@ function isBootstrap(value: unknown): value is Bootstrap {
 
 function teachStatusFromResponse(response: TeachResponse): TeachStatus | null {
   return response.status ?? null;
+}
+
+function localTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function emptyRoutineDraft(botID = ""): RoutineDraftForm {
+  return {
+    name: "",
+    bot_id: botID,
+    kind: "cron",
+    cron_expression: "0 9 * * 1",
+    time_zone: localTimeZone(),
+    start_now: true,
+    enable_after_create: true,
+    heartbeat_interval_seconds: "60",
+    heartbeat_opt_in: false,
+    lead_harness: "grok_build",
+    worker: "grok",
+    approval_policy: "on_risk",
+    description: "",
+  };
+}
+
+function formatRoutineWhen(value?: string, now = Date.now()) {
+  if (!value) return "not scheduled";
+  const at = new Date(value).getTime();
+  if (Number.isNaN(at)) return value;
+  const delta = at - now;
+  if (delta <= 0) return "due now";
+  const minutes = Math.round(delta / 60_000);
+  if (minutes < 1) return "due in under a minute";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `in ${hours}h`;
+  return new Date(value).toLocaleString();
+}
+
+function routineStatusLabel(status: RoutineStatus) {
+  switch (status) {
+    case "enabled":
+      return "Enabled";
+    case "paused":
+      return "Paused";
+    case "needs_attention":
+      return "Needs attention";
+    default:
+      return "Disabled";
+  }
 }
 
 function harnessLabel(name: string) {
@@ -1372,6 +1515,7 @@ function App() {
   const [agentLeadReasoning, setAgentLeadReasoning] = useState("high");
   const [agentLeadTier, setAgentLeadTier] = useState("default");
   const [agentLeadPermission, setAgentLeadPermission] = useState("ask");
+  const [agentEngineOverride, setAgentEngineOverride] = useState(false);
   const [agentLeadWebSearch, setAgentLeadWebSearch] = useState<
     "live" | "disabled"
   >("live");
@@ -1437,6 +1581,17 @@ function App() {
   );
   const [preferences, setPreferences] = useState<Preferences>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [routinesOpen, setRoutinesOpen] = useState(false);
+  const [routineBusy, setRoutineBusy] = useState(false);
+  const [routineError, setRoutineError] = useState<string | null>(null);
+  const [selectedRoutineID, setSelectedRoutineID] = useState<string | null>(
+    null,
+  );
+  const [routineRuns, setRoutineRuns] = useState<RoutineRun[]>([]);
+  const [routineHistory, setRoutineHistory] = useState<RoutineEvent[]>([]);
+  const [routineDraft, setRoutineDraft] = useState<RoutineDraftForm>(() =>
+    emptyRoutineDraft(),
+  );
   const [groupChatOpen, setGroupChatOpen] = useState(false);
   const [mobileDevices, setMobileDevices] = useState<MobileDevice[]>([]);
   const [mobileDevicesLoading, setMobileDevicesLoading] = useState(false);
@@ -1485,9 +1640,22 @@ function App() {
     null,
   );
   const [desktopNotificationPermission, setDesktopNotificationPermission] =
-    useState<NotificationPermission | "unavailable">(() =>
-      typeof Notification === "undefined" ? "unavailable" : Notification.permission,
-    );
+    useState<NotificationPermission | "unavailable">(() => {
+      if (
+        NATIVE_RUNTIME_AVAILABLE &&
+        typeof navigator !== "undefined" &&
+        /linux/i.test(navigator.userAgent)
+      ) {
+        return "granted";
+      }
+      if (NATIVE_RUNTIME_AVAILABLE) return "default";
+      return typeof Notification === "undefined"
+        ? "unavailable"
+        : Notification.permission;
+    });
+  const [desktopAlert, setDesktopAlert] = useState<DesktopAlert | null>(null);
+  const [fleetRuns, setFleetRuns] = useState<Record<string, Run>>({});
+  const [fleetHandoffs, setFleetHandoffs] = useState<Handoff[]>([]);
   const [now, setNow] = useState(Date.now());
   const preferencesPatchChainRef = useRef(Promise.resolve());
   const loadRequestIDRef = useRef(0);
@@ -1517,10 +1685,13 @@ function App() {
     finished: true,
     needsInput: true,
   });
+  const agentsRef = useRef<Agent[] | undefined>(undefined);
+  const selectedRoutineIDRef = useRef<string | null>(null);
   const computerCloseRef = useRef<HTMLButtonElement>(null);
   const computerFrameRef = useRef<HTMLImageElement>(null);
   const computerFrameFocusPendingRef = useRef(false);
   const settingsCloseRef = useRef<HTMLButtonElement>(null);
+  const routinesCloseRef = useRef<HTMLButtonElement>(null);
   const teachGoalRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1682,6 +1853,14 @@ function App() {
       if (requestID !== loadRequestIDRef.current) return;
       const next = payload;
       setData(next);
+      setFleetRuns((current) => {
+        const merged: Record<string, Run> = { ...current };
+        for (const run of next.latest_runs ?? next.runs ?? []) {
+          if (run.bot_id) merged[run.bot_id] = run;
+        }
+        return merged;
+      });
+      if (next.active_handoffs) setFleetHandoffs(next.active_handoffs);
       setMemoryBotID((current) =>
         next.bots.some((item) => item.id === current)
           ? current
@@ -2182,12 +2361,20 @@ function App() {
   }, [preferences]);
 
   useEffect(() => {
-    if (!computerViewOpen && !settingsOpen && !teachGoalOpen && !agentBuilderOpen) return;
+    if (
+      !computerViewOpen &&
+      !settingsOpen &&
+      !routinesOpen &&
+      !teachGoalOpen &&
+      !agentBuilderOpen
+    )
+      return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (botMenuID) setBotMenuID(null);
       else if (agentBuilderOpen) setAgentBuilderOpen(false);
       else if (teachGoalOpen) setTeachGoalOpen(false);
+      else if (routinesOpen) setRoutinesOpen(false);
       else if (settingsOpen) closeSettings();
       else closeComputerView();
     };
@@ -2196,12 +2383,29 @@ function App() {
       ? undefined
       : teachGoalOpen
       ? teachGoalRef.current
-      : settingsOpen
-        ? settingsCloseRef.current
-        : computerCloseRef.current;
+      : routinesOpen
+        ? routinesCloseRef.current
+        : settingsOpen
+          ? settingsCloseRef.current
+          : computerCloseRef.current;
     window.setTimeout(() => focusTarget?.focus(), 0);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [computerViewOpen, settingsOpen, teachGoalOpen, agentBuilderOpen, botMenuID]);
+  }, [computerViewOpen, settingsOpen, routinesOpen, teachGoalOpen, agentBuilderOpen, botMenuID]);
+
+  useEffect(() => {
+    selectedRoutineIDRef.current = selectedRoutineID;
+  }, [selectedRoutineID]);
+
+  useEffect(() => {
+    if (!selectedRoutineID || !apiReady) return;
+    void refreshRoutineDetail(selectedRoutineID).catch((detailError) => {
+      setRoutineError(
+        detailError instanceof Error
+          ? detailError.message
+          : "Routine detail failed",
+      );
+    });
+  }, [selectedRoutineID, apiReady]);
 
   useEffect(
     () => () => {
@@ -2224,10 +2428,38 @@ function App() {
     data?.bots.find((item) => item.id === data.conversation.bot_id) ??
     data?.bots[0];
 	const activeAgent = data?.agents?.find((agent) => agent.bot.id === bot?.id);
+	agentsRef.current = data?.agents;
 	notificationPreferencesRef.current = {
 		finished: activeAgent?.metadata?.notify_finished ?? true,
 		needsInput: activeAgent?.metadata?.notify_needs_input ?? true,
 	};
+	const rosterPresence = useMemo(() => {
+		const computer = data?.computer
+			? {
+					running: data.computer.running,
+					takeover: data.computer.takeover,
+					agent_control: data.computer.agent_control,
+				}
+			: undefined;
+		const map = new Map<string, AgentPresence>();
+		for (const agent of data?.agents ?? []) {
+			const derived = deriveAgentPresence({
+				botID: agent.bot.id,
+				run: fleetRuns[agent.bot.id],
+				computer,
+				handoffs: fleetHandoffs,
+			});
+			const hasLive =
+				Boolean(fleetRuns[agent.bot.id]) ||
+				fleetHandoffs.some(
+					(handoff) =>
+						handoff.source_bot_id === agent.bot.id ||
+						handoff.target_bot_id === agent.bot.id,
+				);
+			map.set(agent.bot.id, hasLive || !agent.presence ? derived : agent.presence);
+		}
+		return map;
+	}, [data?.agents, data?.computer, fleetHandoffs, fleetRuns]);
 	const activeLead = activeAgent?.metadata?.lead;
 	const activeEngine = activeLead?.harness ?? preferences.workspace?.engine ?? provider;
 	const activeModel =
@@ -3025,6 +3257,168 @@ function App() {
     void patchPreferences({ features });
   }
 
+  const routinesEnabled = Boolean(preferences.features?.routines);
+  const heartbeatEnabled = Boolean(preferences.features?.heartbeat);
+  const routines = data?.routines ?? [];
+
+  async function refreshRoutineDetail(routineID: string) {
+    const response = await apiFetch(`/api/routines/${encodeURIComponent(routineID)}`);
+    if (!response.ok) {
+      throw new Error(await readAPIError(response, "Routine detail failed"));
+    }
+    const payload = (await response.json()) as {
+      routine?: Routine;
+      runs?: RoutineRun[];
+      history?: RoutineEvent[];
+    };
+    if (selectedRoutineIDRef.current !== routineID) return;
+    if (payload.routine) {
+      const routine = payload.routine;
+      setData((current) => {
+        if (!current) return current;
+        const items = current.routines ?? [];
+        const index = items.findIndex((item) => item.id === routine.id);
+        const next =
+          index >= 0
+            ? items.map((item) => (item.id === routine.id ? routine : item))
+            : [routine, ...items];
+        return { ...current, routines: next };
+      });
+    }
+    setRoutineRuns(payload.runs ?? []);
+    setRoutineHistory(payload.history ?? []);
+  }
+
+  async function mutateRoutine(
+    path: string,
+    body?: Record<string, unknown>,
+  ) {
+    setRoutineBusy(true);
+    setRoutineError(null);
+    try {
+      const response = await apiFetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : "",
+      });
+      if (!response.ok) {
+        throw new Error(await readAPIError(response, "Routine update failed"));
+      }
+      const payload = (await response.json()) as { routine?: Routine };
+      if (payload.routine) {
+        const routine = payload.routine;
+        setData((current) => {
+          if (!current) return current;
+          const items = current.routines ?? [];
+          const index = items.findIndex((item) => item.id === routine.id);
+          const next =
+            index >= 0
+              ? items.map((item) => (item.id === routine.id ? routine : item))
+              : [routine, ...items];
+          return { ...current, routines: next };
+        });
+        if (selectedRoutineID === routine.id) {
+          await refreshRoutineDetail(routine.id);
+        }
+      }
+    } catch (error) {
+      setRoutineError(
+        error instanceof Error ? error.message : "Routine update failed",
+      );
+    } finally {
+      setRoutineBusy(false);
+    }
+  }
+
+  async function createRoutineFromDraft() {
+    if (!routineDraft.name.trim() || !routineDraft.bot_id) {
+      setRoutineError("Name and agent are required.");
+      return;
+    }
+    setRoutineBusy(true);
+    setRoutineError(null);
+    try {
+      const nextRunAt = routineDraft.start_now
+        ? new Date().toISOString()
+        : undefined;
+      const request: Record<string, unknown> = {
+        bot_id: routineDraft.bot_id,
+        name: routineDraft.name.trim(),
+        description: routineDraft.description.trim(),
+        kind: routineDraft.kind,
+        time_zone: routineDraft.time_zone.trim() || "UTC",
+        lead_harness: routineDraft.lead_harness,
+        worker: routineDraft.worker,
+        approval_policy: routineDraft.approval_policy,
+        retry: { max_attempts: 1, backoff_seconds: 0 },
+      };
+      if (routineDraft.kind === "cron") {
+        request.cron_expression = routineDraft.cron_expression.trim();
+      } else {
+        request.heartbeat_interval_seconds = Number(
+          routineDraft.heartbeat_interval_seconds,
+        );
+        request.heartbeat_opt_in = routineDraft.heartbeat_opt_in;
+      }
+      if (nextRunAt) request.next_run_at = nextRunAt;
+      const created = await apiFetch("/api/routines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      if (!created.ok) {
+        throw new Error(await readAPIError(created, "Could not create routine"));
+      }
+      const payload = (await created.json()) as { routine: Routine };
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              routines: [payload.routine, ...(current.routines ?? [])],
+            }
+          : current,
+      );
+      if (routineDraft.enable_after_create) {
+        const enableBody = nextRunAt ? { next_run_at: nextRunAt } : {};
+        const enabled = await apiFetch(
+          `/api/routines/${encodeURIComponent(payload.routine.id)}/enable`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(enableBody),
+          },
+        );
+        if (!enabled.ok) {
+          throw new Error(await readAPIError(enabled, "Could not enable routine"));
+        }
+        const enabledPayload = (await enabled.json()) as { routine: Routine };
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                routines: (current.routines ?? []).map((item) =>
+                  item.id === enabledPayload.routine.id
+                    ? enabledPayload.routine
+                    : item,
+                ),
+              }
+            : current,
+        );
+        setSelectedRoutineID(enabledPayload.routine.id);
+        await refreshRoutineDetail(enabledPayload.routine.id);
+      } else {
+        setSelectedRoutineID(payload.routine.id);
+      }
+      setRoutineDraft(emptyRoutineDraft(routineDraft.bot_id));
+    } catch (error) {
+      setRoutineError(
+        error instanceof Error ? error.message : "Could not create routine",
+      );
+    } finally {
+      setRoutineBusy(false);
+    }
+  }
+
   async function teachAction(
     action: "start" | "pause" | "resume" | "stop" | "discard",
     body?: Record<string, string>,
@@ -3065,8 +3459,30 @@ function App() {
     }
   }
 
-  function showRunNotification(message: string) {
+  function showRunNotification(
+    message: string,
+    alert?: Omit<DesktopAlert, "id" | "body"> & { body?: string },
+  ) {
     setNotice(message);
+    if (alert) {
+      setDesktopAlert({
+        id: `${alert.kind}-${alert.runID ?? alert.approvalID ?? Date.now()}`,
+        kind: alert.kind,
+        title: alert.title,
+        body: alert.body ?? message,
+        botID: alert.botID,
+        runID: alert.runID,
+        approvalID: alert.approvalID,
+      });
+    }
+    if (NATIVE_RUNTIME_AVAILABLE) {
+      void invoke("show_desktop_notification", {
+        title: alert?.title ?? "OpenAgentFleet",
+        body: message,
+      }).catch(() => {
+        // Native notify is best-effort; in-app notice remains.
+      });
+    }
     if (
       typeof document === "undefined" ||
       document.visibilityState === "visible" ||
@@ -3076,13 +3492,31 @@ function App() {
       return;
     }
     try {
-      new Notification("OpenAgentFleet", { body: message });
+      new Notification(alert?.title ?? "OpenAgentFleet", { body: message });
     } catch {
       // The in-app notice remains the reliable fallback in WebViews.
     }
   }
 
   async function requestDesktopNotifications() {
+    if (NATIVE_RUNTIME_AVAILABLE) {
+      try {
+        const result = await invoke<string>(
+          "request_desktop_notification_permission",
+        );
+        if (result === "granted" || result === "prompted") {
+          setDesktopNotificationPermission("granted");
+          setNotice(
+            result === "prompted"
+              ? "macOS will ask for notification permission if it has not already."
+              : "Desktop notifications enabled.",
+          );
+          return;
+        }
+      } catch {
+        // Fall through to the WebView Notification API.
+      }
+    }
     if (typeof Notification === "undefined") {
       setDesktopNotificationPermission("unavailable");
       setNotice("Desktop notifications are unavailable in this client.");
@@ -3130,13 +3564,47 @@ function App() {
       ].slice(0, 24),
     );
     if (event.type === "provider.output") return;
+    if (event.type === "routine.updated") {
+      try {
+        const routine = JSON.parse(event.data) as Routine;
+        setData((current) => {
+          if (!current) return current;
+          const items = current.routines ?? [];
+          const index = items.findIndex((item) => item.id === routine.id);
+          const next =
+            index >= 0
+              ? items.map((item) => (item.id === routine.id ? routine : item))
+              : [routine, ...items];
+          return { ...current, routines: next };
+        });
+        if (selectedRoutineIDRef.current === routine.id) {
+          void refreshRoutineDetail(routine.id);
+        }
+      } catch {
+        // Keep the last successful routine snapshot.
+      }
+    }
     if (event.type === "approval.requested") {
       if (
         !handledNotificationIDsRef.current.has(event.id) &&
-        notificationPreferencesRef.current.needsInput
+        (agentsRef.current?.find((agent) => agent.bot.id === event.bot_id)?.metadata
+          ?.notify_needs_input ??
+          notificationPreferencesRef.current.needsInput)
       ) {
         handledNotificationIDsRef.current.add(event.id);
-        showRunNotification("Agent needs your approval before it can continue.");
+        showRunNotification("Agent needs your approval before it can continue.", {
+          kind: "approval",
+          title: "Approval needed",
+          botID: event.bot_id,
+          runID: event.run_id,
+          approvalID: (() => {
+            try {
+              return (JSON.parse(event.data) as Approval).id;
+            } catch {
+              return undefined;
+            }
+          })(),
+        });
       }
       try {
         const approval = JSON.parse(event.data) as Approval;
@@ -3165,6 +3633,19 @@ function App() {
     ) {
       try {
         const handoff = JSON.parse(event.data) as Handoff;
+        setFleetHandoffs((current) => {
+          const without = current.filter((item) => item.id !== handoff.id);
+          if (
+            event.type === "handoff.completed" ||
+            handoff.status === "completed" ||
+            handoff.status === "failed" ||
+            handoff.status === "cancelled" ||
+            handoff.status === "timed_out"
+          ) {
+            return without;
+          }
+          return [...without, handoff];
+        });
         setData((current) =>
           current ? applyHandoffStreamEvent(current, handoff, event.type) : current,
         );
@@ -3227,21 +3708,57 @@ function App() {
           }
         : current,
     );
-    const notifyFinished = notificationPreferencesRef.current.finished;
+    const notifyFinished =
+      agentsRef.current?.find((agent) => agent.bot.id === event.bot_id)?.metadata
+        ?.notify_finished ?? notificationPreferencesRef.current.finished;
     const shouldNotify =
       notifyFinished &&
       (event.type === "run.completed" ||
         event.type === "run.failed" ||
         event.type === "run.blocked") &&
       !handledNotificationIDsRef.current.has(event.id);
+    if (event.bot_id && event.run_id) {
+      setFleetRuns((current) => ({
+        ...current,
+        [event.bot_id!]: {
+          ...(current[event.bot_id!] ?? {
+            id: event.run_id!,
+            provider: "",
+            status,
+          }),
+          id: event.run_id!,
+          bot_id: event.bot_id,
+          conversation_id: event.conversation_id,
+          status,
+          ...(error ? { error } : {}),
+        },
+      }));
+    }
     if (shouldNotify) {
       handledNotificationIDsRef.current.add(event.id);
+      const kind =
+        event.type === "run.completed"
+          ? "finished"
+          : event.type === "run.blocked"
+            ? "blocked"
+            : "failed";
       showRunNotification(
         event.type === "run.completed"
           ? "Agent finished the task."
           : event.type === "run.blocked"
             ? "Agent is blocked and needs your attention."
             : error || "Agent run failed; review the activity.",
+        {
+          kind,
+          title:
+            event.type === "run.completed"
+              ? "Agent finished"
+              : event.type === "run.blocked"
+                ? "Agent blocked"
+                : "Agent failed",
+          botID: event.bot_id,
+          runID: event.run_id,
+        },
       );
     }
   }
@@ -4606,6 +5123,7 @@ function App() {
     setAgentTitle("");
     setAgentDescription("");
     setAgentOrchestrator(false);
+    setAgentEngineOverride(false);
     setAgentLeadHarness(initialLead);
     setAgentModel(
       preferences.workspace?.model ?? defaultLeadModel(initialLead, data?.model_catalog ?? []),
@@ -4662,6 +5180,7 @@ function App() {
             ? "grok_build"
             : workspaceLead);
     const configuringSeed = leadOverride !== undefined;
+    setAgentEngineOverride(Boolean(lead?.harness) && leadOverride === undefined);
     setAgentEditingID(agent.bot.id);
     setAgentName(agent.bot.name);
     setAgentTitle(agent.bot.title);
@@ -4761,43 +5280,55 @@ function App() {
         workers.push({ worker, ...bounds });
       }
     }
-    const metadata = agentAdvancedOpen
-      ? {
-          lead: {
-            harness: agentLeadHarness,
-            model: agentModel.trim(),
-            reasoning: agentLeadReasoning,
-            service_tier:
-              agentLeadHarness === "opencode" || agentLeadHarness === "pi"
-                ? "default"
-                : agentLeadTier,
-            permission:
-              agentLeadHarness === "opencode"
-                ? "provider_default"
-                : agentLeadHarness === "pi"
-                  ? agentLeadPermission === "read_only"
-                    ? "read_only"
-                    : "workspace"
-                  : agentLeadPermission,
-            web_search: agentLeadHarness === "pi" ? "disabled" : agentLeadWebSearch,
-          },
-          orchestrator: agentOrchestrator ? "lead" : "",
-          workers: workers.map(({ worker, maxTurns, timeoutSeconds }) => ({
-            id: worker.id,
-            harness: worker.harness,
-            model: worker.model.trim(),
-            reasoning: worker.reasoning,
-            service_tier: worker.tier,
-            permission: worker.permission,
-            max_turns: maxTurns,
-            timeout_seconds: timeoutSeconds,
-          })),
-          plugin_ids: identifierList(agentPlugins),
-          mcp_ids: identifierList(agentMCPs),
-          notify_finished: agentNotifyFinished,
-          notify_needs_input: agentNotifyNeedsInput,
-        }
-      : undefined;
+    const lead = {
+      harness: agentLeadHarness,
+      model: agentModel.trim(),
+      reasoning: agentLeadReasoning,
+      service_tier:
+        agentLeadHarness === "opencode" || agentLeadHarness === "pi"
+          ? "default"
+          : agentLeadTier,
+      permission:
+        agentLeadHarness === "opencode"
+          ? "provider_default"
+          : agentLeadHarness === "pi"
+            ? agentLeadPermission === "read_only"
+              ? "read_only"
+              : "workspace"
+            : agentLeadPermission,
+      web_search: agentLeadHarness === "pi" ? "disabled" : agentLeadWebSearch,
+    };
+    const metadata =
+      agentEngineOverride || agentAdvancedOpen || agentEditingID
+        ? {
+            ...(agentEngineOverride
+              ? { lead }
+              : agentEditingID
+                ? { clear_lead: true }
+                : {}),
+            ...(agentAdvancedOpen
+              ? {
+                  orchestrator: agentOrchestrator ? "lead" : "",
+                  workers: workers.map(
+                    ({ worker, maxTurns, timeoutSeconds }) => ({
+                      id: worker.id,
+                      harness: worker.harness,
+                      model: worker.model.trim(),
+                      reasoning: worker.reasoning,
+                      service_tier: worker.tier,
+                      permission: worker.permission,
+                      max_turns: maxTurns,
+                      timeout_seconds: timeoutSeconds,
+                    }),
+                  ),
+                  plugin_ids: identifierList(agentPlugins),
+                  mcp_ids: identifierList(agentMCPs),
+                }
+              : {}),
+            notify_finished: agentNotifyFinished,
+            notify_needs_input: agentNotifyNeedsInput,
+          }
+        : undefined;
     setAgentBuilderBusy(true);
     try {
       const response = await apiFetch(
@@ -5229,6 +5760,29 @@ function App() {
         <button
           type="button"
           className="quiet-button"
+          onClick={() => {
+            setRoutineDraft((current) =>
+              current.bot_id
+                ? current
+                : {
+                    ...current,
+                    bot_id: data.conversation.bot_id,
+                  },
+            );
+            setRoutinesOpen(true);
+          }}
+          disabled={!routinesEnabled}
+          title={
+            routinesEnabled
+              ? "Schedule, pause, and inspect Agent routines"
+              : "Enable Routines in Settings first"
+          }
+        >
+          Routines
+        </button>
+        <button
+          type="button"
+          className="quiet-button"
           onClick={() => setSettingsOpen(true)}
         >
           Settings
@@ -5325,6 +5879,66 @@ function App() {
               Hide
             </button>
           </div>
+        </section>
+      ) : null}
+      {routinesEnabled ? (
+        <section className="work-section routines-section" aria-label="Routines">
+          <div className="section-label">
+            Routines <span>{routines.length}</span>
+          </div>
+          {routines.length === 0 ? (
+            <p className="activity-empty">
+              No routines yet. Schedule a cron or heartbeat wake for an Agent.
+            </p>
+          ) : (
+            routines.slice(0, 6).map((routine) => {
+              const owner =
+                data.bots.find((item) => item.id === routine.bot_id)?.name ??
+                "Agent";
+              return (
+                <button
+                  type="button"
+                  className="routine-row"
+                  key={routine.id}
+                  onClick={() => {
+                    setSelectedRoutineID(routine.id);
+                    setRoutinesOpen(true);
+                  }}
+                >
+                  <span
+                    className={`routine-dot is-${routine.status}`}
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <strong>{routine.name}</strong>
+                    <span>
+                      {owner} · {routine.kind} ·{" "}
+                      {routine.status === "enabled"
+                        ? formatRoutineWhen(routine.next_run_at, now)
+                        : routineStatusLabel(routine.status)}
+                    </span>
+                  </div>
+                </button>
+              );
+            })
+          )}
+          <button
+            type="button"
+            className="quiet-button routine-manage"
+            onClick={() => {
+              setRoutineDraft((current) =>
+                current.bot_id
+                  ? current
+                  : { ...current, bot_id: data.conversation.bot_id },
+              );
+              if (!selectedRoutineID && routines[0]) {
+                setSelectedRoutineID(routines[0].id);
+              }
+              setRoutinesOpen(true);
+            }}
+          >
+            Manage routines
+          </button>
         </section>
       ) : null}
       <details className="advanced-context workspace-tools-context">
@@ -5535,6 +6149,82 @@ function App() {
           {notice}
         </div>
       )}
+      {desktopAlert && (
+        <div className="desktop-alert" role="alertdialog" aria-labelledby="desktop-alert-title">
+          <div>
+            <strong id="desktop-alert-title">{desktopAlert.title}</strong>
+            <span>{desktopAlert.body}</span>
+          </div>
+          <div className="desktop-alert-actions">
+            {desktopAlert.botID && desktopAlert.botID !== data.conversation.bot_id && (
+              <button
+                type="button"
+                onClick={() => {
+                  void selectAgent(desktopAlert.botID!);
+                  setDesktopAlert(null);
+                }}
+              >
+                Open Agent
+              </button>
+            )}
+            {desktopAlert.kind === "approval" && desktopAlert.approvalID && (
+              <>
+                <button
+                  type="button"
+                  className="approve-button"
+                  onClick={() => {
+                    const approval = (data.approvals ?? []).find(
+                      (item) => item.id === desktopAlert.approvalID,
+                    );
+                    if (approval) {
+                      const options = approvalOptions(approval);
+                      void resolveApproval(
+                        approval,
+                        "approved",
+                        options[0]?.optionId,
+                      );
+                    }
+                    setDesktopAlert(null);
+                  }}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const approval = (data.approvals ?? []).find(
+                      (item) => item.id === desktopAlert.approvalID,
+                    );
+                    if (approval) void resolveApproval(approval, "denied");
+                    setDesktopAlert(null);
+                  }}
+                >
+                  Deny
+                </button>
+              </>
+            )}
+            {desktopAlert.runID &&
+              (desktopAlert.kind === "blocked" ||
+                desktopAlert.kind === "approval") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const run =
+                      (data.runs ?? []).find((item) => item.id === desktopAlert.runID) ??
+                      (desktopAlert.botID ? fleetRuns[desktopAlert.botID] : undefined);
+                    if (run) void stopRun(run);
+                    setDesktopAlert(null);
+                  }}
+                >
+                  Stop
+                </button>
+              )}
+            <button type="button" onClick={() => setDesktopAlert(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <aside className="sidebar" aria-label="Agents">
         <div className="brand-lockup">
           <div className="brand-mark">✦</div>
@@ -5556,7 +6246,12 @@ function App() {
           <div className="section-label">
             Agents <span>{data.bots.length}</span>
           </div>
-          {data.bots.map((item) => (
+          {data.bots.map((item) => {
+            const agent = data.agents?.find((entry) => entry.bot.id === item.id);
+            const presence = rosterPresence.get(item.id) ??
+              agent?.presence ?? { state: "idle", label: "Idle" };
+            const engine = engineShortLabel(agent?.metadata?.lead?.harness);
+            return (
             <div className="bot-row-wrap" key={item.id}>
               <button
                 className={`bot-row ${item.id === data.conversation.bot_id ? "active" : ""}`}
@@ -5568,10 +6263,21 @@ function App() {
               >
                 <div className="avatar">{item.name.slice(0, 1).toUpperCase()}</div>
                 <div className="bot-copy">
-                  <strong>{item.name}</strong>
-                  <span>{item.title || "Personal agent"}</span>
+                  <strong>
+                    {item.name}
+                    {engine ? <em className="engine-chip">{engine}</em> : null}
+                  </strong>
+                  <span>
+                    {presence.state !== "idle"
+                      ? presence.label
+                      : item.title || "Personal agent"}
+                  </span>
                 </div>
-                <span className="presence" />
+                <span
+                  className={`presence is-${presence.state}`}
+                  title={presence.detail || presence.label}
+                  aria-label={presence.label}
+                />
               </button>
               <button
                 type="button"
@@ -5623,7 +6329,8 @@ function App() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
         {preferences.features?.multiple_conversations && (
           <div className="sidebar-section conversation-list">
@@ -6626,8 +7333,8 @@ function App() {
               {agentEditingID ? "Edit agent" : "Create an agent"}
             </h2>
             <p>
-              Give this agent a clear role. It will use the workspace default
-                harness and its own durable memory.
+              Give this agent a clear role. It keeps its own memory. It uses the
+              workspace engine unless you give it a different one.
             </p>
             {!agentEditingID && (
               <section
@@ -6717,6 +7424,95 @@ function App() {
                 placeholder="What this agent owns, how it should work, and when it should ask."
               />
             </label>
+            <label className="engine-override-toggle">
+              <input
+                type="checkbox"
+                checked={agentEngineOverride}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  setAgentEngineOverride(enabled);
+                  if (enabled && !agentLeadHarness) {
+                    setAgentLeadHarness(
+                      preferences.workspace?.engine === "codex_app_server"
+                        ? "codex_app_server"
+                        : preferences.workspace?.engine === "opencode"
+                          ? "opencode"
+                          : preferences.workspace?.engine === "pi"
+                            ? "pi"
+                            : "grok_build",
+                    );
+                  }
+                }}
+              />
+              <span>
+                <strong>This Agent uses a different engine</strong>
+                <small>
+                  Optional. Andy can stay on Grok while Cami uses Codex. Missing
+                  engines fail closed — they are never silently substituted.
+                </small>
+              </span>
+            </label>
+            {agentEngineOverride && (
+              <section className="execution-card engine-override-card" aria-labelledby="engine-override-title">
+                <div className="execution-card-heading">
+                  <div>
+                    <span className="eyebrow">Per-agent engine</span>
+                    <h3 id="engine-override-title">Who runs this agent?</h3>
+                  </div>
+                </div>
+                <div className="agent-builder-grid">
+                  <label>
+                    Engine
+                    <select
+                      value={agentLeadHarness}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setAgentLeadHarness(next);
+                        setAgentModel(defaultLeadModel(next, data?.model_catalog ?? []));
+                        if (next !== "codex_app_server") {
+                          setAgentLeadTier("default");
+                          if (["xhigh", "max"].includes(agentLeadReasoning))
+                            setAgentLeadReasoning("high");
+                        }
+                        if (next === "opencode") {
+                          setAgentLeadPermission("provider_default");
+                        } else if (next === "pi") {
+                          setAgentLeadPermission("workspace");
+                          setAgentLeadWebSearch("disabled");
+                        } else {
+                          setAgentLeadPermission(agentPermissionFromUsageDefault());
+                        }
+                      }}
+                    >
+                      {onboardingEngines.map((engine) => (
+                        <option key={engine.value} value={engine.value}>
+                          {engine.label}
+                          {!engine.available
+                            ? " — not installed"
+                            : engine.authProvider && !engine.auth?.authenticated
+                              ? " — not signed in"
+                              : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="builder-model-field">
+                    <ModelPicker
+                      key={`override-${agentLeadHarness}`}
+                      harness={agentLeadHarness}
+                      value={agentModel}
+                      onChange={setAgentModel}
+                      catalog={data?.model_catalog ?? []}
+                    />
+                  </div>
+                </div>
+                {agentLeadHarness === "pi" && (
+                  <p className="field-note">
+                    Pi cannot use the Agent Computer or extra search connectors.
+                  </p>
+                )}
+              </section>
+            )}
             <details
               className="builder-advanced builder-execution-advanced"
               open={agentAdvancedOpen}
@@ -7595,6 +8391,355 @@ function App() {
           </form>
         </div>
       )}
+      {routinesOpen && (
+        <div
+          className="dialog-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="routines-title"
+        >
+          <section className="settings-dialog routines-dialog">
+            <button
+              ref={routinesCloseRef}
+              className="icon-button dialog-close"
+              onClick={() => setRoutinesOpen(false)}
+              aria-label="Close routines"
+            >
+              ×
+            </button>
+            <div className="eyebrow">Living teammates</div>
+            <h2 id="routines-title">Routines</h2>
+            <p>
+              Enabled schedules are claimed by the local controller, run as a
+              visible Agent turn, then advance to the next time. Heartbeats
+              stay off until you opt in.
+            </p>
+            {routineError ? (
+              <p className="routine-error" role="alert">
+                {routineError}
+              </p>
+            ) : null}
+            <section>
+              <h3>Scheduled</h3>
+              {routines.length === 0 ? (
+                <p>No routines yet.</p>
+              ) : (
+                <ul className="routine-list">
+                  {routines.map((routine) => {
+                    const owner =
+                      data?.bots.find((item) => item.id === routine.bot_id)
+                        ?.name ?? "Agent";
+                    const selected = selectedRoutineID === routine.id;
+                    return (
+                      <li
+                        key={routine.id}
+                        className={selected ? "selected" : ""}
+                      >
+                        <button
+                          type="button"
+                          className="routine-pick"
+                          onClick={() => setSelectedRoutineID(routine.id)}
+                        >
+                          <strong>{routine.name}</strong>
+                          <span>
+                            {owner} · {routineStatusLabel(routine.status)} ·{" "}
+                            {routine.kind === "cron"
+                              ? routine.cron_expression
+                              : `every ${routine.heartbeat_interval_seconds}s`}
+                          </span>
+                          <span>
+                            Next {formatRoutineWhen(routine.next_run_at, now)}
+                            {routine.attention_reason
+                              ? ` · ${routine.attention_reason}`
+                              : ""}
+                          </span>
+                        </button>
+                        <div className="routine-actions">
+                          {routine.status === "enabled" ? (
+                            <button
+                              type="button"
+                              disabled={routineBusy}
+                              onClick={() =>
+                                void mutateRoutine(
+                                  `/api/routines/${encodeURIComponent(routine.id)}/pause`,
+                                  { reason: "paused from ui" },
+                                )
+                              }
+                            >
+                              Pause
+                            </button>
+                          ) : routine.status === "needs_attention" ? (
+                            <button
+                              type="button"
+                              disabled={routineBusy}
+                              onClick={() =>
+                                void mutateRoutine(
+                                  `/api/routines/${encodeURIComponent(routine.id)}/resolve`,
+                                  {},
+                                )
+                              }
+                            >
+                              Resolve
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={routineBusy}
+                              onClick={() =>
+                                void mutateRoutine(
+                                  `/api/routines/${encodeURIComponent(routine.id)}/enable`,
+                                  {},
+                                )
+                              }
+                            >
+                              Enable
+                            </button>
+                          )}
+                          {routine.kind === "heartbeat" ? (
+                            <button
+                              type="button"
+                              disabled={routineBusy || !heartbeatEnabled}
+                              onClick={() =>
+                                void mutateRoutine(
+                                  `/api/routines/${encodeURIComponent(routine.id)}/heartbeat`,
+                                  {
+                                    opted_in: !routine.heartbeat_opt_in,
+                                  },
+                                )
+                              }
+                            >
+                              {routine.heartbeat_opt_in
+                                ? "Revoke heartbeat"
+                                : "Opt in heartbeat"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+            {selectedRoutineID ? (
+              <section>
+                <h3>History</h3>
+                {routineRuns.length === 0 && routineHistory.length === 0 ? (
+                  <p>No runs yet. The controller claims due routines every few seconds.</p>
+                ) : (
+                  <ol className="routine-history">
+                    {routineRuns.map((run) => (
+                      <li key={run.id}>
+                        <strong>{run.state}</strong>
+                        <span>
+                          attempt {run.attempt}
+                          {run.outcome_reason ? ` · ${run.outcome_reason}` : ""}
+                        </span>
+                        <time>
+                          {run.finished_at || run.started_at || run.claimed_at}
+                        </time>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            ) : null}
+            <section>
+              <h3>New routine</h3>
+              <label>
+                Name
+                <input
+                  value={routineDraft.name}
+                  autoComplete="off"
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Weekly notes"
+                />
+              </label>
+              <label>
+                Agent
+                <select
+                  value={routineDraft.bot_id}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      bot_id: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Select an Agent</option>
+                  {(data?.bots ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Schedule
+                <select
+                  value={routineDraft.kind}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      kind: event.target.value as RoutineKind,
+                    }))
+                  }
+                >
+                  <option value="cron">Cron</option>
+                  <option value="heartbeat" disabled={!heartbeatEnabled}>
+                    Heartbeat
+                  </option>
+                </select>
+              </label>
+              {routineDraft.kind === "cron" ? (
+                <label>
+                  Cron expression
+                  <input
+                    value={routineDraft.cron_expression}
+                    onChange={(event) =>
+                      setRoutineDraft((current) => ({
+                        ...current,
+                        cron_expression: event.target.value,
+                      }))
+                    }
+                    placeholder="0 9 * * 1"
+                  />
+                </label>
+              ) : (
+                <>
+                  <label>
+                    Interval (seconds)
+                    <input
+                      type="number"
+                      min={30}
+                      max={86400}
+                      value={routineDraft.heartbeat_interval_seconds}
+                      onChange={(event) =>
+                        setRoutineDraft((current) => ({
+                          ...current,
+                          heartbeat_interval_seconds: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="toggle-row">
+                    <span>Heartbeat opt-in</span>
+                    <input
+                      type="checkbox"
+                      checked={routineDraft.heartbeat_opt_in}
+                      onChange={(event) =>
+                        setRoutineDraft((current) => ({
+                          ...current,
+                          heartbeat_opt_in: event.target.checked,
+                        }))
+                      }
+                    />
+                  </label>
+                </>
+              )}
+              <label>
+                Time zone
+                <input
+                  value={routineDraft.time_zone}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      time_zone: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Approval
+                <select
+                  value={routineDraft.approval_policy}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      approval_policy: event.target.value as
+                        | "never"
+                        | "on_risk"
+                        | "always",
+                    }))
+                  }
+                >
+                  <option value="never">Never (run immediately)</option>
+                  <option value="on_risk">On risk (tool approvals still apply)</option>
+                  <option value="always">Always ask before the occurrence</option>
+                </select>
+              </label>
+              <label>
+                Engine
+                <select
+                  value={routineDraft.lead_harness}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      lead_harness: event.target.value as
+                        | "grok_build"
+                        | "codex_app_server",
+                    }))
+                  }
+                >
+                  <option value="grok_build">Grok Build</option>
+                  <option value="codex_app_server">Codex App Server</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                <span>Start as soon as enabled</span>
+                <input
+                  type="checkbox"
+                  checked={routineDraft.start_now}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      start_now: event.target.checked,
+                    }))
+                  }
+                />
+              </label>
+              <label className="toggle-row">
+                <span>Enable after create</span>
+                <input
+                  type="checkbox"
+                  checked={routineDraft.enable_after_create}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      enable_after_create: event.target.checked,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Description
+                <input
+                  value={routineDraft.description}
+                  onChange={(event) =>
+                    setRoutineDraft((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                  placeholder="What should the Agent do?"
+                />
+              </label>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={routineBusy}
+                onClick={() => void createRoutineFromDraft()}
+              >
+                {routineBusy ? "Saving…" : "Create routine"}
+              </button>
+            </section>
+          </section>
+        </div>
+      )}
       {settingsOpen && (
         <div
           className="dialog-backdrop"
@@ -7668,8 +8813,9 @@ function App() {
             <section aria-labelledby="settings-notifications-title">
               <h3 id="settings-notifications-title">Notifications</h3>
               <p className="field-note">
-                In-app notices are always available. Desktop notifications are
-                optional and only fire when this window is hidden.
+                In-app notices always work. The desktop app posts system
+                notifications on Linux (notify-send) and macOS (Notification
+                Center). Enable once on Mac to grant permission.
               </p>
               <div className="notification-setting-row">
                 <span>
@@ -7685,7 +8831,7 @@ function App() {
                   <small>
                     {desktopNotificationPermission === "denied"
                       ? "Allow them in macOS notification settings if you want them later."
-                      : "Get a discreet alert when an Agent finishes or needs approval."}
+                      : "Alert when an Agent finishes, fails, or needs approval — including while this window is focused."}
                   </small>
                 </span>
                 {desktopNotificationPermission !== "granted" &&
@@ -8224,8 +9370,8 @@ function App() {
                 {([
                   ["lead_worker_runtime", "Lead → worker runtime", "A lead harness may delegate bounded work."],
                   ["worker_isolation", "Per-session isolation", "Run workers in isolated environments."],
-                  ["routines", "Routines", "Experimental: the durable schedule schema is ready; scheduler controls are not wired yet."],
-                  ["heartbeat", "Heartbeat", "Experimental: wake enabled routines on a schedule once Routines is implemented."],
+                  ["routines", "Routines", "Run Agents on cron or heartbeat schedules. Pause, enable, and inspect run history."],
+                  ["heartbeat", "Heartbeat", "Allow heartbeat routines to wake on their interval after an explicit opt-in."],
                   ["remote_nodes", "Remote nodes", "Experimental: pair private Mac, iPhone, and Android nodes; runtime node selection is not wired yet."],
                   ["remote_control", "Remote control", "Experimental: grant short, revocable control leases after node routing is connected."],
                   ["extensions", "Plugins & connectors", "Experimental: lifecycle settings only; plugin installation/runtime is not wired yet."],

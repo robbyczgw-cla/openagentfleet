@@ -247,6 +247,7 @@ func main() {
 	}
 	defer nativeHandoffSocket.Close()
 	api.NativeHandoffSocketPath = nativeHandoffSocket.Path()
+	go api.RunRoutineScheduler(ctx)
 
 	legacyListener, err := net.Listen("tcp", *addr)
 	if err != nil {

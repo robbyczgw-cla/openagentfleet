@@ -9,6 +9,29 @@ and stapled from this version. Linux `.deb` / `.rpm` / `.AppImage` can be
 built from the same commit. The current public download remains
 [`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
 
+### Living teammates
+
+- Sidebar Agents now show live presence: idle, working, using computer, needs
+  approval, needs takeover, collaborating, or failed.
+- Optional per-Agent engine override in Agent Builder. Workspace default still
+  applies unless you opt in; a missing engine fails closed.
+- Desktop notifications fire when an Agent finishes, fails, or needs
+  approval, with in-app Approve / Deny / Stop / Open Agent actions.
+  Linux uses notify-send. macOS uses Notification Center
+  (UNUserNotificationCenter, osascript fallback).
+
+### Routines scheduler
+
+- botd claims due Routines, starts a visible Agent turn, then advances the
+  next run. The same occurrence is claimed once. Heartbeats stay off until
+  Routines and Heartbeat are enabled and the schedule is opted in.
+- Always-approval occurrences wait for an in-app Approve before the claim.
+  Deny skips that occurrence and schedules the next one. Enable/Resolve
+  ignore a past next-run time instead of firing immediately.
+- Leases last 15 minutes and renew while the Agent turn is running, so a
+  long job is not marked unknown mid-run.
+- The workspace Routines panel lists next run, pause/enable, and history.
+
 ## 0.3.0-alpha
 
 Coworkers first: Agents can share a group chat, opt into agent-to-agent work,

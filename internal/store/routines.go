@@ -1020,6 +1020,18 @@ func RoutineApprovalAction(routineID, occurrenceKey string) string {
 	return "routine.run:" + strings.TrimSpace(routineID) + ":" + strings.TrimSpace(occurrenceKey)
 }
 
+func (s *Store) RoutineLedgerHasApproval(ctx context.Context, approvalID string) (bool, error) {
+	approvalID = strings.TrimSpace(approvalID)
+	if approvalID == "" {
+		return false, nil
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM routine_run_ledger WHERE approval_id = ?)`, approvalID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("lookup routine approval: %w", err)
+	}
+	return exists == 1, nil
+}
+
 func validateRoutineApproval(ctx context.Context, source routineSQL, approvalID, routineID, occurrenceKey string) error {
 	var status, action string
 	err := source.QueryRowContext(ctx, "SELECT status, action FROM approval_requests WHERE id = ?", approvalID).Scan(&status, &action)

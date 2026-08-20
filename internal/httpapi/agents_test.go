@@ -565,6 +565,65 @@ func TestConcurrentAgentMetadataPatchesDoNotLoseIndependentUpdates(t *testing.T)
 	}
 }
 
+func TestAgentsAPIPresenceAndClearLead(t *testing.T) {
+	instance, handler := openAgentsAPIServer(t)
+	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{
+		"name":"Andy","title":"Builder","description":"Builds.",
+		"metadata":{"lead":{"harness":"codex_app_server","model":"gpt-5.5","reasoning":"high","service_tier":"default","permission":"ask"}}
+	}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created domain.Agent
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Metadata == nil || created.Metadata.Lead == nil || created.Metadata.Lead.Harness != "codex_app_server" {
+		t.Fatalf("lead override not persisted: %#v", created.Metadata)
+	}
+	run, err := instance.CreateRun(t.Context(), created.Conversation.ID, created.Bot.ID, "codex_app_server", "ship it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.UpdateRun(t.Context(), run.ID, "waiting_for_approval", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	listed := agentsAPIRequest(handler, http.MethodGet, "/api/agents", "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	var body struct {
+		Agents []domain.Agent `json:"agents"`
+	}
+	if err := json.NewDecoder(listed.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Agents) != 1 || body.Agents[0].Presence == nil || body.Agents[0].Presence.State != domain.PresenceWaitingApproval {
+		t.Fatalf("presence = %#v", body.Agents)
+	}
+
+	cleared := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/"+created.Bot.ID, `{"metadata":{"clear_lead":true}}`)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear lead = %d, body = %s", cleared.Code, cleared.Body.String())
+	}
+	var after domain.Agent
+	if err := json.NewDecoder(cleared.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Metadata == nil || after.Metadata.Lead != nil || after.Metadata.LeadHarness != "" {
+		t.Fatalf("cleared lead = %#v", after.Metadata)
+	}
+
+	stored, err := instance.ListAgents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].Metadata == nil || stored[0].Metadata.Lead != nil {
+		t.Fatalf("cleared lead was not persisted: %#v", stored)
+	}
+}
+
 func openAgentsAPIServer(t *testing.T) (*store.Store, http.Handler) {
 	t.Helper()
 	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))

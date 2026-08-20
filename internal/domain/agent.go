@@ -56,6 +56,8 @@ type Agent struct {
 	ConversationMode    AgentConversationMode `json:"conversation_mode"`
 	Metadata            *AgentMetadata        `json:"metadata,omitempty"`
 	MetadataPersistence string                `json:"metadata_persistence"`
+	// Presence is computed at read time from runs, handoffs, and the computer.
+	Presence *AgentPresence `json:"presence,omitempty"`
 }
 
 // AgentDraft is the durable portion of an Agent creation request. Its first

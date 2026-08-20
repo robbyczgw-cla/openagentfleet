@@ -1,6 +1,8 @@
 #[cfg(target_os = "macos")]
 mod native_dictation_macos;
 #[cfg(target_os = "macos")]
+mod native_notification_macos;
+#[cfg(target_os = "macos")]
 mod secure_prompt_macos;
 
 #[cfg(not(target_os = "macos"))]
@@ -810,6 +812,76 @@ fn native_dictation_cancel(
     native_dictation_macos::cancel(app, state, session_id)
 }
 
+fn sanitize_notification_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => ' ',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .take(180)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn show_desktop_notification(
+    app: AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    let title = sanitize_notification_text(&title);
+    let body = sanitize_notification_text(&body);
+    if title.is_empty() {
+        return Err("notification title is required".to_string());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        match Command::new("notify-send")
+            .args(["--app-name=OpenAgentFleet", "--expire-time=8000", "--", &title, &body])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        native_notification_macos::show(&app, title, body)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (app, title, body);
+        Ok(())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn request_desktop_notification_permission(app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        Ok("granted".to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        native_notification_macos::request_permission(&app)?;
+        Ok("prompted".to_string())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = app;
+        Ok("unavailable".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -829,7 +901,9 @@ pub fn run() {
             native_dictation_status,
             native_dictation_start,
             native_dictation_stop,
-            native_dictation_cancel
+            native_dictation_cancel,
+            show_desktop_notification,
+            request_desktop_notification_permission
         ])
         .build(tauri::generate_context!())
         .expect("error while building OpenAgentFleet")
@@ -844,8 +918,8 @@ pub fn run() {
 mod tests {
     use super::{
         append_bounded_stderr, botd_health_response, new_local_api_token,
-        sanitize_startup_diagnostic, startup_error_with_diagnostic, validate_prompt_request,
-        STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
+        sanitize_notification_text, sanitize_startup_diagnostic, startup_error_with_diagnostic,
+        validate_prompt_request, STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
     };
     #[cfg(unix)]
     use super::terminate_owned_child;
@@ -879,6 +953,18 @@ mod tests {
         assert!(!botd_health_response(
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n{\"service\":\"botd\"}\n"
         ));
+    }
+
+    #[test]
+    fn sanitizes_notification_text_for_shell_delivery() {
+        assert_eq!(
+            sanitize_notification_text("Andy\nneeds\tapproval\u{0007}"),
+            "Andy needs approval"
+        );
+        assert_eq!(
+            sanitize_notification_text(r#"say "hi""#).contains("hi"),
+            true
+        );
     }
 
     #[test]
