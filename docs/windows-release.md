@@ -19,13 +19,17 @@ The dockurr Win11 guest bootstrap in `/root/windows/shared` installs that set.
 ## Commands
 
 ```
-# Git Bash, from the repo root
+# VS 2022 x64 Native Tools, or Git Bash after vcvars64.bat
 export OPENAGENTFLEET_UV_BINARY=/c/tools/uv/uv.exe
 export OPENAGENTFLEET_UVX_BINARY=/c/tools/uv/uvx.exe
 export OPENAGENTFLEET_OPENCODE_BINARY=/c/tools/opencode-1.18.10/opencode.exe
 bash scripts/build-windows-release.sh
 bash scripts/verify-windows-release.sh dist/windows/OpenAgentFleet_*_x64-setup.exe
 ```
+
+The script reads the version with `node` (do not use the Windows Store `python`
+stub) and prepends MSVC `link.exe` so Git Bash `/usr/bin/link` cannot shadow it.
+`pnpm` 11 needs `client/pnpm-workspace.yaml` `allowBuilds.esbuild: true`.
 
 After installing locally:
 

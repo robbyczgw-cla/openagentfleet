@@ -15,6 +15,27 @@ if [[ "$(uname -s)" != MINGW* && "$(uname -s)" != MSYS* && "$(uname -s)" != CYGW
   fi
 fi
 
+# Git for Windows ships /usr/bin/link (coreutils hardlink). rustc windows-msvc
+# searches PATH for link.exe and will pick that GNU binary first from Git Bash.
+if [[ -x /usr/bin/link ]]; then
+  msvc_link=""
+  if [[ -n "${VCINSTALLDIR:-}" ]]; then
+    vc_unix="$VCINSTALLDIR"
+    if command -v cygpath >/dev/null 2>&1; then
+      vc_unix="$(cygpath -u "$VCINSTALLDIR")"
+    fi
+    msvc_link="$(ls "$vc_unix"/Tools/MSVC/*/bin/Hostx64/x64/link.exe 2>/dev/null | tail -1 || true)"
+  fi
+  if [[ -z "$msvc_link" ]]; then
+    msvc_link="$(ls /c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/*/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64/link.exe 2>/dev/null | tail -1 || true)"
+  fi
+  if [[ -z "$msvc_link" || ! -f "$msvc_link" ]]; then
+    printf 'MSVC link.exe not found. Run from a VS 2022 x64 Native Tools prompt; Git Bash /usr/bin/link cannot link PE binaries.\n' >&2
+    exit 1
+  fi
+  export PATH="$(dirname "$msvc_link"):$PATH"
+fi
+
 triple="$(rustc --print host-tuple)"
 case "$triple" in
   x86_64-pc-windows-msvc) ;;
@@ -24,12 +45,13 @@ case "$triple" in
     ;;
 esac
 
-version="$(python - <<'PY'
-import json
-from pathlib import Path
-print(json.loads(Path("client/src-tauri/tauri.conf.json").read_text())["version"])
-PY
-)"
+# Node is a Windows builder dependency. Do not call `python`: the Store alias
+# on a machine without Python exits 9009 and looks like a missing interpreter.
+if ! command -v node >/dev/null 2>&1; then
+  printf 'node is required to read client/src-tauri/tauri.conf.json\n' >&2
+  exit 1
+fi
+version="$(node -p "require('./client/src-tauri/tauri.conf.json').version")"
 
 out_dir="${OPENAGENTFLEET_WINDOWS_DIST:-$repo_root/dist/windows}"
 mkdir -p "$out_dir"
@@ -57,18 +79,18 @@ fi
   if command -v sha256sum >/dev/null; then
     sha256sum ./* > SHA256SUMS
   else
-    certutil -hashfile "$(ls -1 | head -1)" SHA256 >/dev/null
-    python - <<'PY'
-import hashlib, pathlib
-root = pathlib.Path(".")
-lines = []
-for path in sorted(root.iterdir()):
-    if path.name == "SHA256SUMS" or not path.is_file():
-        continue
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    lines.append(f"{digest}  {path.name}")
-pathlib.Path("SHA256SUMS").write_text("\n".join(lines) + "\n")
-PY
+    node -e '
+const fs = require("fs");
+const crypto = require("crypto");
+const lines = fs.readdirSync(".").sort().flatMap((name) => {
+  if (name === "SHA256SUMS") return [];
+  const st = fs.statSync(name);
+  if (!st.isFile()) return [];
+  const digest = crypto.createHash("sha256").update(fs.readFileSync(name)).digest("hex");
+  return [`${digest}  ${name}`];
+});
+fs.writeFileSync("SHA256SUMS", lines.join("\n") + "\n");
+'
   fi
 )
 

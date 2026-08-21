@@ -1,0 +1,3 @@
+# Vite's esbuild binary is the only lifecycle script this package needs.
+allowBuilds:
+  esbuild: true

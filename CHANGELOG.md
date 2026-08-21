@@ -8,9 +8,10 @@ Nothing yet. Next work lands here.
 
 ## 0.3.0-alpha - 2026-08-21
 
-Public alpha from `455ab81` plus the Windows host and packaging notes on
-`main`. Linux ships unsigned `.deb` / `.rpm` / `.AppImage`. Windows ships an
-unsigned current-user NSIS installer. The notarized Mac download remains
+Public alpha from `455ab81` plus Windows host notes and the Git Bash NSIS
+packaging fixes on `main`. Linux ships unsigned `.deb` / `.rpm` / `.AppImage`.
+Windows ships an unsigned current-user NSIS installer. The notarized Mac
+download remains
 [`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha)
 until a Developer ID DMG is built, notarized, and stapled.
 
