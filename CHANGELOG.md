@@ -6,6 +6,11 @@ ship paragraph dumps.
 
 ## Unreleased
 
+### Added
+
+- Appearance: Paper / Ink / Forest / Dusk accents, roomy density, 85–135% text size, soft or sharp corners, and a reduce-motion toggle.
+- Agent Computer CPU, RAM, disk, swap, OS image, and presets are visible in Settings instead of a collapsed Advanced block.
+
 ### Changed
 
 - README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac still `0.2.0`, one Agent Computer per workspace.
