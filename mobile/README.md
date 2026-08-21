@@ -31,8 +31,10 @@ paste exactly this JSON bundle:
 
 The parser rejects malformed, expired, non-HTTPS, non-`*.ts.net`, URL-wrapped,
 or extended bundles. The one-time secret is sent only in the pairing request
-and is never persisted. On Android the composer stays above the keyboard and
-the tab bar hides while typing.
+and is never persisted. The companion follows the system light/dark scheme.
+On Android the composer stays above the keyboard, the tab bar hides while
+typing, pull-to-refresh reloads the chat snapshot, and a banner shows when
+the live connection is reconnecting.
 The pairing response is accepted only when its V1 version, Bearer token type,
 unexpired credential, and host identity match the bundle.
 
