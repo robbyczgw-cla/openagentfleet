@@ -6,6 +6,11 @@ ship paragraph dumps.
 
 ## Unreleased
 
+### Changed
+
+- README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac still `0.2.0`, one Agent Computer per workspace.
+- Android companion: scan the pairing QR, keep the composer above the keyboard, hide the tab bar while typing.
+
 ### Fixed
 
 - Claude Code `--print --output-format stream-json` now passes `--verbose`, which the CLI requires. Headless Claude runs no longer exit 1 on that flag pair.

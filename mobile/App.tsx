@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   type GestureResponderEvent,
   Image,
-  Pressable,
+  Keyboard,
+  KeyboardAvoidingView,
   Platform,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -14,6 +17,7 @@ import {
   TextInput,
   View
 } from "react-native";
+import { CameraView, useCameraPermissions } from "expo-camera";
 
 import { defaultDeviceName, parsePairingBundle } from "./src/api/pairing";
 import type { ComputerStatus, Conversation, MobileApproval, MobileRoutine, MobileRun, RemoteProfile } from "./src/api/types";
@@ -36,6 +40,19 @@ function allowOptionID(approval: MobileApproval): string {
   return allow?.optionId || approval.options?.[0]?.optionId || "";
 }
 
+function useKeyboardOpen() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", () => setOpen(true));
+    const hide = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => setOpen(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return open;
+}
+
 export default function App() {
   const remote = useRemoteSession();
   const [screen, setScreen] = useState<Screen>("chat");
@@ -43,6 +60,7 @@ export default function App() {
   const [pairingBundle, setPairingBundle] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [sending, setSending] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [frame, setFrame] = useState<string | undefined>(undefined);
   const [frameLoading, setFrameLoading] = useState(false);
   const [frameError, setFrameError] = useState<string | undefined>(undefined);
@@ -53,7 +71,7 @@ export default function App() {
   const [routinesError, setRoutinesError] = useState<string | undefined>(undefined);
   const autoFrameClient = useRef<typeof remote.client>(null);
   const canControl = canControlDevice(remote.profile);
-
+  const keyboardOpen = useKeyboardOpen();
   const computer = remote.bootstrap?.computer;
 
   const refreshFrame = useCallback(async () => {
@@ -88,35 +106,25 @@ export default function App() {
     try {
       const bundle = parsePairingBundle(rawBundle);
       await remote.pair(bundle, defaultDeviceName(Platform.OS), Platform.OS);
+      setScanning(false);
       setScreen("chat");
     } catch (error) {
-      Alert.alert("Pairing failed", error instanceof Error ? error.message : "Create a fresh pairing bundle on your Mac and try again.");
+      Alert.alert("Pairing failed", error instanceof Error ? error.message : "Create a fresh pairing QR on the desktop app and try again.");
     } finally {
       setPairingBundle("");
       setConnecting(false);
     }
   };
 
-  const scanQR = () => {
-    Alert.alert(
-      "Scan QR",
-      "Camera permission is not available in this alpha. Paste the pairing JSON from your scanner — a single-line bundle is accepted.",
-      pairingBundle.trim()
-        ? [
-            { text: "Cancel", style: "cancel" },
-            { text: "Use pasted text", onPress: () => void pair() }
-          ]
-        : [{ text: "OK" }]
-    );
-  };
-
   const send = async () => {
     if (!composer.trim()) return;
+    const text = composer;
+    setComposer("");
     setSending(true);
     try {
-      await remote.send(composer);
-      setComposer("");
+      await remote.send(text);
     } catch (error) {
+      setComposer(text);
       Alert.alert("Message not sent", error instanceof Error ? error.message : "Try again.");
     } finally {
       setSending(false);
@@ -132,7 +140,7 @@ export default function App() {
       if (status.control_held) await refreshFrame();
     } catch (error) {
       setComputerControlHeld(false);
-      Alert.alert("Computer control unavailable", error instanceof Error ? error.message : "Take control from the Mac and try again.");
+      Alert.alert("Computer control unavailable", error instanceof Error ? error.message : "Take control from the desktop app and try again.");
     } finally {
       setComputerControlBusy(false);
     }
@@ -203,9 +211,6 @@ export default function App() {
     if (!remote.client || !computerControlHeld || computerControlBusy) return;
     setComputerControlBusy(true);
     try {
-      // The mobile preview is the browser frame; keep its coordinate space
-      // paired with the browser action endpoint. Desktop control remains a
-      // separate Mac-local surface until mobile can stream a desktop frame.
       const status = await remote.client.browserAction({ action: "click", x, y });
       setComputerControlHeld(Boolean(status.control_held));
       await refreshFrame();
@@ -218,7 +223,18 @@ export default function App() {
   };
 
   if (!remote.profile) {
-    return <ConnectionSetup pairingBundle={pairingBundle} setPairingBundle={setPairingBundle} connecting={connecting} error={remote.error} onPair={() => void pair()} onScanQR={scanQR} />;
+    return (
+      <ConnectionSetup
+        pairingBundle={pairingBundle}
+        setPairingBundle={setPairingBundle}
+        connecting={connecting}
+        scanning={scanning}
+        setScanning={setScanning}
+        error={remote.error}
+        onPair={() => void pair()}
+        onScanned={(value) => void pair(value)}
+      />
+    );
   }
 
   const pending = remote.bootstrap?.approvals || [];
@@ -229,64 +245,183 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="dark-content" backgroundColor="#f6f3ec" />
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>OPENAGENTFLEET</Text>
-          <Text style={styles.title}>{screen === "chat" ? remote.bootstrap?.conversation.title || "Remote agent" : screen === "computer" ? "Agent Computer" : screen === "routines" ? "Routines" : "Remote Mac"}</Text>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={styles.eyebrow}>OpenAgentFleet</Text>
+          <Text numberOfLines={1} style={styles.title}>
+            {screen === "chat"
+              ? remote.bootstrap?.conversation.title || "Agent"
+              : screen === "computer"
+                ? "Computer"
+                : screen === "routines"
+                  ? "Routines"
+                  : "This phone"}
+          </Text>
         </View>
         <StatusPill state={remote.state} />
       </View>
-      {screen === "chat" && (
-        <ChatScreen
-          conversations={remote.bootstrap?.conversations || []}
-          activeID={conversationID}
-          messages={remote.bootstrap?.messages || []}
-          approvals={conversationApprovals}
-          otherApprovalCount={otherApprovalCount}
-          activeRun={running}
-          canControl={canControl}
-          composer={composer}
-          onChange={setComposer}
-          onSend={send}
-          onSelectConversation={(id) => void remote.selectConversation(id).catch((error) => Alert.alert("Could not open conversation", error instanceof Error ? error.message : "Try again."))}
-          onResolve={resolveApproval}
-          onStop={stopActiveRun}
-          sending={sending || actionBusy}
-        />
-      )}
-      {screen === "computer" && <ComputerScreen computer={computer} frame={frame} frameError={frameError} loading={frameLoading} controlHeld={computerControlHeld} controlBusy={computerControlBusy} onToggleControl={() => void toggleComputerControl()} onClick={clickComputer} onRefresh={() => void refreshFrame()} />}
-      {screen === "routines" && <RoutinesScreen routines={routines} error={routinesError} canControl={canControl} busy={actionBusy} onPause={pauseRoutine} onEnable={enableRoutine} onRefresh={() => void loadRoutines()} />}
-      {screen === "settings" && <SettingsScreen profile={remote.profile} state={remote.state} computer={computer} onDisconnect={() => void remote.disconnect()} />}
-      <View style={styles.tabs}>
-        <Tab label="Chat" active={screen === "chat"} onPress={() => setScreen("chat")} />
-        <Tab label="Computer" active={screen === "computer"} onPress={() => setScreen("computer")} />
-        <Tab label="Routines" active={screen === "routines"} onPress={() => setScreen("routines")} />
-        <Tab label="Settings" active={screen === "settings"} onPress={() => setScreen("settings")} />
-      </View>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        {screen === "chat" && (
+          <ChatScreen
+            conversations={remote.bootstrap?.conversations || []}
+            activeID={conversationID}
+            messages={remote.bootstrap?.messages || []}
+            approvals={conversationApprovals}
+            otherApprovalCount={otherApprovalCount}
+            activeRun={running}
+            canControl={canControl}
+            composer={composer}
+            onChange={setComposer}
+            onSend={send}
+            onSelectConversation={(id) =>
+              void remote.selectConversation(id).catch((error) =>
+                Alert.alert("Could not open conversation", error instanceof Error ? error.message : "Try again."),
+              )
+            }
+            onResolve={resolveApproval}
+            onStop={stopActiveRun}
+            sending={sending || actionBusy}
+          />
+        )}
+        {screen === "computer" && (
+          <ComputerScreen
+            computer={computer}
+            frame={frame}
+            frameError={frameError}
+            loading={frameLoading}
+            controlHeld={computerControlHeld}
+            controlBusy={computerControlBusy}
+            onToggleControl={() => void toggleComputerControl()}
+            onClick={clickComputer}
+            onRefresh={() => void refreshFrame()}
+          />
+        )}
+        {screen === "routines" && (
+          <RoutinesScreen
+            routines={routines}
+            error={routinesError}
+            canControl={canControl}
+            busy={actionBusy}
+            onPause={pauseRoutine}
+            onEnable={enableRoutine}
+            onRefresh={() => void loadRoutines()}
+          />
+        )}
+        {screen === "settings" && (
+          <SettingsScreen profile={remote.profile} state={remote.state} computer={computer} onDisconnect={() => void remote.disconnect()} />
+        )}
+      </KeyboardAvoidingView>
+      {!keyboardOpen ? (
+        <View style={styles.tabs}>
+          <Tab label="Chat" active={screen === "chat"} onPress={() => setScreen("chat")} />
+          <Tab label="Computer" active={screen === "computer"} onPress={() => setScreen("computer")} />
+          <Tab label="Routines" active={screen === "routines"} onPress={() => setScreen("routines")} />
+          <Tab label="Device" active={screen === "settings"} onPress={() => setScreen("settings")} />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
 
-function ConnectionSetup(props: { pairingBundle: string; setPairingBundle: (value: string) => void; connecting: boolean; error: string | null; onPair: () => void; onScanQR: () => void }) {
+function ConnectionSetup(props: {
+  pairingBundle: string;
+  setPairingBundle: (value: string) => void;
+  connecting: boolean;
+  scanning: boolean;
+  setScanning: (value: boolean) => void;
+  error: string | null;
+  onPair: () => void;
+  onScanned: (value: string) => void;
+}) {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const scanned = useRef(false);
+
+  const startScan = async () => {
+    scanned.current = false;
+    const current = permission?.granted ? permission : await requestPermission();
+    if (!current.granted) {
+      Alert.alert("Camera permission", "Allow camera access to scan the pairing QR, or paste the JSON instead.");
+      setPasteOpen(true);
+      return;
+    }
+    props.setScanning(true);
+  };
+
+  if (props.scanning) {
+    return (
+      <View style={styles.scanner}>
+        <StatusBar barStyle="light-content" backgroundColor="#11110e" />
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={({ data }) => {
+            if (scanned.current || props.connecting) return;
+            scanned.current = true;
+            props.setScanning(false);
+            props.onScanned(data);
+          }}
+        />
+        <View style={styles.scannerMask} pointerEvents="none">
+          <View style={styles.scannerFrame} />
+          <Text style={styles.scannerHint}>Point at the QR in the desktop app</Text>
+        </View>
+        <Pressable accessibilityRole="button" style={styles.scannerClose} onPress={() => props.setScanning(false)}>
+          <Text style={styles.scannerCloseText}>Cancel</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" />
-      <ScrollView contentContainerStyle={styles.setup} keyboardShouldPersistTaps="handled">
-        <Text style={styles.eyebrow}>OPENAGENTFLEET / REMOTE</Text>
-        <Text style={styles.hero}>Pair this phone with your Mac.</Text>
-        <Text style={styles.lede}>Create a short-lived pairing bundle in the trusted Mac app, then paste the complete bundle here or scan the QR and paste the captured JSON. The app only accepts private HTTPS Tailnet hosts.</Text>
-        <Text style={styles.label}>Pairing bundle</Text>
-        <TextInput autoCapitalize="none" autoCorrect={false} multiline placeholder='Paste {"version":1,...} from your Mac' placeholderTextColor="#88857e" style={[styles.input, styles.bundleInput]} value={props.pairingBundle} onChangeText={props.setPairingBundle} />
-        {props.error ? <Text style={styles.error}>{props.error}</Text> : null}
-        <Pressable accessibilityRole="button" disabled={props.connecting} style={[styles.secondaryButton, styles.scanButton, props.connecting && styles.disabled]} onPress={props.onScanQR}>
-          <Text style={styles.secondaryText}>Scan QR</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" disabled={props.connecting || !props.pairingBundle.trim()} style={[styles.primaryButton, (props.connecting || !props.pairingBundle.trim()) && styles.disabled]} onPress={props.onPair}>
-          {props.connecting ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Pair this device</Text>}
-        </Pressable>
-        <View style={styles.notice}><Text style={styles.noticeTitle}>Alpha security boundary</Text><Text style={styles.noticeBody}>Pairing exchanges the one-time bundle for a device-specific Bearer credential in iOS Keychain / Android Keystore storage. Controller and owner devices can request a short computer-control lease; observer devices remain read-only. Native camera scanning is not in this alpha; paste JSON from a scanner if camera permission is denied.</Text></View>
-      </ScrollView>
+      <StatusBar barStyle="dark-content" backgroundColor="#f6f3ec" />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView contentContainerStyle={styles.setup} keyboardShouldPersistTaps="handled">
+          <Text style={styles.eyebrow}>OpenAgentFleet</Text>
+          <Text style={styles.hero}>Connect this phone to your computer.</Text>
+          <Text style={styles.lede}>
+            Create a pairing QR in the desktop app, then scan it. The host stays private on your Tailnet — this phone is a remote, not a second runtime.
+          </Text>
+          {props.error ? <Text style={styles.error}>{props.error}</Text> : null}
+          <Pressable
+            accessibilityRole="button"
+            disabled={props.connecting}
+            android_ripple={{ color: "#ffffff33" }}
+            style={[styles.primaryButton, props.connecting && styles.disabled]}
+            onPress={() => void startScan()}
+          >
+            {props.connecting ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Scan pairing QR</Text>}
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setPasteOpen((value) => !value)}>
+            <Text style={styles.textLink}>{pasteOpen ? "Hide paste field" : "Paste JSON instead"}</Text>
+          </Pressable>
+          {pasteOpen ? (
+            <>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                multiline
+                placeholder='{"version":1,...}'
+                placeholderTextColor="#88857e"
+                style={[styles.input, styles.bundleInput]}
+                value={props.pairingBundle}
+                onChangeText={props.setPairingBundle}
+              />
+              <Pressable
+                accessibilityRole="button"
+                disabled={props.connecting || !props.pairingBundle.trim()}
+                style={[styles.secondaryButton, styles.pairPaste, (props.connecting || !props.pairingBundle.trim()) && styles.disabled]}
+                onPress={props.onPair}
+              >
+                <Text style={styles.secondaryText}>Pair with pasted bundle</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -307,49 +442,113 @@ function ChatScreen(props: {
   onStop: (run: MobileRun) => void;
   sending: boolean;
 }) {
+  const listRef = useRef<FlatList>(null);
+  type Row =
+    | { kind: "approval"; id: string; approval: MobileApproval }
+    | { kind: "note"; id: string; text: string }
+    | { kind: "message"; id: string; role: string; content: string };
+
+  const rows: Row[] = [
+    ...props.approvals.map((approval) => ({ kind: "approval" as const, id: approval.id, approval })),
+    ...(props.otherApprovalCount > 0
+      ? [{ kind: "note" as const, id: "other-approvals", text: `${props.otherApprovalCount} pending in other chats` }]
+      : []),
+    ...props.messages.map((message) => ({
+      kind: "message" as const,
+      id: message.id,
+      role: message.role,
+      content: message.content
+    }))
+  ];
+
   return (
     <View style={styles.content}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conversationRow}>
-        {props.conversations.map((conversation) => (
-          <Pressable accessibilityRole="button" key={conversation.id} onPress={() => props.onSelectConversation(conversation.id)} style={[styles.conversationPill, conversation.id === props.activeID && styles.conversationPillActive]}>
-            <Text numberOfLines={1} style={conversation.id === props.activeID ? styles.conversationTextActive : styles.conversationText}>{conversation.title || "Untitled"}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-      <ScrollView style={styles.messages} contentContainerStyle={styles.messageList}>
-        {props.approvals.map((approval) => (
-          <View key={approval.id} style={styles.approvalCard}>
-            <Text style={styles.approvalTitle}>Needs approval</Text>
-            <Text style={styles.subtle}>{approval.action}</Text>
-            {props.canControl ? (
-              <View style={styles.approvalActions}>
-                <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.allowButton, props.sending && styles.disabled]} onPress={() => props.onResolve(approval, "approved")}>
-                  <Text style={styles.allowText}>Allow</Text>
-                </Pressable>
-                <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.denyButton, props.sending && styles.disabled]} onPress={() => props.onResolve(approval, "denied")}>
-                  <Text style={styles.denyText}>Deny</Text>
-                </Pressable>
+      {props.conversations.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conversationRow} keyboardShouldPersistTaps="handled">
+          {props.conversations.map((conversation) => (
+            <Pressable
+              accessibilityRole="button"
+              android_ripple={{ color: "#00000014" }}
+              key={conversation.id}
+              onPress={() => props.onSelectConversation(conversation.id)}
+              style={[styles.conversationPill, conversation.id === props.activeID && styles.conversationPillActive]}
+            >
+              <Text numberOfLines={1} style={conversation.id === props.activeID ? styles.conversationTextActive : styles.conversationText}>
+                {conversation.title || "Untitled"}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+      <FlatList
+        ref={listRef}
+        style={styles.messages}
+        contentContainerStyle={styles.messageList}
+        data={rows}
+        keyExtractor={(item) => item.id}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        renderItem={({ item }) => {
+          if (item.kind === "approval") {
+            return (
+              <View style={styles.approvalCard}>
+                <Text style={styles.approvalTitle}>Needs approval</Text>
+                <Text style={styles.subtle}>{item.approval.action}</Text>
+                {props.canControl ? (
+                  <View style={styles.approvalActions}>
+                    <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.allowButton, props.sending && styles.disabled]} onPress={() => props.onResolve(item.approval, "approved")}>
+                      <Text style={styles.allowText}>Allow</Text>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.denyButton, props.sending && styles.disabled]} onPress={() => props.onResolve(item.approval, "denied")}>
+                      <Text style={styles.denyText}>Deny</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Text style={styles.subtle}>This device is read-only.</Text>
+                )}
               </View>
-            ) : <Text style={styles.subtle}>This device is read-only.</Text>}
-          </View>
-        ))}
-        {props.otherApprovalCount > 0 ? <Text style={styles.otherApprovals}>{props.otherApprovalCount} pending approval{props.otherApprovalCount === 1 ? "" : "s"} in other conversations</Text> : null}
-        {props.messages.map((message) => (
-          <View key={message.id} style={[styles.message, message.role === "user" ? styles.userMessage : styles.agentMessage]}>
-            <Text style={message.role === "user" ? styles.userMessageText : styles.agentMessageText}>{message.content}</Text>
-          </View>
-        ))}
-      </ScrollView>
+            );
+          }
+          if (item.kind === "note") {
+            return <Text style={styles.otherApprovals}>{item.text}</Text>;
+          }
+          return (
+            <View style={[styles.message, item.role === "user" ? styles.userMessage : styles.agentMessage]}>
+              <Text style={item.role === "user" ? styles.userMessageText : styles.agentMessageText}>{item.content}</Text>
+            </View>
+          );
+        }}
+      />
       {props.activeRun && props.canControl ? (
-        <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.stopButton, props.sending && styles.disabled]} onPress={() => {
-          if (props.activeRun) props.onStop(props.activeRun);
-        }}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.sending}
+          style={[styles.stopButton, props.sending && styles.disabled]}
+          onPress={() => {
+            if (props.activeRun) props.onStop(props.activeRun);
+          }}
+        >
           <Text style={styles.stopText}>Stop run</Text>
         </Pressable>
       ) : null}
       <View style={styles.composer}>
-        <TextInput multiline placeholder="Message your remote agent" placeholderTextColor="#8e8a82" style={styles.composerInput} value={props.composer} onChangeText={props.onChange} />
-        <Pressable accessibilityRole="button" disabled={props.sending || !props.composer.trim()} style={[styles.sendButton, (!props.composer.trim() || props.sending) && styles.disabled]} onPress={props.onSend}>
+        <TextInput
+          multiline
+          placeholder="Message your agent"
+          placeholderTextColor="#8e8a82"
+          style={styles.composerInput}
+          value={props.composer}
+          onChangeText={props.onChange}
+          blurOnSubmit={false}
+        />
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.sending || !props.composer.trim()}
+          android_ripple={{ color: "#ffffff33" }}
+          style={[styles.sendButton, (!props.composer.trim() || props.sending) && styles.disabled]}
+          onPress={props.onSend}
+        >
           <Text style={styles.sendText}>{props.sending ? "…" : "↑"}</Text>
         </Pressable>
       </View>
@@ -367,20 +566,25 @@ function RoutinesScreen(props: {
   onRefresh: () => void;
 }) {
   return (
-    <ScrollView contentContainerStyle={styles.settings}>
+    <ScrollView contentContainerStyle={styles.settings} keyboardShouldPersistTaps="handled">
       <View style={styles.computerTop}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.sectionTitle}>Scheduled work</Text>
-          <Text style={styles.subtle}>{props.canControl ? "Pause or enable a routine from this phone." : "Observer devices can list routines only."}</Text>
+          <Text style={styles.subtle}>{props.canControl ? "Pause or enable from this phone." : "Observer devices can list routines only."}</Text>
         </View>
-        <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={props.onRefresh}><Text style={styles.secondaryText}>Refresh</Text></Pressable>
+        <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={props.onRefresh}>
+          <Text style={styles.secondaryText}>Refresh</Text>
+        </Pressable>
       </View>
       {props.error ? <Text style={styles.error}>{props.error}</Text> : null}
-      {props.routines.length === 0 ? <Text style={styles.subtle}>No routines on this Mac yet.</Text> : null}
+      {props.routines.length === 0 ? <Text style={styles.subtle}>No routines on this host yet.</Text> : null}
       {props.routines.map((routine) => (
         <View key={routine.id} style={styles.routineRow}>
           <Text style={styles.routineName}>{routine.name}</Text>
-          <Text style={styles.routineMeta}>{routine.status} · {routine.kind}{routine.next_run_at ? ` · next ${routine.next_run_at}` : ""}</Text>
+          <Text style={styles.routineMeta}>
+            {routine.status} · {routine.kind}
+            {routine.next_run_at ? ` · next ${routine.next_run_at}` : ""}
+          </Text>
           {routine.attention_reason ? <Text style={styles.error}>{routine.attention_reason}</Text> : null}
           {props.canControl && routine.status === "enabled" ? (
             <Pressable accessibilityRole="button" disabled={props.busy} style={[styles.secondaryButton, styles.routineAction, props.busy && styles.disabled]} onPress={() => props.onPause(routine)}>
@@ -398,7 +602,17 @@ function RoutinesScreen(props: {
   );
 }
 
-function ComputerScreen(props: { computer?: ComputerStatus; frame?: string; frameError?: string; loading: boolean; controlHeld: boolean; controlBusy: boolean; onToggleControl: () => void; onClick: (x: number, y: number) => void; onRefresh: () => void }) {
+function ComputerScreen(props: {
+  computer?: ComputerStatus;
+  frame?: string;
+  frameError?: string;
+  loading: boolean;
+  controlHeld: boolean;
+  controlBusy: boolean;
+  onToggleControl: () => void;
+  onClick: (x: number, y: number) => void;
+  onRefresh: () => void;
+}) {
   const [frameBounds, setFrameBounds] = useState({ width: 0, height: 0 });
   const ready = Boolean(props.computer?.running && props.computer.browser_ready && props.frame);
   const pressFrame = (event: GestureResponderEvent) => {
@@ -415,32 +629,197 @@ function ComputerScreen(props: { computer?: ComputerStatus; frame?: string; fram
     if (x < 0 || y < 0 || x > sourceWidth || y > sourceHeight) return;
     props.onClick(x, y);
   };
-  return <ScrollView contentContainerStyle={styles.computerContent}><View style={styles.computerTop}><View><Text style={styles.sectionTitle}>Builder’s Computer</Text><Text style={styles.subtle}>{props.computer?.title || props.computer?.detail || "Waiting for the Agent Computer"}</Text></View><Pressable accessibilityRole="button" disabled={props.loading} style={[styles.secondaryButton, props.loading && styles.disabled]} onPress={props.onRefresh}>{props.loading ? <ActivityIndicator color="#3e4039" /> : <Text style={styles.secondaryText}>Refresh</Text>}</Pressable></View><Pressable accessibilityRole="imagebutton" accessibilityLabel={props.controlHeld ? "Click the remote desktop" : "Read-only Agent Computer frame"} disabled={!props.controlHeld || !ready || props.controlBusy} style={styles.frame} onLayout={(event) => setFrameBounds({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })} onPress={pressFrame}>{ready ? <Image source={{ uri: props.frame }} style={styles.frameImage} resizeMode="contain" /> : <View style={styles.emptyFrame}><Text style={styles.emptyTitle}>{props.frameError ? "Frame unavailable" : "Computer not ready"}</Text><Text style={styles.subtle}>{props.frameError || "Start an agent run or ensure the computer from the Mac app."}</Text></View>}</Pressable><Text style={styles.frameCaption}>{props.controlHeld ? "Short control lease · tap the frame to click · passwords and OTPs stay on the trusted Mac" : "Authenticated read-only frame · request a short control lease to click"}</Text><Pressable accessibilityRole="button" disabled={props.controlBusy} style={[styles.primaryButton, props.controlBusy && styles.disabled]} onPress={props.onToggleControl}><Text style={styles.primaryText}>{props.controlBusy ? "Working…" : props.controlHeld ? "Release computer control" : "Take computer control"}</Text></Pressable><View style={styles.notice}><Text style={styles.noticeTitle}>{props.controlHeld ? "Controller lease active" : "Remote computer safety"}</Text><Text style={styles.noticeBody}>{props.controlHeld ? "This device can click the isolated desktop until the short lease expires or you release it. Use the trusted Mac app for passwords, 2FA, CAPTCHA, payment approvals, and keyboard input." : "Only controller or owner paired devices can request control. Observer devices remain read-only, and the Mac can revoke the lease at any time."}</Text></View></ScrollView>;
+  return (
+    <ScrollView contentContainerStyle={styles.computerContent} keyboardShouldPersistTaps="handled">
+      <View style={styles.computerTop}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sectionTitle}>Agent Computer</Text>
+          <Text style={styles.subtle}>{props.computer?.title || props.computer?.detail || "Waiting for the Agent Computer"}</Text>
+        </View>
+        <Pressable accessibilityRole="button" disabled={props.loading} style={[styles.secondaryButton, props.loading && styles.disabled]} onPress={props.onRefresh}>
+          {props.loading ? <ActivityIndicator color="#3e4039" /> : <Text style={styles.secondaryText}>Refresh</Text>}
+        </Pressable>
+      </View>
+      <Pressable
+        accessibilityRole="imagebutton"
+        accessibilityLabel={props.controlHeld ? "Click the remote desktop" : "Read-only Agent Computer frame"}
+        disabled={!props.controlHeld || !ready || props.controlBusy}
+        style={styles.frame}
+        onLayout={(event) => setFrameBounds({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}
+        onPress={pressFrame}
+      >
+        {ready ? (
+          <Image source={{ uri: props.frame }} style={styles.frameImage} resizeMode="contain" />
+        ) : (
+          <View style={styles.emptyFrame}>
+            <Text style={styles.emptyTitle}>{props.frameError ? "Frame unavailable" : "Computer not ready"}</Text>
+            <Text style={styles.subtle}>{props.frameError || "Start the computer from the desktop app."}</Text>
+          </View>
+        )}
+      </Pressable>
+      <Text style={styles.frameCaption}>
+        {props.controlHeld
+          ? "Short click lease · passwords stay on the desktop"
+          : "Watch-only until you take a short click lease"}
+      </Text>
+      <Pressable accessibilityRole="button" disabled={props.controlBusy} style={[styles.primaryButton, { marginTop: 12 }, props.controlBusy && styles.disabled]} onPress={props.onToggleControl}>
+        <Text style={styles.primaryText}>{props.controlBusy ? "Working…" : props.controlHeld ? "Release control" : "Take control"}</Text>
+      </Pressable>
+    </ScrollView>
+  );
 }
 
 function SettingsScreen(props: { profile: RemoteProfile; state: string; computer?: ComputerStatus; onDisconnect: () => void }) {
-  return <ScrollView contentContainerStyle={styles.settings}><Text style={styles.sectionTitle}>Paired device</Text><Setting label="Tailnet endpoint" value={props.profile.baseUrl} /><Setting label="Mac identity" value={props.profile.hostId} /><Setting label="This device" value={props.profile.device.name} /><Setting label="API state" value={props.state} /><Setting label="Agent Computer" value={props.computer?.running ? "Running" : "Not running"} /><View style={styles.notice}><Text style={styles.noticeTitle}>Alpha security boundary</Text><Text style={styles.noticeBody}>This phone stores its paired Bearer credential only in the iOS Keychain / Android Keystore abstraction. It never stores Agent Computer passwords, OTPs, or desktop input. Disconnect removes the local credential even if your Mac is offline.</Text></View><Pressable accessibilityRole="button" style={styles.destructiveButton} onPress={props.onDisconnect}><Text style={styles.destructiveText}>Disconnect this device</Text></Pressable></ScrollView>;
+  return (
+    <ScrollView contentContainerStyle={styles.settings}>
+      <Text style={styles.sectionTitle}>This device</Text>
+      <Setting label="Host" value={props.profile.baseUrl} />
+      <Setting label="Host identity" value={props.profile.hostId} />
+      <Setting label="Device" value={props.profile.device.name} />
+      <Setting label="Connection" value={props.state} />
+      <Setting label="Agent Computer" value={props.computer?.running ? "Running" : "Not running"} />
+      <Pressable accessibilityRole="button" style={styles.destructiveButton} onPress={props.onDisconnect}>
+        <Text style={styles.destructiveText}>Disconnect</Text>
+      </Pressable>
+    </ScrollView>
+  );
 }
 
-function Setting(props: { label: string; value: string }) { return <View style={styles.setting}><Text style={styles.settingLabel}>{props.label}</Text><Text selectable style={styles.settingValue}>{props.value}</Text></View>; }
-function Tab(props: { label: string; active: boolean; onPress: () => void }) { return <Pressable accessibilityRole="tab" accessibilityState={{ selected: props.active }} style={styles.tab} onPress={props.onPress}><Text style={props.active ? styles.tabActive : styles.tabText}>{props.label}</Text></Pressable>; }
-function StatusPill(props: { state: string }) { return <View style={[styles.status, props.state === "connected" ? styles.statusGood : props.state === "degraded" ? styles.statusWarn : styles.statusNeutral]}><View style={styles.statusDot} /><Text style={styles.statusText}>{props.state}</Text></View>; }
+function Setting(props: { label: string; value: string }) {
+  return (
+    <View style={styles.setting}>
+      <Text style={styles.settingLabel}>{props.label}</Text>
+      <Text selectable style={styles.settingValue}>
+        {props.value}
+      </Text>
+    </View>
+  );
+}
+
+function Tab(props: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="tab" accessibilityState={{ selected: props.active }} android_ripple={{ color: "#00000014" }} style={styles.tab} onPress={props.onPress}>
+      <Text style={props.active ? styles.tabActive : styles.tabText}>{props.label}</Text>
+      {props.active ? <View style={styles.tabIndicator} /> : <View style={styles.tabIndicatorOff} />}
+    </Pressable>
+  );
+}
+
+function StatusPill(props: { state: string }) {
+  return (
+    <View style={[styles.status, props.state === "connected" ? styles.statusGood : props.state === "degraded" ? styles.statusWarn : styles.statusNeutral]}>
+      <View style={styles.statusDot} />
+      <Text style={styles.statusText}>{props.state}</Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f7f5f0" }, header: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, eyebrow: { color: "#817b70", fontSize: 11, fontWeight: "800", letterSpacing: 1.2 }, title: { color: "#1e201b", fontSize: 25, fontWeight: "700", marginTop: 3 }, hero: { color: "#1e201b", fontSize: 42, lineHeight: 47, fontWeight: "700", letterSpacing: -1.3, marginTop: 15 }, lede: { color: "#58564f", fontSize: 16, lineHeight: 23, marginTop: 20 }, setup: { padding: 26, flexGrow: 1, justifyContent: "center" }, label: { color: "#34342e", fontSize: 13, fontWeight: "700", marginTop: 24, marginBottom: 8 }, input: { backgroundColor: "#fffefa", color: "#20211d", borderColor: "#d8d2c7", borderWidth: 1, borderRadius: 14, minHeight: 54, paddingHorizontal: 15, fontSize: 15 }, bundleInput: { minHeight: 148, paddingVertical: 14, textAlignVertical: "top" }, primaryButton: { minHeight: 52, borderRadius: 15, backgroundColor: "#1d3f35", alignItems: "center", justifyContent: "center", marginTop: 23 }, primaryText: { color: "#fff", fontSize: 16, fontWeight: "800" }, disabled: { opacity: 0.48 }, notice: { marginTop: 22, padding: 16, backgroundColor: "#ece8dd", borderRadius: 15 }, noticeTitle: { color: "#31312b", fontWeight: "800", fontSize: 14 }, noticeBody: { color: "#5b584f", lineHeight: 20, marginTop: 5 }, error: { color: "#a42920", marginTop: 12, lineHeight: 20 }, content: { flex: 1 }, conversationRow: { paddingHorizontal: 17, paddingVertical: 13, gap: 8 }, conversationPill: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, maxWidth: 150, backgroundColor: "#ece8df" }, conversationPillActive: { backgroundColor: "#d5e0d0" }, conversationText: { color: "#5b584f", fontSize: 13 }, conversationTextActive: { color: "#1e3d34", fontSize: 13, fontWeight: "700" }, messages: { flex: 1 }, messageList: { paddingHorizontal: 18, paddingBottom: 18, gap: 10 }, message: { maxWidth: "87%", paddingHorizontal: 14, paddingVertical: 11, borderRadius: 16 }, userMessage: { backgroundColor: "#1d3f35", alignSelf: "flex-end", borderBottomRightRadius: 4 }, agentMessage: { backgroundColor: "#ece9e2", alignSelf: "flex-start", borderBottomLeftRadius: 4 }, userMessageText: { color: "#fff", fontSize: 16, lineHeight: 22 }, agentMessageText: { color: "#292a25", fontSize: 16, lineHeight: 22 }, composer: { flexDirection: "row", gap: 9, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", backgroundColor: "#fbfaf6", alignItems: "flex-end" }, composerInput: { flex: 1, minHeight: 45, maxHeight: 110, backgroundColor: "#f0eee8", borderRadius: 15, paddingHorizontal: 14, paddingVertical: 11, color: "#1e201b", fontSize: 16 }, sendButton: { width: 45, height: 45, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: "#1d3f35" }, sendText: { color: "#fff", fontSize: 23, fontWeight: "700", marginTop: -2 }, status: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 7 }, statusGood: { backgroundColor: "#dcebd9" }, statusWarn: { backgroundColor: "#f2e3ba" }, statusNeutral: { backgroundColor: "#e7e4de" }, statusDot: { width: 7, height: 7, backgroundColor: "#35654d", borderRadius: 4 }, statusText: { color: "#3d4038", fontWeight: "700", fontSize: 12 }, computerContent: { padding: 18 }, computerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }, sectionTitle: { fontSize: 21, color: "#20211d", fontWeight: "700" }, subtle: { color: "#716e66", marginTop: 4, lineHeight: 19 }, secondaryButton: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#e8e5dc" }, secondaryText: { color: "#3e4039", fontWeight: "700" }, frame: { marginTop: 18, height: 280, borderRadius: 16, overflow: "hidden", backgroundColor: "#292b27", borderWidth: 1, borderColor: "#cbc6bc" }, frameImage: { width: "100%", height: "100%" }, emptyFrame: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }, emptyTitle: { color: "#fff", fontWeight: "700", fontSize: 18 }, frameCaption: { color: "#827e74", fontSize: 12, marginTop: 8 }, footnote: { color: "#635f57", lineHeight: 20, marginTop: 14 }, settings: { padding: 20, gap: 10 }, setting: { paddingVertical: 15, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca" }, settingLabel: { color: "#77736a", fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 }, settingValue: { color: "#252620", fontSize: 16, marginTop: 5 }, destructiveButton: { borderWidth: 1, borderColor: "#bb4a42", borderRadius: 14, minHeight: 50, alignItems: "center", justifyContent: "center", marginTop: 12 }, destructiveText: { color: "#a8322a", fontWeight: "800" }, tabs: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", backgroundColor: "#fbfaf6", paddingVertical: 7 }, tab: { flex: 1, minHeight: 41, justifyContent: "center", alignItems: "center" }, tabText: { color: "#817d74", fontSize: 13, fontWeight: "700" }, tabActive: { color: "#1d3f35", fontSize: 13, fontWeight: "900" },
-  scanButton: { marginTop: 12, alignSelf: "flex-start" },
+  safe: { flex: 1, backgroundColor: "#f6f3ec", paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0 },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2ddd4",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  eyebrow: { color: "#6f6a62", fontSize: 12, fontWeight: "700", letterSpacing: 0.2 },
+  title: { color: "#1b1813", fontSize: 22, fontWeight: "700", marginTop: 2 },
+  hero: { color: "#1b1813", fontSize: 34, lineHeight: 40, fontWeight: "700", letterSpacing: -0.8, marginTop: 12 },
+  lede: { color: "#58544c", fontSize: 16, lineHeight: 23, marginTop: 14 },
+  setup: { padding: 24, flexGrow: 1, justifyContent: "center" },
+  input: { backgroundColor: "#fffefa", color: "#20211d", borderColor: "#d8d2c7", borderWidth: 1, borderRadius: 14, minHeight: 54, paddingHorizontal: 15, fontSize: 15, marginTop: 16 },
+  bundleInput: { minHeight: 128, paddingVertical: 14, textAlignVertical: "top" },
+  primaryButton: { minHeight: 52, borderRadius: 14, backgroundColor: "#1b1813", alignItems: "center", justifyContent: "center", marginTop: 22 },
+  primaryText: { color: "#f6f3ec", fontSize: 16, fontWeight: "700" },
+  disabled: { opacity: 0.45 },
+  error: { color: "#a42920", marginTop: 12, lineHeight: 20 },
+  content: { flex: 1 },
+  conversationRow: { paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
+  conversationPill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, maxWidth: 160, backgroundColor: "#ece8df" },
+  conversationPillActive: { backgroundColor: "#1b1813" },
+  conversationText: { color: "#5b584f", fontSize: 13, fontWeight: "600" },
+  conversationTextActive: { color: "#f6f3ec", fontSize: 13, fontWeight: "700" },
+  messages: { flex: 1 },
+  messageList: { paddingHorizontal: 16, paddingBottom: 12, gap: 10 },
+  message: { maxWidth: "86%", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
+  userMessage: { backgroundColor: "#1b1813", alignSelf: "flex-end", borderBottomRightRadius: 5 },
+  agentMessage: { backgroundColor: "#ece9e2", alignSelf: "flex-start", borderBottomLeftRadius: 5 },
+  userMessageText: { color: "#f6f3ec", fontSize: 16, lineHeight: 22 },
+  agentMessageText: { color: "#292a25", fontSize: 16, lineHeight: 22 },
+  composer: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "android" ? 10 : 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2ddd4",
+    backgroundColor: "#f6f3ec",
+    alignItems: "flex-end"
+  },
+  composerInput: { flex: 1, minHeight: 44, maxHeight: 120, backgroundColor: "#fff", borderRadius: 22, paddingHorizontal: 16, paddingVertical: 11, color: "#1b1813", fontSize: 16 },
+  sendButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#1b1813" },
+  sendText: { color: "#f6f3ec", fontSize: 20, fontWeight: "700", marginTop: -1 },
+  status: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  statusGood: { backgroundColor: "#dcebd9" },
+  statusWarn: { backgroundColor: "#f2e3ba" },
+  statusNeutral: { backgroundColor: "#e7e4de" },
+  statusDot: { width: 7, height: 7, backgroundColor: "#35654d", borderRadius: 4 },
+  statusText: { color: "#3d4038", fontWeight: "700", fontSize: 12 },
+  computerContent: { padding: 16 },
+  computerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  sectionTitle: { fontSize: 20, color: "#1b1813", fontWeight: "700" },
+  subtle: { color: "#716e66", marginTop: 4, lineHeight: 19 },
+  secondaryButton: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#e8e5dc" },
+  secondaryText: { color: "#3e4039", fontWeight: "700" },
+  frame: { marginTop: 16, height: 320, borderRadius: 16, overflow: "hidden", backgroundColor: "#1b1813" },
+  frameImage: { width: "100%", height: "100%" },
+  emptyFrame: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
+  emptyTitle: { color: "#fff", fontWeight: "700", fontSize: 18 },
+  frameCaption: { color: "#827e74", fontSize: 12, marginTop: 8 },
+  settings: { padding: 20, gap: 8 },
+  setting: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#e2ddd4" },
+  settingLabel: { color: "#77736a", fontSize: 12, fontWeight: "700" },
+  settingValue: { color: "#252620", fontSize: 16, marginTop: 4 },
+  destructiveButton: { borderWidth: 1, borderColor: "#bb4a42", borderRadius: 14, minHeight: 50, alignItems: "center", justifyContent: "center", marginTop: 16 },
+  destructiveText: { color: "#a8322a", fontWeight: "800" },
+  tabs: {
+    flexDirection: "row",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2ddd4",
+    backgroundColor: "#f6f3ec",
+    paddingTop: 4,
+    paddingBottom: Platform.OS === "android" ? 10 : 6
+  },
+  tab: { flex: 1, minHeight: 44, justifyContent: "center", alignItems: "center" },
+  tabText: { color: "#817d74", fontSize: 12, fontWeight: "700" },
+  tabActive: { color: "#1b1813", fontSize: 12, fontWeight: "800" },
+  tabIndicator: { marginTop: 6, width: 18, height: 3, borderRadius: 2, backgroundColor: "#1b1813" },
+  tabIndicatorOff: { marginTop: 6, width: 18, height: 3 },
   approvalCard: { backgroundColor: "#efe6d2", borderRadius: 14, padding: 14, gap: 6 },
-  approvalTitle: { color: "#5a3b12", fontWeight: "800", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5 },
+  approvalTitle: { color: "#5a3b12", fontWeight: "800", fontSize: 12, letterSpacing: 0.4 },
   approvalActions: { flexDirection: "row", gap: 8, marginTop: 6 },
-  allowButton: { backgroundColor: "#1d3f35", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  allowText: { color: "#fff", fontWeight: "800" },
+  allowButton: { backgroundColor: "#1b1813", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  allowText: { color: "#f6f3ec", fontWeight: "800" },
   denyButton: { backgroundColor: "#f3d7d3", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
   denyText: { color: "#a8322a", fontWeight: "800" },
   otherApprovals: { color: "#7a5a20", fontSize: 13, fontWeight: "700" },
   stopButton: { marginHorizontal: 16, marginBottom: 8, minHeight: 42, borderRadius: 12, backgroundColor: "#bb4a42", alignItems: "center", justifyContent: "center" },
   stopText: { color: "#fff", fontWeight: "800" },
-  routineRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca" },
-  routineName: { color: "#20211d", fontSize: 17, fontWeight: "700" },
+  routineRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#e2ddd4" },
+  routineName: { color: "#1b1813", fontSize: 17, fontWeight: "700" },
   routineMeta: { color: "#716e66", marginTop: 4, lineHeight: 19 },
-  routineAction: { alignSelf: "flex-start", marginTop: 10 }
+  routineAction: { alignSelf: "flex-start", marginTop: 10 },
+  textLink: { color: "#1b1813", fontWeight: "700", fontSize: 15, marginTop: 18, textDecorationLine: "underline" },
+  pairPaste: { marginTop: 12, alignSelf: "flex-start" },
+  scanner: { flex: 1, backgroundColor: "#11110e" },
+  scannerMask: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center" },
+  scannerFrame: { width: 240, height: 240, borderRadius: 24, borderWidth: 3, borderColor: "#f6f3ec" },
+  scannerHint: { color: "#f6f3ec", marginTop: 18, fontSize: 15, fontWeight: "600" },
+  scannerClose: { position: "absolute", bottom: 36, alignSelf: "center", paddingHorizontal: 22, paddingVertical: 12, borderRadius: 999, backgroundColor: "#f6f3ec" },
+  scannerCloseText: { color: "#1b1813", fontWeight: "800" }
 });

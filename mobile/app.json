@@ -11,8 +11,19 @@
       "bundleIdentifier": "com.openagentfleet.mobile"
     },
     "android": {
-      "package": "com.openagentfleet.mobile"
+      "package": "com.openagentfleet.mobile",
+      "softwareKeyboardLayoutMode": "resize",
+      "edgeToEdgeEnabled": true,
+      "permissions": ["CAMERA", "android.permission.CAMERA"]
     },
-    "plugins": ["expo-secure-store"]
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "OpenAgentFleet uses the camera to scan the pairing QR from the desktop app."
+        }
+      ]
+    ]
   }
 }

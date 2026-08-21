@@ -14,10 +14,9 @@ The app only calls the mobile V1 API:
   stop, routines list/pause/enable, computer status/frame, V1 SSE, and
   optional session logout routes.
 
-There is no manual Tailnet URL or global-token field. Paste exactly this JSON
-bundle created by the trusted Mac app, or Scan QR and paste the captured
-single-line JSON if camera permission is denied. Native camera scanning is
-not in this alpha:
+There is no manual Tailnet URL or global-token field. Scan the pairing QR
+from the desktop app (camera permission required). If the camera is denied,
+paste exactly this JSON bundle:
 
 ```json
 {
@@ -31,8 +30,9 @@ not in this alpha:
 ```
 
 The parser rejects malformed, expired, non-HTTPS, non-`*.ts.net`, URL-wrapped,
-or extended bundles. The one-time secret is sent only in the pairing request,
-is never persisted, and is cleared from the paste field after every attempt.
+or extended bundles. The one-time secret is sent only in the pairing request
+and is never persisted. On Android the composer stays above the keyboard and
+the tab bar hides while typing.
 The pairing response is accepted only when its V1 version, Bearer token type,
 unexpired credential, and host identity match the bundle.
 
@@ -44,8 +44,8 @@ route without relying on it for local removal.
 
 Controller and owner devices can Allow/Deny pending approvals, stop an
 active run, and pause or enable routines. Observer devices can list those
-states. Secret handoff, typing, and preferences stay in the trusted macOS
-app.
+states. Secret handoff, typing on the Agent Computer, and preferences stay
+in the desktop app.
 
 ## Computer boundary
 

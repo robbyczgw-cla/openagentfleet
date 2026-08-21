@@ -11,15 +11,15 @@ devices, can request a short server-side click-control lease.
 
 The transport and pairing lifecycle are implemented as an alpha contract.
 Device-specific release validation remains environment-dependent; this
-document does not claim that every Android or iOS artifact has passed release
-QA.
+document does not claim a Play Store or App Store build.
 
 The current alpha remains deliberately limited: the shipped mobile lease is a
 30-second device-bound lease for browser-frame click actions. It does not yet
 carry the full frame/epoch/action-id contract below. Password/OTP handoff,
-keyboard input, and desktop control remain on the trusted Mac app. Controller
+keyboard input, and desktop control remain on the desktop host. Controller
 and owner devices can resolve approvals, stop an active run, and pause or
-enable routines.
+enable routines. Pairing uses the desktop QR (camera on the phone) with JSON
+paste as a fallback.
 
 ## Boundary
 
