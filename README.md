@@ -19,7 +19,7 @@ production-ready. It is independent and licensed under
 [Visit the product site](https://openagentfleet.xyz) ·
 [Read the security model](docs/architecture.md)
 
-![OpenAgentFleet Computer View: the live isolated Linux desktop with Chromium, Terminal and Files](presentation/assets/openagentfleet-app-computer-view.png)
+![OpenAgentFleet Computer View: the live isolated Linux desktop with Chromium, Terminal and Files](presentation/assets/openagentfleet-computer-view.png)
 
 This preview is from the running OpenAgentFleet app: a live Agent Computer with
 Chromium, Terminal and Files visible in the workspace. The public alpha wraps
