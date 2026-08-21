@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 const (
@@ -115,18 +117,13 @@ func TestGrokMCPServersUseExactACPShapeOnStartAndLoad(t *testing.T) {
 		{name: "load", sessionID: "grok-resume", method: "session/load"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			binary, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
 			directory := t.TempDir()
 			paramsPath := filepath.Join(directory, "params.json")
 			argumentsPath := filepath.Join(directory, "arguments")
-			wrapper := filepath.Join(directory, "grok")
-			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argumentsPath) + "\nexport " + grokMCPHelperEnv + "=1\nexport " + grokMCPParamsPathEnv + "=" + shellQuote(paramsPath) + "\nexec " + shellQuote(binary) + " -test.run " + shellQuote("^TestGrokMCPHelper$") + "\n"
-			if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			wrapper := testexe.WriteReexec(t, directory, "grok", "^TestGrokMCPHelper$", argumentsPath, map[string]string{
+				grokMCPHelperEnv:     "1",
+				grokMCPParamsPathEnv: paramsPath,
+			})
 
 			session, err := OpenGrokSession(t.Context(), GrokSessionOptions{
 				Binary:     wrapper,
@@ -281,11 +278,12 @@ func TestOpenCodeMCPConfigIsExactAndProcessLocal(t *testing.T) {
 	directory := t.TempDir()
 	contentPath := filepath.Join(directory, "content.json")
 	argumentsPath := filepath.Join(directory, "arguments")
-	wrapper := filepath.Join(directory, OpenCodeProvider)
-	script := "#!/bin/sh\nif [ \"${OPENAI_API_KEY+x}\" = x ] || [ \"${ANTHROPIC_API_KEY+x}\" = x ] || [ \"${XAI_API_KEY+x}\" = x ]; then exit 23; fi\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > " + shellQuote(contentPath) + "\nprintf '%s\\n' \"$@\" > " + shellQuote(argumentsPath) + "\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	wrapper := testexe.Path(directory, OpenCodeProvider)
+	t.Setenv("OPENAGENTFLEET_OPENCODE_BINARY", wrapper)
+	testexe.WritePowerShell(t, wrapper,
+		"#!/bin/sh\nif [ \"${OPENAI_API_KEY+x}\" = x ] || [ \"${ANTHROPIC_API_KEY+x}\" = x ] || [ \"${XAI_API_KEY+x}\" = x ]; then exit 23; fi\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > "+shellQuote(contentPath)+"\nprintf '%s\\n' \"$@\" > "+shellQuote(argumentsPath)+"\n",
+		opencodeDumpPS(contentPath, argumentsPath, true),
+	)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("OPENAI_API_KEY", "ambient-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-anthropic")
@@ -321,11 +319,12 @@ func TestOpenCodeMCPConfigIsExactAndProcessLocal(t *testing.T) {
 func TestOpenCodeNoMCPLeavesInlineConfigUnset(t *testing.T) {
 	directory := t.TempDir()
 	statePath := filepath.Join(directory, "state")
-	wrapper := filepath.Join(directory, OpenCodeProvider)
-	script := "#!/bin/sh\nif [ \"${OPENCODE_CONFIG_CONTENT+x}\" = x ]; then printf set > " + shellQuote(statePath) + "; else printf unset > " + shellQuote(statePath) + "; fi\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	wrapper := testexe.Path(directory, OpenCodeProvider)
+	t.Setenv("OPENAGENTFLEET_OPENCODE_BINARY", wrapper)
+	testexe.WritePowerShell(t, wrapper,
+		"#!/bin/sh\nif [ \"${OPENCODE_CONFIG_CONTENT+x}\" = x ]; then printf set > "+shellQuote(statePath)+"; else printf unset > "+shellQuote(statePath)+"; fi\n",
+		"if ($null -ne $env:OPENCODE_CONFIG_CONTENT) { [IO.File]::WriteAllText('"+powershellPath(statePath)+"', 'set') } else { [IO.File]::WriteAllText('"+powershellPath(statePath)+"', 'unset') }\n",
+	)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if _, err := (&Runner{AllowExecution: true}).RunWithOptions(t.Context(), OpenCodeProvider, "test", directory, RunOptions{}); err != nil {
 		t.Fatal(err)
@@ -342,11 +341,12 @@ func TestOpenCodeNoMCPLeavesInlineConfigUnset(t *testing.T) {
 func TestOpenCodeDisabledWebSearchIsEnforcedInProcessLocalConfig(t *testing.T) {
 	directory := t.TempDir()
 	contentPath := filepath.Join(directory, "content.json")
-	wrapper := filepath.Join(directory, OpenCodeProvider)
-	script := "#!/bin/sh\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > " + shellQuote(contentPath) + "\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	wrapper := testexe.Path(directory, OpenCodeProvider)
+	t.Setenv("OPENAGENTFLEET_OPENCODE_BINARY", wrapper)
+	testexe.WritePowerShell(t, wrapper,
+		"#!/bin/sh\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > "+shellQuote(contentPath)+"\n",
+		opencodeDumpPS(contentPath, "", false),
+	)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if _, err := (&Runner{AllowExecution: true}).RunWithOptions(t.Context(), OpenCodeProvider, "test", directory, RunOptions{WebSearch: "disabled"}); err != nil {
 		t.Fatal(err)
@@ -359,4 +359,24 @@ func TestOpenCodeDisabledWebSearchIsEnforcedInProcessLocalConfig(t *testing.T) {
 	if string(content) != want {
 		t.Fatalf("OPENCODE_CONFIG_CONTENT = %s, want %s", content, want)
 	}
+}
+
+func opencodeDumpPS(contentPath, argumentsPath string, rejectAmbientKeys bool) string {
+	ps := ""
+	if rejectAmbientKeys {
+		ps += "if ($env:OPENAI_API_KEY) { exit 23 }\n"
+		ps += "if ($env:ANTHROPIC_API_KEY) { exit 23 }\n"
+		ps += "if ($env:XAI_API_KEY) { exit 23 }\n"
+	}
+	if contentPath != "" {
+		ps += "if ($null -ne $env:OPENCODE_CONFIG_CONTENT) { [IO.File]::WriteAllText('" + powershellPath(contentPath) + "', $env:OPENCODE_CONFIG_CONTENT) }\n"
+	}
+	if argumentsPath != "" {
+		ps += "[IO.File]::WriteAllText('" + powershellPath(argumentsPath) + "', ((@($args) | ForEach-Object { $_ }) -join \"`n\") + \"`n\")\n"
+	}
+	return ps
+}
+
+func powershellPath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), "'", "''")
 }

@@ -427,10 +427,13 @@ fn bundled_executable_path(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "resolve bundled executable directory".to_string())?;
     let sidecar = parent.join(name);
     if sidecar.is_file() {
-        Ok(sidecar)
-    } else {
-        Err(format!("bundled {name} executable is unavailable"))
+        return Ok(sidecar);
     }
+    let exe = parent.join(format!("{name}.exe"));
+    if exe.is_file() {
+        return Ok(exe);
+    }
+    Err(format!("bundled {name} executable is unavailable"))
 }
 
 fn bundled_sidecar_path() -> Result<PathBuf, String> {
@@ -469,6 +472,25 @@ fn configure_sidecar_environment(
         "XAUTHORITY",
         "XDG_SESSION_TYPE",
         "DBUS_SESSION_BUS_ADDRESS",
+        // Windows: env_clear() without these makes docker.exe and most CLIs
+        // fail. Do not inherit provider API keys.
+        "USERPROFILE",
+        "USERNAME",
+        "USERDOMAIN",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "PROCESSOR_ARCHITECTURE",
     ] {
         if let Some(value) = env::var_os(variable) {
             command.env(variable, value);
@@ -516,7 +538,12 @@ fn configure_sidecar_environment(
 fn wait_for_local_botd(child: &mut Child) -> Result<(), String> {
     // First launch inventories local harnesses and seeds a fresh database. On
     // slower Macs that legitimately takes longer than a warm controller start.
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let ready_timeout = if cfg!(target_os = "windows") {
+        Duration::from_secs(45)
+    } else {
+        Duration::from_secs(15)
+    };
+    let deadline = Instant::now() + ready_timeout;
     while Instant::now() < deadline {
         if local_botd_is_healthy() {
             return Ok(());
@@ -529,7 +556,10 @@ fn wait_for_local_botd(child: &mut Child) -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(80));
     }
-    Err("bundled botd did not become ready within 15 seconds".to_string())
+    Err(format!(
+        "bundled botd did not become ready within {} seconds",
+        ready_timeout.as_secs()
+    ))
 }
 
 fn owned_child_is_live(app: &AppHandle) -> Result<bool, String> {
@@ -573,7 +603,18 @@ fn request_sigterm(child: &Child) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn request_sigterm(child: &Child) {
+    let pid = child.id();
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+#[cfg(not(any(unix, windows)))]
 fn request_sigterm(child: &Child) {
     let _ = child;
 }
@@ -581,6 +622,8 @@ fn request_sigterm(child: &Child) {
 fn default_sidecar_path() -> std::ffi::OsString {
     if cfg!(target_os = "macos") {
         "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into()
+    } else if cfg!(target_os = "windows") {
+        r"C:\Windows\System32;C:\Windows;C:\Program Files\Git\cmd;C:\Program Files\Docker\Docker\resources\bin".into()
     } else {
         "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin".into()
     }
@@ -674,6 +717,12 @@ fn start_bundled_daemon(app: &AppHandle) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     // Every packaged app instance gets a fresh in-memory credential. The
     // Tauri webview retrieves it through `local_api_auth`; no token is
     // written to disk or compiled into the frontend bundle.
@@ -856,7 +905,27 @@ fn show_desktop_notification(
     {
         native_notification_macos::show(&app, title, body)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        let title = title.replace('\'', "''");
+        let body = body.replace('\'', "''");
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; $n.ShowBalloonTip(8000, '{title}', '{body}', 'Info'); Start-Sleep -Milliseconds 8500; $n.Dispose()"
+        );
+        match Command::new("powershell.exe")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (app, title, body);
         Ok(())
@@ -875,7 +944,12 @@ fn request_desktop_notification_permission(app: AppHandle) -> Result<String, Str
         native_notification_macos::request_permission(&app)?;
         Ok("prompted".to_string())
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        Ok("granted".to_string())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
         Ok("unavailable".to_string())

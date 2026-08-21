@@ -11,7 +11,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 const connectorStateFilename = "search-connectors.json"
@@ -179,8 +183,15 @@ func loadConnectorSettings(stateDir string) (ConnectorSettings, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return ConnectorSettings{}, errors.New("websearchplus: connector state must be a regular file, not a symlink")
 	}
-	file, err := root.Open(connectorStateFilename)
-	if err != nil {
+	var file *os.File
+	if err := retryBusyIO(func() error {
+		opened, openErr := root.Open(connectorStateFilename)
+		if openErr != nil {
+			return openErr
+		}
+		file = opened
+		return nil
+	}); err != nil {
 		return ConnectorSettings{}, fmt.Errorf("websearchplus: open connector state: %w", err)
 	}
 	defer file.Close()
@@ -260,7 +271,7 @@ func persistConnectorSettings(stateDir string, settings ConnectorSettings) error
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("websearchplus: close connector state: %w", err)
 	}
-	if err := root.Rename(temporaryName, connectorStateFilename); err != nil {
+	if err := replaceConnectorState(root, temporaryName, connectorStateFilename); err != nil {
 		return fmt.Errorf("websearchplus: replace connector state: %w", err)
 	}
 	removeTemporary = false
@@ -268,7 +279,7 @@ func persistConnectorSettings(stateDir string, settings ConnectorSettings) error
 	if err != nil {
 		return fmt.Errorf("websearchplus: inspect persisted connector state: %w", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+	if !ospath.OwnerOnlyFile(info) {
 		return errors.New("websearchplus: persisted connector state is not a private regular file")
 	}
 	if directory, openErr := root.Open("."); openErr == nil {
@@ -276,6 +287,33 @@ func persistConnectorSettings(stateDir string, settings ConnectorSettings) error
 		_ = directory.Close()
 	}
 	return nil
+}
+
+func replaceConnectorState(root *os.Root, from, to string) error {
+	return retryBusyIO(func() error { return root.Rename(from, to) })
+}
+
+func retryBusyIO(op func() error) error {
+	var err error
+	for attempt := 0; attempt < 16; attempt++ {
+		err = op()
+		if err == nil || !isBusyIO(err) {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	return err
+}
+
+func isBusyIO(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "used by another process") ||
+		strings.Contains(msg, "sharing violation") ||
+		strings.Contains(msg, "access is denied") ||
+		strings.Contains(msg, "zugriff verweigert")
 }
 
 func openStateRoot(stateDir string, create bool) (*os.Root, bool, error) {

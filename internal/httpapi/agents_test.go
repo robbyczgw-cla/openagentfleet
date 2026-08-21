@@ -15,6 +15,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 const httpGrokWebSearchHelperEnv = "OPENAGENTFLEET_HTTP_GROK_WEB_SEARCH_TEST_HELPER"
@@ -205,11 +206,16 @@ func TestConfiguredLeadProviderRoutesAllThreeLeadHarnesses(t *testing.T) {
 func TestConfiguredOpenCodeLeadExecutesJSONStreamAndResumesSession(t *testing.T) {
 	directory := t.TempDir()
 	argumentsPath := filepath.Join(directory, "opencode-arguments")
-	wrapper := filepath.Join(directory, harness.OpenCodeProvider)
-	script := "#!/bin/sh\n{\nprintf 'CALL\\n'\nfor argument in \"$@\"; do printf 'ARG=%s\\n' \"$argument\"; done\n} >> " + shellQuoteHTTPTest(argumentsPath) + "\nprintf '%s\\n' '{\"type\":\"step_start\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"step-start\"}}'\nprintf '%s\\n' '{\"type\":\"text\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"text\",\"text\":\"OpenCode answer\"}}'\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+	stdoutPath := filepath.Join(directory, "opencode-stdout.txt")
+	if err := os.WriteFile(stdoutPath, []byte("{\"type\":\"step_start\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"step-start\"}}\n{\"type\":\"text\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"text\",\"text\":\"OpenCode answer\"}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	wrapper := testexe.Path(directory, harness.OpenCodeProvider)
+	testexe.WritePowerShell(t, wrapper,
+		"#!/bin/sh\n{\nprintf 'CALL\\n'\nfor argument in \"$@\"; do printf 'ARG=%s\\n' \"$argument\"; done\n} >> "+shellQuoteHTTPTest(argumentsPath)+"\ncat "+shellQuoteHTTPTest(stdoutPath)+"\n",
+		"[IO.File]::AppendAllText('"+powershellHTTPPath(argumentsPath)+"', \"CALL`n\")\nforeach ($argument in $args) { [IO.File]::AppendAllText('"+powershellHTTPPath(argumentsPath)+"', \"ARG=$argument`n\") }\nGet-Content -LiteralPath '"+powershellHTTPPath(stdoutPath)+"'\n",
+	)
+	t.Setenv("OPENAGENTFLEET_OPENCODE_BINARY", wrapper)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))
@@ -309,17 +315,11 @@ func TestConfiguredOpenCodeLeadExecutesJSONStreamAndResumesSession(t *testing.T)
 }
 
 func TestConfiguredAgentWebSearchReachesNativeLeadHarness(t *testing.T) {
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	directory := t.TempDir()
 	argumentsPath := filepath.Join(directory, "arguments")
-	wrapper := filepath.Join(directory, "grok")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuoteHTTPTest(argumentsPath) + "\nexport " + httpGrokWebSearchHelperEnv + "=1\nexec " + shellQuoteHTTPTest(binary) + " -test.run " + shellQuoteHTTPTest("^TestHTTPGrokWebSearchHelper$") + "\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testexe.WriteReexec(t, directory, "grok", "^TestHTTPGrokWebSearchHelper$", argumentsPath, map[string]string{
+		httpGrokWebSearchHelperEnv: "1",
+	})
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))
@@ -371,7 +371,8 @@ func TestConfiguredAgentWebSearchReachesNativeLeadHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains("\n"+string(arguments), "\n--disable-web-search\n") {
+	normalized := strings.ReplaceAll(string(arguments), "\r\n", "\n")
+	if !strings.Contains("\n"+normalized, "\n--disable-web-search\n") {
 		t.Fatalf("configured web_search did not reach Grok: %q", arguments)
 	}
 }
@@ -414,6 +415,10 @@ func TestHTTPGrokWebSearchHelper(t *testing.T) {
 
 func shellQuoteHTTPTest(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func powershellHTTPPath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), "'", "''")
 }
 
 func TestGrokAgentPermissionMappingNeverBroadensWorkspaceToAuto(t *testing.T) {

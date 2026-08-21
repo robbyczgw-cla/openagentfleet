@@ -11,9 +11,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 func TestDisabledComputerDoesNotMutateDocker(t *testing.T) {
@@ -128,7 +132,7 @@ func TestPrepareBrowserProfileMigratesLegacyProfileOutOfWorkspace(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o700 {
+	if ospath.POSIXModeEnforced() && info.Mode().Perm() != 0o700 {
 		t.Fatalf("browser profile permissions = %o, want 700", info.Mode().Perm())
 	}
 }
@@ -167,10 +171,11 @@ func TestClearStaleBrowserProfileLocksIsExactAndIdempotent(t *testing.T) {
 func TestControllerBrowserProfileMountInspectionMatchesOnlyExpectedPath(t *testing.T) {
 	stateDir := t.TempDir()
 	profilePath := filepath.Join(stateDir, "browser-profile")
-	scriptPath := filepath.Join(t.TempDir(), "fake-docker")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf '%s' \"$OPENAGENTFLEET_TEST_PROFILE_PATH\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	scriptPath := testexe.Path(t.TempDir(), "fake-docker")
+	testexe.Write(t, scriptPath,
+		"#!/bin/sh\nprintf '%s' \"$OPENAGENTFLEET_TEST_PROFILE_PATH\"\n",
+		"@echo off\r\npowershell -NoProfile -Command \"[Console]::Write($env:OPENAGENTFLEET_TEST_PROFILE_PATH)\"\r\n",
+	)
 	docker := &Docker{Binary: scriptPath, ContainerName: "agent-computer"}
 	t.Setenv("OPENAGENTFLEET_TEST_PROFILE_PATH", filepath.Join(stateDir, "nested", "..", "browser-profile"))
 	if !docker.usesControllerBrowserProfile(context.Background(), profilePath) {
@@ -460,7 +465,7 @@ func TestControlTokenPersistsPrivatelyAndRestoresAfterDaemonRestart(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if ospath.POSIXModeEnforced() && info.Mode().Perm() != 0o600 {
 		t.Fatalf("control token permissions = %o, want 600", info.Mode().Perm())
 	}
 	if filepath.Dir(first.ControlTokenPath) == workspace {
@@ -483,6 +488,9 @@ func TestControlTokenPersistsPrivatelyAndRestoresAfterDaemonRestart(t *testing.T
 }
 
 func TestEnsureRemovesStoppedNamedContainerBeforeRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Docker helper is a POSIX script")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "docker.log")
 	removedPath := filepath.Join(dir, "removed")

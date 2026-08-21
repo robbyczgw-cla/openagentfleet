@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 var (
@@ -220,7 +222,7 @@ func normalizeRoots(paths []string) ([]string, error) {
 }
 
 func validateAbsolutePath(path string) error {
-	if strings.TrimSpace(path) == "" || strings.ContainsRune(path, 0) || !filepath.IsAbs(path) {
+	if strings.TrimSpace(path) == "" || strings.ContainsRune(path, 0) || !ospath.IsAbs(path) {
 		return fmt.Errorf("%w: path must be absolute", ErrInvalidSpec)
 	}
 	return nil

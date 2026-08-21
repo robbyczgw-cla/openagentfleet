@@ -59,8 +59,11 @@ func TestNormalizeAcceptsDockerEngineRuntime(t *testing.T) {
 func TestDefaultsUseColimaWithoutEnablingComputerControl(t *testing.T) {
 	defaults := Defaults()
 	wantRuntime := RuntimeColima
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		wantRuntime = RuntimeDocker
+	case "windows":
+		wantRuntime = RuntimeDockerDesktop
 	}
 	if defaults.Computer.Runtime != wantRuntime {
 		t.Fatalf("default runtime = %q, want %q", defaults.Computer.Runtime, wantRuntime)

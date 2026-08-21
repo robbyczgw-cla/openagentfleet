@@ -6,9 +6,10 @@ package orchestration
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 const CurrentVersion = 1
@@ -456,7 +457,7 @@ func validateWorkdir(workdir string) error {
 	if strings.TrimSpace(workdir) == "" || hasControl(workdir) {
 		return fmt.Errorf("workdir must be a non-empty absolute path")
 	}
-	if !filepath.IsAbs(workdir) || filepath.Clean(workdir) != workdir {
+	if !ospath.IsCleanAbs(workdir) {
 		return fmt.Errorf("workdir must be a clean absolute path")
 	}
 	return nil

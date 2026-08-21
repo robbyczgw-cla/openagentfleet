@@ -1,26 +1,21 @@
 package httpapi
 
 import (
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 	"github.com/robbyczgw-cla/openagentfleet/internal/websearchplus"
 )
 
 func TestSearchMCPServerSpecsResolveOnlySelectedBuiltins(t *testing.T) {
 	binDir := t.TempDir()
-	uvx := filepath.Join(binDir, "uvx")
-	if err := os.WriteFile(uvx, []byte("#!/bin/sh\nprintf 'uvx 0.9.18\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	npx := filepath.Join(binDir, "npx")
-	if err := os.WriteFile(npx, []byte("#!/bin/sh\nprintf '10.9.2\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	uvx := testexe.WriteEcho(t, binDir, "uvx", "uvx 0.9.18")
+	npx := testexe.WriteEcho(t, binDir, "npx", "10.9.2")
 	t.Setenv("PATH", binDir)
+	t.Setenv("OPENAGENTFLEET_OPENCODE_BINARY", "")
 	controller, err := websearchplus.NewController(filepath.Join(t.TempDir(), "web-search"))
 	if err != nil {
 		t.Fatal(err)

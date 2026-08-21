@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 type fakeClock struct {
@@ -84,15 +86,19 @@ func TestRecorderLifecyclePersistsSafeNormalizedTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(trace) error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("trace mode = %o, want 600", got)
+	if ospath.POSIXModeEnforced() {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("trace mode = %o, want 600", got)
+		}
 	}
 	rootInfo, err := os.Stat(recorder.Root())
 	if err != nil {
 		t.Fatalf("Stat(root) error = %v", err)
 	}
-	if got := rootInfo.Mode().Perm(); got != 0o700 {
-		t.Fatalf("root mode = %o, want 700", got)
+	if ospath.POSIXModeEnforced() {
+		if got := rootInfo.Mode().Perm(); got != 0o700 {
+			t.Fatalf("root mode = %o, want 700", got)
+		}
 	}
 
 	encoded, err := os.ReadFile(path)

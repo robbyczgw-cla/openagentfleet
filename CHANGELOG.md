@@ -48,6 +48,16 @@ built from the same commit. The current public download remains
   The secret is hashed at rest and shown once. Delivery does not inject the
   request body into the Agent prompt and does not consume next-run.
 
+### Windows host
+
+- Guest Agent Computer paths stay POSIX (`/workspace`, `/tmp`) when botd runs
+  on Windows; native harness workdirs may be `C:\...`.
+- NTFS file modes are not fail-closed as if they were POSIX 0600/0700.
+- Connector state replace retries NTFS sharing violations.
+- Default Computer runtime on Windows is Docker Desktop. Dictation and the
+  native secure prompt stay macOS-only. Computer View against Docker Desktop
+  is not claimed by this change.
+
 ## 0.3.0-alpha
 
 Coworkers first: Agents can share a group chat, opt into agent-to-agent work,

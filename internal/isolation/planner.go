@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 const (
@@ -98,7 +101,11 @@ func (p Planner) prepare(spec Spec) (Spec, error) {
 	if err := validateCommand(spec.Command); err != nil {
 		return Spec{}, err
 	}
-	if err := validateGuestPath(spec.Workdir, "workdir"); err != nil {
+	if spec.Profile == ProfileNativeHost {
+		if err := validateAbsolutePath(spec.Workdir); err != nil {
+			return Spec{}, fmt.Errorf("workdir: %w", err)
+		}
+	} else if err := validateGuestPath(spec.Workdir, "workdir"); err != nil {
 		return Spec{}, err
 	}
 	if err := validateLimits(spec.Limits); err != nil {
@@ -299,12 +306,19 @@ func validateSecrets(secrets []SecretReference) error {
 	return nil
 }
 
-func validateGuestPath(path, description string) error {
-	if err := validateAbsolutePath(path); err != nil {
+func validateGuestPath(guestPath, description string) error {
+	if strings.Contains(guestPath, `\`) || !path.IsAbs(guestPath) {
+		return fmt.Errorf("%s: %w", description, fmt.Errorf("%w: path must be absolute", ErrInvalidSpec))
+	}
+	if err := validateAbsolutePath(guestPath); err != nil {
 		return fmt.Errorf("%s: %w", description, err)
 	}
-	if len(path) > maxPathLength || filepath.Clean(path) == "/" || forbiddenGuestPath(filepath.Clean(path)) {
-		return fmt.Errorf("%w: forbidden %s path %q", ErrInvalidSpec, description, path)
+	clean := path.Clean(guestPath)
+	if len(guestPath) > maxPathLength || clean == "/" || forbiddenGuestPath(clean) {
+		return fmt.Errorf("%w: forbidden %s path %q", ErrInvalidSpec, description, guestPath)
+	}
+	if clean != guestPath {
+		return fmt.Errorf("%w: %s must be a clean POSIX path", ErrInvalidSpec, description)
 	}
 	return nil
 }
@@ -342,8 +356,8 @@ func validateAndResolveMounts(mounts []Mount, policy Policy) ([]Mount, error) {
 		if mount.Mode == MountReadWrite && !pathWithinAny(resolved, policy.WritableMountRoots) {
 			return nil, fmt.Errorf("%w: writable host path %q is outside controller-approved writable roots", ErrForbiddenMount, resolved)
 		}
-		guest := filepath.Clean(mount.GuestPath)
-		if pathOverlapsAny(guest, guestPaths) {
+		guest := path.Clean(mount.GuestPath)
+		if posixOverlapsAny(guest, guestPaths) {
 			return nil, fmt.Errorf("%w: duplicate guest mount target %q", ErrInvalidSpec, guest)
 		}
 		guestPaths[guest] = struct{}{}
@@ -371,8 +385,8 @@ func validateTmpfs(tmpfs []Tmpfs, mounts []Mount) ([]Tmpfs, error) {
 		if item.SizeBytes == 0 || item.Mode == 0 || item.Mode > 0o1777 {
 			return nil, fmt.Errorf("%w: tmpfs %q needs a bounded size and valid mode", ErrInvalidSpec, item.GuestPath)
 		}
-		guest := filepath.Clean(item.GuestPath)
-		if pathOverlapsAny(guest, guestPaths) {
+		guest := path.Clean(item.GuestPath)
+		if posixOverlapsAny(guest, guestPaths) {
 			return nil, fmt.Errorf("%w: overlapping tmpfs or mount target %q", ErrInvalidSpec, guest)
 		}
 		guestPaths[guest] = struct{}{}
@@ -384,20 +398,59 @@ func validateTmpfs(tmpfs []Tmpfs, mounts []Mount) ([]Tmpfs, error) {
 
 func forbiddenHostPath(path string) bool {
 	clean := filepath.Clean(path)
-	if clean == "/" || pathWithinAny(clean, []string{"/etc", "/private/etc", "/var/run", "/run", "/dev", "/proc", "/sys", "/root", "/Users", "/home"}) {
+	if ospath.IsFilesystemRoot(path) || ospath.IsFilesystemRoot(clean) || pathWithinAny(clean, []string{"/etc", "/private/etc", "/var/run", "/run", "/dev", "/proc", "/sys", "/root", "/Users", "/home"}) {
 		return true
 	}
 	if strings.HasSuffix(clean, "/docker.sock") || strings.Contains(clean, "/.docker/") || strings.HasSuffix(clean, "/.docker") || strings.Contains(clean, "/.colima/") || strings.HasSuffix(clean, "/.colima") || strings.Contains(clean, "/.orbstack/") || strings.HasSuffix(clean, "/.orbstack") {
 		return true
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" && pathWithinAny(clean, []string{filepath.Clean(home)}) {
+	if forbiddenWindowsHostPath(clean) {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && filepath.Clean(home) == clean {
 		return true
 	}
 	return false
 }
 
-func forbiddenGuestPath(path string) bool {
-	return pathWithinAny(path, []string{"/etc", "/proc", "/sys", "/dev", "/root", "/var/run"})
+func forbiddenWindowsHostPath(path string) bool {
+	compact := strings.ToLower(strings.ReplaceAll(path, "/", `\`))
+	if strings.Contains(compact, `pipe\docker_engine`) || strings.Contains(compact, `\\.\pipe\`) {
+		return true
+	}
+	for _, prefix := range []string{
+		`c:\windows\system32`,
+		`c:\windows\syswow64`,
+		`c:\windows\sysnative`,
+		`c:\program files`,
+		`c:\program files (x86)`,
+	} {
+		if compact == prefix || strings.HasPrefix(compact, prefix+`\`) {
+			return true
+		}
+	}
+	if compact == `c:\windows` || compact == `c:\users` {
+		return true
+	}
+	return false
+}
+
+func forbiddenGuestPath(guestPath string) bool {
+	for _, root := range []string{"/etc", "/proc", "/sys", "/dev", "/root", "/var/run"} {
+		if ospath.WithinPOSIX(guestPath, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func posixOverlapsAny(guestPath string, existing map[string]struct{}) bool {
+	for other := range existing {
+		if ospath.WithinPOSIX(guestPath, other) || ospath.WithinPOSIX(other, guestPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func pathWithinAny(path string, roots []string) bool {

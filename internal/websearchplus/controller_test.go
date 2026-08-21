@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 func TestControllerDefaultsPersistAndReloadIndependentSettings(t *testing.T) {
@@ -52,7 +55,7 @@ func TestControllerDefaultsPersistAndReloadIndependentSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+	if !ospath.OwnerOnlyFile(info) {
 		t.Fatalf("state mode = %v", info.Mode())
 	}
 	payload, err := os.ReadFile(statePath)
@@ -92,10 +95,7 @@ func TestControllerDefaultsPersistAndReloadIndependentSettings(t *testing.T) {
 
 func TestControllerMCPServerSpecsReflectCommittedEnabledSnapshot(t *testing.T) {
 	binDir := t.TempDir()
-	uvx := filepath.Join(binDir, "uvx")
-	if err := os.WriteFile(uvx, []byte("#!/bin/sh\nprintf 'uvx 0.9.18\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	uvx := testexe.WriteEcho(t, binDir, "uvx", "uvx 0.9.18")
 	t.Setenv("PATH", binDir)
 	controller, err := NewController(filepath.Join(t.TempDir(), "web-search"))
 	if err != nil {
@@ -125,10 +125,7 @@ func TestControllerMCPServerSpecsReflectCommittedEnabledSnapshot(t *testing.T) {
 
 func TestControllerMCPServerSpecsDonsetchUsesExactNpxPin(t *testing.T) {
 	binDir := t.TempDir()
-	npx := filepath.Join(binDir, "npx")
-	if err := os.WriteFile(npx, []byte("#!/bin/sh\nprintf '10.9.2\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	npx := testexe.WriteEcho(t, binDir, "npx", "10.9.2")
 	t.Setenv("PATH", binDir)
 	controller, err := NewController(filepath.Join(t.TempDir(), "web-search"))
 	if err != nil {
@@ -152,11 +149,11 @@ func TestControllerDisableWaitsForInFlightSpecSnapshot(t *testing.T) {
 	binDir := t.TempDir()
 	started := filepath.Join(binDir, "started")
 	release := filepath.Join(binDir, "release")
-	uvx := filepath.Join(binDir, "uvx")
-	script := "#!/bin/sh\n: > " + started + "\nwhile [ ! -f " + release + " ]; do sleep 0.01; done\nprintf 'uvx 0.9.18\\n'\n"
-	if err := os.WriteFile(uvx, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	uvx := testexe.Path(binDir, "uvx")
+	testexe.Write(t, uvx,
+		"#!/bin/sh\n: > "+started+"\nwhile [ ! -f "+release+" ]; do sleep 0.01; done\nprintf 'uvx 0.9.18\\n'\n",
+		"@echo off\r\necho. > \""+started+"\"\r\n:wait\r\nif not exist \""+release+"\" goto wait\r\necho uvx 0.9.18\r\n",
+	)
 	t.Setenv("PATH", binDir)
 	controller, err := NewController(filepath.Join(t.TempDir(), "web-search"))
 	if err != nil {
@@ -298,6 +295,9 @@ func TestControllerConcurrentPatchAndStatusRemainAtomic(t *testing.T) {
 					t.Errorf("incoherent status = %#v", status)
 					return
 				}
+				if !ospath.POSIXModeEnforced() {
+					continue
+				}
 				payload, err := os.ReadFile(filepath.Join(stateDir, connectorStateFilename))
 				if err != nil {
 					t.Errorf("ReadFile: %v", err)
@@ -341,19 +341,21 @@ func TestControllerStatusOnlyRunsVersionProbes(t *testing.T) {
 
 	binDir := t.TempDir()
 	probeLog := filepath.Join(t.TempDir(), "probes.log")
-	uvx := filepath.Join(binDir, "uvx")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + probeLog + "\"\nprintf 'uvx 1.2.3\\n'\n"
-	if err := os.WriteFile(uvx, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	hound := filepath.Join(binDir, "hound")
-	if err := os.WriteFile(hound, []byte("#!/bin/sh\nprintf 'must not execute\\n' >> \""+probeLog+"\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	donsetch := filepath.Join(binDir, "donsetch")
-	if err := os.WriteFile(donsetch, []byte("#!/bin/sh\nprintf 'must not execute\\n' >> \""+probeLog+"\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	uvx := testexe.Path(binDir, "uvx")
+	testexe.Write(t, uvx,
+		"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \""+probeLog+"\"\nprintf 'uvx 1.2.3\\n'\n",
+		"@echo off\r\necho(%*>> \""+probeLog+"\"\r\necho uvx 1.2.3\r\n",
+	)
+	hound := testexe.Path(binDir, "hound")
+	testexe.Write(t, hound,
+		"#!/bin/sh\nprintf 'must not execute\\n' >> \""+probeLog+"\"\n",
+		"@echo off\r\necho must not execute>> \""+probeLog+"\"\r\n",
+	)
+	donsetch := testexe.Path(binDir, "donsetch")
+	testexe.Write(t, donsetch,
+		"#!/bin/sh\nprintf 'must not execute\\n' >> \""+probeLog+"\"\n",
+		"@echo off\r\necho must not execute>> \""+probeLog+"\"\r\n",
+	)
 	t.Setenv("PATH", binDir)
 	status := controller.Status(t.Context())
 	if !status.UVX.Available || status.UVX.Version != "1.2.3" {
@@ -366,7 +368,7 @@ func TestControllerStatusOnlyRunsVersionProbes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(payload) != "--version\n" {
+	if strings.TrimSpace(strings.ReplaceAll(string(payload), "\r\n", "\n")) != "--version" {
 		t.Fatalf("executed commands = %q", payload)
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, configFilename)); !errors.Is(err, os.ErrNotExist) {

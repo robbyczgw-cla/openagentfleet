@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -239,20 +240,24 @@ func main() {
 	} else if cleaned > 0 {
 		log.Info("cleaned stale attachment drafts", "count", cleaned)
 	}
-	handoffSocketPath := filepath.Join(*dataDir, "secure-handoff.sock")
-	nativeHandoffSocket, err := secrethandoff.NewNativeSocketServer(secrethandoff.NativeSocketConfig{
-		Path:    handoffSocketPath,
-		Manager: secretHandoffs,
-		OnAccepted: func(handoffContext context.Context, handoffID string) error {
-			return api.DeliverSecretHandoff(handoffContext, handoffID)
-		},
-	})
-	if err != nil {
-		log.Error("initialize native secure handoff socket", "error", err)
-		os.Exit(1)
+	if runtime.GOOS == "windows" {
+		log.Info("native secure handoff socket skipped", "os", runtime.GOOS)
+	} else {
+		handoffSocketPath := filepath.Join(*dataDir, "secure-handoff.sock")
+		nativeHandoffSocket, err := secrethandoff.NewNativeSocketServer(secrethandoff.NativeSocketConfig{
+			Path:    handoffSocketPath,
+			Manager: secretHandoffs,
+			OnAccepted: func(handoffContext context.Context, handoffID string) error {
+				return api.DeliverSecretHandoff(handoffContext, handoffID)
+			},
+		})
+		if err != nil {
+			log.Error("initialize native secure handoff socket", "error", err)
+			os.Exit(1)
+		}
+		defer nativeHandoffSocket.Close()
+		api.NativeHandoffSocketPath = nativeHandoffSocket.Path()
 	}
-	defer nativeHandoffSocket.Close()
-	api.NativeHandoffSocketPath = nativeHandoffSocket.Path()
 	go api.RunRoutineScheduler(ctx)
 
 	legacyListener, err := net.Listen("tcp", *addr)

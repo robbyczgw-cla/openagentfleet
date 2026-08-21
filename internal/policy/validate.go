@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -236,34 +237,45 @@ func validateToken(name, value string, max int) error {
 	return nil
 }
 
-func validateFolder(path string) error {
-	if path == "" {
+func validateFolder(folder string) error {
+	if folder == "" {
 		return errors.New("folder path is required")
 	}
-	if !utf8.ValidString(path) || strings.IndexByte(path, 0) >= 0 {
+	if !utf8.ValidString(folder) || strings.IndexByte(folder, 0) >= 0 {
 		return errors.New("folder path is not valid UTF-8 or contains NUL")
 	}
-	if containsWildcard(path) {
+	if containsWildcard(folder) {
 		return fmt.Errorf("folder path: %w", errWildcard)
 	}
-	if strings.Contains(path, "\\") {
-		return errors.New("folder path must use canonical platform separators")
+	if path.IsAbs(folder) && !strings.Contains(folder, `\`) {
+		if path.Clean(folder) != folder {
+			return fmt.Errorf("folder path must be canonical: use %q", path.Clean(folder))
+		}
+		if path.Dir(folder) == folder {
+			return errors.New("filesystem root cannot be granted")
+		}
+		for _, part := range strings.Split(strings.TrimPrefix(folder, "/"), "/") {
+			if part == "." || part == ".." {
+				return errors.New("folder path contains traversal segment")
+			}
+		}
+		return nil
 	}
-	if !filepath.IsAbs(path) {
+	if !filepath.IsAbs(folder) {
 		return errors.New("folder path must be absolute")
 	}
-	for _, part := range strings.Split(path, string(filepath.Separator)) {
+	for _, part := range strings.Split(folder, string(filepath.Separator)) {
 		if part == "." || part == ".." {
 			return errors.New("folder path contains traversal segment")
 		}
 	}
-	if cleaned := filepath.Clean(path); cleaned != path {
+	if cleaned := filepath.Clean(folder); cleaned != folder {
 		return fmt.Errorf("folder path must be canonical: use %q", cleaned)
 	}
-	if filepath.Dir(path) == path {
+	if filepath.Dir(folder) == folder {
 		return errors.New("filesystem root cannot be granted")
 	}
-	for _, r := range path {
+	for _, r := range folder {
 		if unicode.IsControl(r) {
 			return errors.New("folder path contains control characters")
 		}

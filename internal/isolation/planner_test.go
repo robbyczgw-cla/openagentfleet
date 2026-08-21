@@ -75,6 +75,33 @@ func TestDockerPlanIsDeterministicAndHardened(t *testing.T) {
 	}
 }
 
+func TestForbiddenWindowsSystemRoots(t *testing.T) {
+	if !forbiddenHostPath(`C:\Windows\System32`) {
+		t.Fatal("C:\\Windows\\System32 must be forbidden")
+	}
+	if !forbiddenHostPath(`C:\Program Files\Docker\Docker`) {
+		t.Fatal("C:\\Program Files must be forbidden")
+	}
+	if !forbiddenHostPath(`npipe:////./pipe/docker_engine`) {
+		t.Fatal("docker engine named pipe must be forbidden")
+	}
+	if forbiddenWindowsHostPath("/var/lib/docker") {
+		t.Fatal("linux docker root must not match windows system rules")
+	}
+	if forbiddenWindowsHostPath(`C:\WINDOWS\SystemTemp`) {
+		t.Fatal("Windows temp must not be treated as a system root")
+	}
+	if forbiddenWindowsHostPath(`C:\Users\dev\AppData\Local\Temp`) {
+		t.Fatal("approved workspaces under a user profile must be allowed")
+	}
+	if !forbiddenWindowsHostPath(`C:\Users`) {
+		t.Fatal("C:\\Users must be forbidden as a wholesale mount")
+	}
+	if !forbiddenHostPath("/") {
+		t.Fatal("filesystem root must be forbidden")
+	}
+}
+
 func TestMountsFailClosed(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
@@ -115,7 +142,7 @@ func TestResolvedSymlinkCannotEscapePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, link); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlinks are unavailable on this platform: %v", err)
 	}
 	planner := mustPlanner(t, Policy{ApprovedMountRoots: []string{root}, WritableMountRoots: []string{inside}})
 	spec := validDockerSpec(inside)

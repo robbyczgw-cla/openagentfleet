@@ -812,9 +812,14 @@ function isLinuxHost(data?: Bootstrap | null) {
   return typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent);
 }
 
+function isWindowsHost(data?: Bootstrap | null) {
+  if (data?.host_os) return data.host_os === "windows";
+  return typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
+}
+
 function hostDeviceName(data?: Bootstrap | null) {
   if (isLinuxHost(data)) return "computer";
-  if (data?.host_os === "windows") return "PC";
+  if (isWindowsHost(data)) return "PC";
   return "Mac";
 }
 
@@ -4783,13 +4788,13 @@ function App() {
     }
     if (!nativeRuntime) {
       setNotice(
-        isLinuxHost(data)
+        isLinuxHost(data) || isWindowsHost(data)
           ? "Secure password entry is a native-app path. This web preview cannot collect it."
           : "Secure password entry is available in the OpenAgentFleet Mac app, not this web preview.",
       );
       return;
     }
-    if (isLinuxHost(data)) {
+    if (isLinuxHost(data) || isWindowsHost(data)) {
       setNotice(
         "Secure password entry is macOS-only. Type the password in the Agent Computer after you take control.",
       );
@@ -7289,9 +7294,7 @@ function App() {
                 <div className="eyebrow">{onboardingCopy.enginePickerEyebrow}</div>
                 <h2 id="onboarding-title">{onboardingCopy.enginePickerTitle}</h2>
                 <p>
-                  {onboardingCopy.enginePickerIntro(
-                    isLinuxHost(data) ? "computer" : "Mac",
-                  )}
+                  {onboardingCopy.enginePickerIntro(hostDeviceName(data))}
                 </p>
                 <div
                   className="onboarding-engines"
@@ -7408,7 +7411,7 @@ function App() {
                   })}
                 </div>
                 <div className="onboarding-facts onboarding-engine-facts">
-                  <div><strong>{onboardingCopy.engineFactLocalControl}</strong><span>{onboardingCopy.engineFactLocalControlDetail(isLinuxHost(data) ? "computer" : "Mac")}</span></div>
+                  <div><strong>{onboardingCopy.engineFactLocalControl}</strong><span>{onboardingCopy.engineFactLocalControlDetail(hostDeviceName(data))}</span></div>
                   <div><strong>{onboardingCopy.engineFactOneEngine}</strong><span>{onboardingCopy.engineFactOneEngineDetail}</span></div>
                   <div><strong>{onboardingCopy.engineFactOpenChoices}</strong><span>{onboardingCopy.engineFactOpenChoicesDetail}</span></div>
                 </div>
@@ -9476,7 +9479,11 @@ function App() {
                 <select
                   value={
                     preferences.computer?.runtime ??
-                    (isLinuxHost(data) ? "docker" : "colima")
+                    (isLinuxHost(data)
+                      ? "docker"
+                      : isWindowsHost(data)
+                        ? "docker_desktop"
+                        : "colima")
                   }
                   onChange={(event) =>
                     void patchPreferences({
@@ -9491,6 +9498,12 @@ function App() {
                       <option value="colima">Colima + Docker</option>
                       <option value="docker_desktop">Docker Desktop</option>
                       <option value="orbstack">OrbStack + Docker</option>
+                    </>
+                  ) : isWindowsHost(data) ? (
+                    <>
+                      <option value="docker_desktop">Docker Desktop (recommended)</option>
+                      <option value="docker">Docker Engine</option>
+                      <option value="auto">Automatic compatibility fallback</option>
                     </>
                   ) : (
                     <>
@@ -9516,7 +9529,9 @@ function App() {
                 <p className="field-note">
                   {isLinuxHost(data)
                     ? "Optional. Docker Engine uses CPU, RAM and swap as container limits. Disk is managed by the Docker host."
-                    : "Optional. Colima uses these values for the isolated Linux VM; Docker Desktop and OrbStack use CPU/RAM/swap as container limits while their VM disk stays managed by the runtime."}
+                    : isWindowsHost(data)
+                      ? "Optional. Docker Desktop uses CPU, RAM and swap as container limits. The Linux VM disk stays managed by Docker Desktop."
+                      : "Optional. Colima uses these values for the isolated Linux VM; Docker Desktop and OrbStack use CPU/RAM/swap as container limits while their VM disk stays managed by the runtime."}
                 </p>
                 <label>
                   Resource preset
@@ -9698,7 +9713,7 @@ function App() {
                   {runtimeInstallError && <p>{runtimeInstallError}</p>}
                 </div>
               )}
-              {!isLinuxHost(data) && !colimaRuntime()?.available && (
+              {!isLinuxHost(data) && !isWindowsHost(data) && !colimaRuntime()?.available && (
                 <div className="runtime-install-card compact">
                   <div>
                     <strong>Install the recommended runtime</strong>
@@ -9726,7 +9741,9 @@ function App() {
               <p className="field-note">
                 {isLinuxHost(data)
                   ? "On Linux, Docker Engine is the recommended Agent Computer runtime. It starts lazily when Computer View or an approved desktop task needs it."
-                  : "Colima starts lazily when Agent Computer is requested. Runtime changes apply after restarting the local controller. Apple Container is discovery-only until its adapter passes the full Chromium/Xfce/Takeover test."}
+                  : isWindowsHost(data)
+                    ? "On Windows, Docker Desktop is the recommended Agent Computer runtime. It is not installed with this app and is not started until Computer View or an approved desktop task needs it."
+                    : "Colima starts lazily when Agent Computer is requested. Runtime changes apply after restarting the local controller. Apple Container is discovery-only until its adapter passes the full Chromium/Xfce/Takeover test."}
               </p>
               <details className="settings-advanced-section">
                 <summary>Advanced computer routing</summary>
