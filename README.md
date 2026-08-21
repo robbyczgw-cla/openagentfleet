@@ -6,15 +6,16 @@ Use Grok Build, Codex App Server, bundled OpenCode, or optional Pi in one
 local workspace. Give an Agent a real Linux computer for browser and desktop
 work when it needs one. Watch, stop, or take over — on a machine you run.
 
-**Open-source public alpha.** The signed Mac download is still
-`v0.2.0-alpha`. `0.3.0` adds group chats, opt-in Agent collaboration,
-Routines from enabled Skills, and a Fleet Host MVP; the notarized
-`v0.3.0-alpha` DMG is the next Mac publish. The project is not
-feature-complete or production-ready. It is independent and licensed under
+**Open-source public alpha.** `v0.3.0-alpha` ships unsigned Linux and Windows
+packages: live teammate roster, routines that actually run, mobile approvals,
+and a Review panel. The notarized Mac download is still `v0.2.0-alpha` until
+a Developer ID DMG is stapled. The project is not feature-complete or
+production-ready. It is independent and licensed under
 [Apache-2.0](LICENSE).
 
-[Download the macOS alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg) ·
-[Linux packages](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha) ·
+[Linux packages](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha) ·
+[Windows installer](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha) ·
+[macOS alpha (0.2.0 signed)](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg) ·
 [Visit the product site](https://openagentfleet.xyz) ·
 [Read the security model](docs/architecture.md)
 
@@ -81,17 +82,17 @@ on the engine:
 
 ## Download
 
-`v0.2.0-alpha` is a signed and notarized DMG for Apple Silicon Macs:
+`v0.3.0-alpha` publishes Linux and Windows packages from `main`. The Apple
+Silicon DMG on that tag is not notarized yet; use the signed
+[`v0.2.0-alpha` DMG](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg)
+(SHA-256 `ed466a491051f4facd7696ee67ef2e98235750c5c31a79ff1ffe3060d2f80c06`)
+until a Developer ID `0.3.0` build is stapled.
 
-[**OpenAgentFleet_0.2.0_aarch64.dmg**](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg)
-
-SHA-256 `ed466a491051f4facd7696ee67ef2e98235750c5c31a79ff1ffe3060d2f80c06`.
-Checksums and release notes are on the
-[v0.2.0-alpha release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
-Intel Macs are not supported yet. Linux packages from the same commit are on
-that release when published; otherwise see
-[the Linux release runbook](docs/linux-release.md). If you would rather build
-it yourself, or you want to contribute, use [the source build](#build-from-source).
+Checksums and notes: [v0.3.0-alpha](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha).
+Intel Macs are not supported. Linux and Windows installers are unsigned.
+Build from source with [the Linux](docs/linux-release.md) or
+[Windows](docs/windows-release.md) runbook, or see
+[the source build](#build-from-source).
 
 ## Build from source
 

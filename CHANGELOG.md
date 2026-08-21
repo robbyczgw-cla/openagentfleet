@@ -4,114 +4,80 @@ All notable OpenAgentFleet changes are recorded here.
 
 ## Unreleased
 
-macOS `v0.3.0-alpha` is not published until a Developer ID DMG is notarized
-and stapled from this version. Linux `.deb` / `.rpm` / `.AppImage` can be
-built from the same commit. The current public download remains
-[`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
+Nothing yet. Next work lands here.
+
+## 0.3.0-alpha - 2026-08-21
+
+Public alpha from `455ab81` plus the Windows host and packaging notes on
+`main`. Linux ships unsigned `.deb` / `.rpm` / `.AppImage`. Windows ships an
+unsigned current-user NSIS installer. The notarized Mac download remains
+[`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha)
+until a Developer ID DMG is built, notarized, and stapled.
+
+This is still a public alpha, not a production stability promise.
 
 ### Living teammates
 
-- Sidebar Agents now show live presence: idle, working, using computer, needs
-  approval, needs takeover, collaborating, or failed.
-- Optional per-Agent engine override in Agent Builder. Workspace default still
-  applies unless you opt in; a missing engine fails closed.
-- Desktop notifications fire when an Agent finishes, fails, or needs
-  approval, with in-app Approve / Deny / Stop / Open Agent actions.
-  Linux uses notify-send. macOS uses Notification Center
-  (UNUserNotificationCenter, osascript fallback).
-- Review panel lists pending approvals and recent Agent runs.
-- Sidebar Agents can be pinned, marked unread, or hidden.
-- Mobile pairing in Settings shows a QR code of the same Tailnet bundle
-  JSON as the copyable text.
+Sidebar Agents show derived presence: idle, working, using computer, needs
+approval, needs takeover, collaborating, or failed. Pin, mark unread, or hide
+an Agent. Desktop notifications fire when an Agent finishes, fails, or needs
+approval (Linux `notify-send`; macOS Notification Center with osascript
+fallback). In-app Approve / Deny / Stop / Open Agent stay authoritative.
 
-### Mobile control surface
+The Review panel lists pending approvals across Agents, then each Agent’s last
+finished run (completed, failed, blocked, or stopped). Optional per-Agent
+engine override in Agent Builder; a missing engine fails closed.
 
-- Paired controller/owner phones can list and resolve pending approvals, stop
-  an active run, and pause or enable routines. Observer devices stay
-  read-only. Bootstrap includes pending approvals so the phone sees gates
-  without a second round trip.
+### Group chat and collaboration
 
-### Routines scheduler
+Create a group, pick members, and talk in one thread. Group messages stay in
+that group. Only Agents you mention on a send start work. Agent-to-Agent tools
+stay off until collaboration is enabled on that Agent. Enabled Agents get an
+allowlist, a depth cap, ping-pong rejection, and a concurrent-peer limit.
 
-- botd claims due Routines, starts a visible Agent turn, then advances the
-  next run. The same occurrence is claimed once. Heartbeats stay off until
-  Routines and Heartbeat are enabled and the schedule is opted in.
-- Always-approval occurrences wait for an in-app Approve before the claim.
-  Deny skips that occurrence and schedules the next one. Enable/Resolve
-  ignore a past next-run time instead of firing immediately.
-- Leases last 15 minutes and renew while the Agent turn is running, so a
-  long job is not marked unknown mid-run.
-- The workspace Routines panel lists next run, pause/enable, and history.
-- Routines can be test-run without enabling or consuming the next scheduled
-  occurrence.
-- Enabled routines can expose a signed loopback webhook (`127.0.0.1:4319`).
-  The secret is hashed at rest and shown once. Delivery does not inject the
-  request body into the Agent prompt and does not consume next-run.
+### Routines
+
+Inspect an enabled Skill, create a Routine, then enable it. Create always
+starts disabled. botd claims due occurrences, runs a visible Agent turn,
+renews a 15-minute lease, then advances next-run. Heartbeats stay off until
+Routines, Heartbeat, and opt-in are all on.
+
+Always-approval waits for Allow. Deny skips that occurrence. Enable/Resolve
+ignore a past next-run instead of firing immediately. Test-run does real work
+without consuming next-run. Enabled routines can expose a signed loopback
+webhook on `127.0.0.1:4319`; the secret is hashed at rest and shown once. The
+request body is discarded, not injected into the prompt.
+
+### Mobile
+
+Pair an iPhone or Android over private Tailscale. Settings shows a QR of the
+same bundle as the copyable JSON. Controller/owner devices can list and
+resolve pending approvals, stop a run, and pause or enable routines. Observer
+devices stay read-only. Keyboard, secret handoff, and push stay Mac-local.
+
+### Fleet Host
+
+`GET /api/host/status` reports the controller as `authority`. Pairing accepts
+`desktop`, `ios`, and `android`. Linux can install an always-on loopback
+systemd unit. Tailscale Serve targets `:4318`, never `:4317`. Funnel is out
+of scope.
 
 ### Windows host
 
-- Guest Agent Computer paths stay POSIX (`/workspace`, `/tmp`) when botd runs
-  on Windows; native harness workdirs may be `C:\...`.
-- NTFS file modes are not fail-closed as if they were POSIX 0600/0700.
-- Connector state replace retries NTFS sharing violations.
-- Default Computer runtime on Windows is Docker Desktop. Dictation and the
-  native secure prompt stay macOS-only. Computer View against Docker Desktop
-  is not claimed by this change.
-
-## 0.3.0-alpha
-
-Coworkers first: Agents can share a group chat, opt into agent-to-agent work,
-turn an enabled Skill into a Routine, and run an always-on Fleet Host. This
-is still a public alpha, not a production stability promise.
-
-### Group chat
-
-Create a group, pick members, and talk in one thread from the sidebar. Group
-messages stay in that group; they never land in an Agent’s private chat.
-Only Agents you mention on a send start work. Mentioning a teammate from a
-group does **not** require collaboration to be enabled — that gate is for
-Agents tasking each other.
-
-### Opt-in Agent collaboration
-
-A user `@mention` is still a visible handoff. Agent-to-Agent tools
-(message, delegate, cancel) stay off until collaboration is enabled on that
-Agent. Enabled Agents get an allowlist, a depth cap, ping-pong rejection, and
-a limit on concurrent peer tasks. Collaboration is not a hidden worker pool
-and is not on by default.
-
-### Teach → Skill → Routine
-
-Inspect an enabled Skill, create a Routine from it, and enable the Routine
-explicitly. Create always starts disabled. A Skill that is not enabled cannot
-become a Routine. Heartbeat Routines still require the heartbeat opt-in.
-Skills never auto-enable. This ships the inspect/create/enable contract. The
-Unreleased scheduler loop, test-run, and Routines panel sit on top of it.
-
-### Fleet Host MVP
-
-`GET /api/host/status` reports the controller as `authority`. Pairing accepts
-`desktop` alongside `ios` and `android`. Linux can install an always-on user
-systemd unit that stays on loopback. The Agent Computer worker is not the
-host. The desktop app still starts a local controller for a laptop-owned
-workspace; using that laptop as a remote client of a Fleet Host is the
-intended shape, not the first-run default. Tailscale Serve stays on the
-mobile listener (`:4318`), not the desktop API (`:4317`). Funnel is out of
-scope.
-
-### Copy
-
-Onboarding and the README lead with coworkers: a real computer, learned
-workflows, and collaboration — on infrastructure you control.
+botd and the Go suite run on Windows. Guest Agent Computer paths stay POSIX
+(`/workspace`, `/tmp`); native harness workdirs may be `C:\...`. NTFS modes
+are not fail-closed as POSIX 0600/0700. Connector state replace retries
+sharing violations. Default Computer runtime is Docker Desktop. Dictation and
+the native secure prompt stay macOS-only. Computer View against Docker
+Desktop is not claimed by this release.
 
 ### Boundaries
 
-- Group work that needs a live engine still needs that engine actually
-  running; otherwise mentioned members stay queued.
-- Native signed packages for this version are the Mac/Linux publish step;
-  this commit is source-ready, not a claim that Gatekeeper or Linux packages
-  are already published.
-- Intel Macs are still unsupported. Linux packages remain unsigned.
+- Group work that needs a live engine stays queued until that engine runs.
+- Linux and Windows packages are unsigned. The Mac `v0.3.0-alpha` DMG is not
+  in this tag.
+- Intel Macs are still unsupported.
+- Scheduled Grok runs still need a harness-enabled host.
 
 ## 0.2.0-alpha
 

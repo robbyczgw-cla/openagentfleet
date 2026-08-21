@@ -21,11 +21,14 @@ not earned yet.
 | [ADR 0001: mobile alpha boundary](decisions/0001-mobile-alpha-boundary.md) | What must ship before a remote alpha, and what is intentionally deferred | Accepted |
 | [Linux desktop](linux-desktop.md) | Native Tauri Linux shell, Docker Engine default, and current Linux alpha boundary | Implemented development path |
 | [Linux release](linux-release.md) | deb/rpm/AppImage packaging, Docker Recommends, and Linux Computer install | Implemented alpha packaging |
-| [Windows desktop](windows-desktop.md) | Research for a later Tauri Windows shell, Docker Desktop WSL2, and NSIS alpha boundary | Research only; not implemented |
+| [Windows desktop](windows-desktop.md) | Tauri Windows shell, Docker Desktop default, NSIS alpha boundary | Implemented host + unsigned installer path |
+| [Windows release](windows-release.md) | NSIS current-user installer, sidecar pins, what the build does not prove | Implemented alpha packaging |
 | [Mac host install](mac-host-install.md) | LaunchAgent and local host operation | Setup guide |
 | [Fleet Host MVP](fleet-host.md) | Always-on Linux/Mac controller, pairing, and loopback Serve rules | Implemented host status + install script |
 | [OpenCode bundling](opencode-bundling.md) | Exact macOS sidecar pin, architecture checks, and upgrade procedure | Implemented packaging contract |
-| [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | Passed for public `v0.2.0-alpha` |
+| [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | Passed for public `v0.2.0-alpha`; `v0.3.0-alpha` DMG pending |
+| [macOS 0.3.0 handoff](macos-release-handoff.md) | Prompt for the Apple Silicon notarized DMG agent | Ready for the Mac builder |
+| [v0.3.0-alpha notes](releases/v0.3.0-alpha.md) | GitHub prerelease copy for Linux/Windows (Mac DMG still 0.2.0) | Current publish notes |
 | [Search connectors](search-connectors.md) | Optional Web Search Plus, Hound, and Donsetch MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
 | [Fresh-user smoke checklist](fresh-user-smoke-test.md) | Short native-app checklist for the simple first-run flow and optional Advanced settings | Current QA runbook |
 | [CI and QA gates](ci-qa.md) | Local and GitHub Actions checks, plus what each gate does not prove | Current release runbook |
