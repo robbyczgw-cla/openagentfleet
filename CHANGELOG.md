@@ -9,6 +9,8 @@ ship paragraph dumps.
 ### Added
 
 - Computer View Start when the isolated computer is stopped.
+- Appearance: Paper / Ink / Forest / Dusk accents, roomy density, 85–135% text size, soft or sharp corners, and a reduce-motion toggle.
+- Agent Computer CPU, RAM, disk, swap, OS image, and presets are visible in Settings instead of a collapsed Advanced block.
 
 ### Changed
 

@@ -38,6 +38,15 @@ const (
 
 	DensityComfortable = "comfortable"
 	DensityCompact     = "compact"
+	DensityRoomy       = "roomy"
+
+	AccentPaper  = "paper"
+	AccentInk    = "ink"
+	AccentForest = "forest"
+	AccentDusk   = "dusk"
+
+	RadiusSoft  = "soft"
+	RadiusSharp = "sharp"
 
 	ProviderPi             = "pi"
 	ProviderClaude         = "claude"
@@ -93,15 +102,17 @@ const (
 	MinComputerSwapGiB = 0
 	MaxComputerSwapGiB = 16
 
-	MinFontScale = 0.9
-	MaxFontScale = 1.2
+	MinFontScale = 0.85
+	MaxFontScale = 1.35
 
 	CurrentOnboardingVersion = 1
 )
 
 var (
 	allowedThemes    = set(ThemeLight, ThemeDark, ThemeSystem)
-	allowedDensities = set(DensityComfortable, DensityCompact)
+	allowedDensities = set(DensityComfortable, DensityCompact, DensityRoomy)
+	allowedAccents   = set(AccentPaper, AccentInk, AccentForest, AccentDusk)
+	allowedRadii     = set(RadiusSoft, RadiusSharp)
 	allowedProviders = set(
 		ProviderPi,
 		ProviderClaude,
@@ -159,9 +170,12 @@ type OnboardingState struct {
 
 // Appearance controls the presentational defaults used by OpenAgentFleet clients.
 type Appearance struct {
-	Theme     string  `json:"theme"`
-	Density   string  `json:"density"`
-	FontScale float64 `json:"font_scale"`
+	Theme        string  `json:"theme"`
+	Density      string  `json:"density"`
+	FontScale    float64 `json:"font_scale"`
+	Accent       string  `json:"accent"`
+	ReduceMotion bool    `json:"reduce_motion"`
+	Radius       string  `json:"radius"`
 }
 
 // UsageDefaults retains reasoning and permission defaults. DefaultWorker is a
@@ -242,9 +256,12 @@ type OnboardingPatch struct {
 }
 
 type AppearancePatch struct {
-	Theme     *string  `json:"theme,omitempty"`
-	Density   *string  `json:"density,omitempty"`
-	FontScale *float64 `json:"font_scale,omitempty"`
+	Theme        *string  `json:"theme,omitempty"`
+	Density      *string  `json:"density,omitempty"`
+	FontScale    *float64 `json:"font_scale,omitempty"`
+	Accent       *string  `json:"accent,omitempty"`
+	ReduceMotion *bool    `json:"reduce_motion,omitempty"`
+	Radius       *string  `json:"radius,omitempty"`
 }
 
 type UsagePatch struct {
@@ -297,6 +314,8 @@ func Defaults() Preferences {
 			Theme:     ThemeSystem,
 			Density:   DensityComfortable,
 			FontScale: 1,
+			Accent:    AccentPaper,
+			Radius:    RadiusSoft,
 		},
 		Usage: UsageDefaults{
 			DefaultWorker:   ProviderGrok,
@@ -352,6 +371,13 @@ func (p Preferences) Normalize() Preferences {
 	}
 	if scale := p.Appearance.FontScale; !math.IsNaN(scale) && !math.IsInf(scale, 0) && scale != 0 {
 		normalized.Appearance.FontScale = clamp(scale, MinFontScale, MaxFontScale)
+	}
+	if value, ok := canonicalAllowed(p.Appearance.Accent, allowedAccents); ok {
+		normalized.Appearance.Accent = value
+	}
+	normalized.Appearance.ReduceMotion = p.Appearance.ReduceMotion
+	if value, ok := canonicalAllowed(p.Appearance.Radius, allowedRadii); ok {
+		normalized.Appearance.Radius = value
 	}
 
 	if value, ok := canonicalAllowed(p.Usage.DefaultWorker, allowedProviders); ok {
@@ -432,7 +458,13 @@ func (p Preferences) Validate() error {
 		return fmt.Errorf("invalid appearance.density %q", p.Appearance.Density)
 	}
 	if math.IsNaN(p.Appearance.FontScale) || math.IsInf(p.Appearance.FontScale, 0) || p.Appearance.FontScale < MinFontScale || p.Appearance.FontScale > MaxFontScale {
-		return fmt.Errorf("appearance.font_scale must be between %.1f and %.1f", MinFontScale, MaxFontScale)
+		return fmt.Errorf("appearance.font_scale must be between %g and %g", MinFontScale, MaxFontScale)
+	}
+	if err := validateOptionalAllowed("appearance.accent", p.Appearance.Accent, allowedAccents); err != nil {
+		return err
+	}
+	if err := validateOptionalAllowed("appearance.radius", p.Appearance.Radius, allowedRadii); err != nil {
+		return err
 	}
 	if _, ok := canonicalAllowed(p.Usage.DefaultWorker, allowedProviders); !ok {
 		return fmt.Errorf("invalid usage.default_worker %q", p.Usage.DefaultWorker)
@@ -626,6 +658,15 @@ func (p Preferences) ApplyPatch(patch Patch) (Preferences, error) {
 		if patch.Appearance.FontScale != nil {
 			result.Appearance.FontScale = *patch.Appearance.FontScale
 		}
+		if patch.Appearance.Accent != nil {
+			result.Appearance.Accent = *patch.Appearance.Accent
+		}
+		if patch.Appearance.ReduceMotion != nil {
+			result.Appearance.ReduceMotion = *patch.Appearance.ReduceMotion
+		}
+		if patch.Appearance.Radius != nil {
+			result.Appearance.Radius = *patch.Appearance.Radius
+		}
 	}
 	if patch.Usage != nil {
 		if patch.Usage.DefaultWorker != nil {
@@ -808,6 +849,16 @@ func validateModel(value string) error {
 	}
 	if strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return errors.New("model contains control characters")
+	}
+	return nil
+}
+
+func validateOptionalAllowed(name, value string, allowed map[string]struct{}) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	if _, ok := canonicalAllowed(value, allowed); !ok {
+		return fmt.Errorf("invalid %s %q", name, value)
 	}
 	return nil
 }
