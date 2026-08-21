@@ -46,6 +46,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := s.MigrateRoutineWebhooks(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := s.MigrateRoster(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err

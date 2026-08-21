@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -504,6 +505,151 @@ func TestRoutinePauseEnableHistoryAPI(t *testing.T) {
 		t.Fatalf("get routine = %d %s", detail.Code, detail.Body.String())
 	}
 	_ = instance
+}
+
+func TestRoutineWebhookDoesNotAdvanceSchedule(t *testing.T) {
+	server, instance, botID := openRoutineScheduler(t)
+	now := time.Date(2027, time.March, 4, 11, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	enableRoutineFeatures(t, instance, false)
+	var runs atomic.Int32
+	server.routineRunner = func(context.Context, domain.Routine, domain.RoutineRun) error {
+		runs.Add(1)
+		return nil
+	}
+	routine := createEnabledRoutine(t, instance, botID, now, domain.RoutineApprovalNever)
+	nextRun := routine.NextRunAt
+	handler := server.Handler()
+	created := performRequest(handler, http.MethodPost, "/api/routines/"+routine.ID+"/webhook", "", "")
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"secret"`) {
+		t.Fatalf("create webhook = %d %s", created.Code, created.Body.String())
+	}
+	var payload struct {
+		Secret string `json:"secret"`
+		Path   string `json:"path"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil || payload.Secret == "" || payload.Path != "/hooks/routines/"+routine.ID {
+		t.Fatalf("webhook payload = %#v, %v", payload, err)
+	}
+	listed := performRequest(handler, http.MethodGet, "/api/routines/"+routine.ID+"/webhook", "", "")
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), payload.Secret) {
+		t.Fatalf("get webhook leaked secret: %d %s", listed.Code, listed.Body.String())
+	}
+
+	unknown := httptestWebhook(server, http.MethodPost, payload.Path, "not-the-secret", "hook-1")
+	if unknown.Code != http.StatusUnauthorized {
+		t.Fatalf("bad secret = %d %s", unknown.Code, unknown.Body.String())
+	}
+	delivered := httptestWebhook(server, http.MethodPost, payload.Path, payload.Secret, "hook-1")
+	if delivered.Code != http.StatusAccepted {
+		t.Fatalf("deliver = %d %s", delivered.Code, delivered.Body.String())
+	}
+	replay := httptestWebhook(server, http.MethodPost, payload.Path, payload.Secret, "hook-1")
+	if replay.Code != http.StatusAccepted {
+		t.Fatalf("idempotent replay = %d %s", replay.Code, replay.Body.String())
+	}
+	if runs.Load() != 1 {
+		t.Fatalf("webhook executor calls = %d, want 1", runs.Load())
+	}
+	ledger, err := instance.ListRoutineRuns(t.Context(), routine.ID, 10)
+	if err != nil || len(ledger) != 1 || ledger[0].Trigger != domain.RoutineTriggerWebhook {
+		t.Fatalf("webhook ledger = %#v, %v", ledger, err)
+	}
+	updated, err := instance.GetRoutine(t.Context(), routine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.NextRunAt != nextRun || updated.OccurrenceKey != routine.OccurrenceKey {
+		t.Fatalf("webhook advanced the schedule: before=%#v after=%#v", routine, updated)
+	}
+
+	disabled := performRequest(handler, http.MethodPost, "/api/routines", `{
+		"bot_id":"`+botID+`",
+		"name":"Draft hook",
+		"kind":"cron",
+		"cron_expression":"0 9 * * *",
+		"time_zone":"UTC",
+		"lead_harness":"grok_build",
+		"worker":"grok",
+		"retry":{"max_attempts":1,"backoff_seconds":0}
+	}`, "")
+	if disabled.Code != http.StatusCreated {
+		t.Fatalf("create draft = %d %s", disabled.Code, disabled.Body.String())
+	}
+	var draft struct {
+		Routine domain.Routine `json:"routine"`
+	}
+	if err := json.Unmarshal(disabled.Body.Bytes(), &draft); err != nil {
+		t.Fatal(err)
+	}
+	rotated := performRequest(handler, http.MethodPost, "/api/routines/"+draft.Routine.ID+"/webhook", "", "")
+	if rotated.Code != http.StatusCreated {
+		t.Fatalf("draft webhook = %d %s", rotated.Code, rotated.Body.String())
+	}
+	if err := json.Unmarshal(rotated.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	rejected := httptestWebhook(server, http.MethodPost, payload.Path, payload.Secret, "hook-draft")
+	if rejected.Code != http.StatusConflict {
+		t.Fatalf("disabled webhook = %d %s", rejected.Code, rejected.Body.String())
+	}
+}
+
+func TestRoutineWebhookDenyDoesNotRotateNextRun(t *testing.T) {
+	server, instance, botID := openRoutineScheduler(t)
+	now := time.Date(2027, time.March, 4, 11, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	enableRoutineFeatures(t, instance, false)
+	var runs atomic.Int32
+	server.routineRunner = func(context.Context, domain.Routine, domain.RoutineRun) error {
+		runs.Add(1)
+		return nil
+	}
+	routine := createEnabledRoutine(t, instance, botID, now, domain.RoutineApprovalAlways)
+	handler := server.Handler()
+	created := performRequest(handler, http.MethodPost, "/api/routines/"+routine.ID+"/webhook", "", "")
+	var payload struct {
+		Secret string `json:"secret"`
+		Path   string `json:"path"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	gated := httptestWebhook(server, http.MethodPost, payload.Path, payload.Secret, "hook-gate")
+	if gated.Code != http.StatusAccepted || !strings.Contains(gated.Body.String(), `"waiting_for_approval":true`) {
+		t.Fatalf("gated webhook = %d %s", gated.Code, gated.Body.String())
+	}
+	approvals, err := instance.ListApprovals(t.Context(), "pending")
+	if err != nil || len(approvals) == 0 {
+		t.Fatalf("pending approvals = %#v, %v", approvals, err)
+	}
+	denied := performRequest(handler, http.MethodPost, "/api/approvals/"+approvals[0].ID, `{"status":"denied","option_id":"reject"}`, "")
+	if denied.Code != http.StatusOK {
+		t.Fatalf("deny = %d %s", denied.Code, denied.Body.String())
+	}
+	updated, err := instance.GetRoutine(t.Context(), routine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.NextRunAt != routine.NextRunAt || updated.OccurrenceKey != routine.OccurrenceKey {
+		t.Fatalf("denied webhook rotated the schedule: before=%#v after=%#v", routine, updated)
+	}
+	if runs.Load() != 0 {
+		t.Fatalf("denied webhook still ran: %d", runs.Load())
+	}
+}
+
+func httptestWebhook(server *Server, method, path, secret, idempotency string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, nil)
+	if secret != "" {
+		request.Header.Set("Authorization", "Bearer "+secret)
+	}
+	if idempotency != "" {
+		request.Header.Set("Idempotency-Key", idempotency)
+	}
+	recorder := httptest.NewRecorder()
+	server.WebhookHandler().ServeHTTP(recorder, request)
+	return recorder
 }
 
 func openRoutineScheduler(t *testing.T) (*Server, *store.Store, string) {

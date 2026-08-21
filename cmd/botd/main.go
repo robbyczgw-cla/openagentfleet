@@ -33,6 +33,7 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	addr := flag.String("addr", envOr("OPENAGENTFLEET_ADDR", "127.0.0.1:4317"), "local API address")
 	mobileAddr := flag.String("mobile-addr", envOr("OPENAGENTFLEET_MOBILE_ADDR", "127.0.0.1:4318"), "private mobile API address (loopback only)")
+	webhookAddr := flag.String("webhook-addr", envOr("OPENAGENTFLEET_WEBHOOK_ADDR", "127.0.0.1:4319"), "routine webhook address (loopback only)")
 	dataDir := flag.String("data-dir", envOr("OPENAGENTFLEET_DATA_DIR", ".openagentfleet-data"), "durable local data directory")
 	workspace := flag.String("workspace", "", "Agent Computer workspace; defaults below data-dir")
 	buildContext := flag.String("build-context", "runtime/agent-computer", "Docker build context for the Agent Computer image")
@@ -53,6 +54,11 @@ func main() {
 	mobileListenAddr, err := resolveLoopbackTCPAddress(*mobileAddr)
 	if err != nil {
 		log.Error("validate mobile API address", "error", err)
+		os.Exit(1)
+	}
+	webhookListenAddr, err := resolveLoopbackTCPAddress(*webhookAddr)
+	if err != nil {
+		log.Error("validate webhook API address", "error", err)
 		os.Exit(1)
 	}
 	dataRoot, err := filepath.Abs(*dataDir)
@@ -260,11 +266,28 @@ func main() {
 		log.Error("listen mobile API", "addr", mobileListenAddr, "error", err)
 		os.Exit(1)
 	}
+	webhookListener, err := net.Listen("tcp", webhookListenAddr)
+	if err != nil {
+		_ = legacyListener.Close()
+		_ = mobileListener.Close()
+		log.Error("listen webhook API", "addr", webhookListenAddr, "error", err)
+		os.Exit(1)
+	}
 
 	legacyServer := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	mobileServer := &http.Server{Handler: api.MobileHandler(), ReadHeaderTimeout: 5 * time.Second}
-	log.Info("botd starting", "addr", legacyListener.Addr().String(), "mobile_addr", mobileListener.Addr().String(), "mobile_remote_enabled", true)
-	if err := serveBoth(ctx, legacyListener, legacyServer, mobileListener, mobileServer); err != nil {
+	webhookServer := &http.Server{Handler: api.WebhookHandler(), ReadHeaderTimeout: 5 * time.Second}
+	log.Info("botd starting",
+		"addr", legacyListener.Addr().String(),
+		"mobile_addr", mobileListener.Addr().String(),
+		"webhook_addr", webhookListener.Addr().String(),
+		"mobile_remote_enabled", true,
+	)
+	if err := serveNamedHTTP(ctx, []namedHTTP{
+		{name: "legacy API", listener: legacyListener, server: legacyServer},
+		{name: "mobile API", listener: mobileListener, server: mobileServer},
+		{name: "webhook API", listener: webhookListener, server: webhookServer},
+	}); err != nil {
 		log.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
@@ -336,43 +359,72 @@ type listenerResult struct {
 	err  error
 }
 
+type namedHTTP struct {
+	name     string
+	listener net.Listener
+	server   *http.Server
+}
+
 func serveBoth(ctx context.Context, legacyListener net.Listener, legacyServer *http.Server, mobileListener net.Listener, mobileServer *http.Server) error {
+	return serveNamedHTTP(ctx, []namedHTTP{
+		{name: "legacy API", listener: legacyListener, server: legacyServer},
+		{name: "mobile API", listener: mobileListener, server: mobileServer},
+	})
+}
+
+func serveNamedHTTP(ctx context.Context, listeners []namedHTTP) error {
+	if len(listeners) == 0 {
+		return errors.New("no HTTP listeners")
+	}
 	serveCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make(chan listenerResult, 2)
+	results := make(chan listenerResult, len(listeners))
 
-	serve := func(name string, listener net.Listener, server *http.Server) {
-		err := server.Serve(listener)
+	serve := func(item namedHTTP) {
+		err := item.server.Serve(item.listener)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
-		results <- listenerResult{name: name, err: err}
+		results <- listenerResult{name: item.name, err: err}
 	}
-	go serve("legacy API", legacyListener, legacyServer)
-	go serve("mobile API", mobileListener, mobileServer)
+	for _, item := range listeners {
+		go serve(item)
+	}
 	go func() {
 		<-serveCtx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		_ = legacyServer.Shutdown(shutdownCtx)
-		_ = mobileServer.Shutdown(shutdownCtx)
+		for _, item := range listeners {
+			_ = item.server.Shutdown(shutdownCtx)
+		}
 	}()
 
-	first := <-results
+	var first listenerResult
+	remaining := len(listeners)
+	first = <-results
+	remaining--
 	if first.err != nil {
 		cancel()
-		<-results
+		for remaining > 0 {
+			<-results
+			remaining--
+		}
 		return fmt.Errorf("%s: %w", first.name, first.err)
 	}
 	if ctx.Err() == nil {
 		cancel()
-		<-results
+		for remaining > 0 {
+			<-results
+			remaining--
+		}
 		return fmt.Errorf("%s stopped unexpectedly", first.name)
 	}
-
-	second := <-results
-	if second.err != nil {
-		return fmt.Errorf("%s: %w", second.name, second.err)
+	for remaining > 0 {
+		next := <-results
+		remaining--
+		if next.err != nil {
+			return fmt.Errorf("%s: %w", next.name, next.err)
+		}
 	}
 	return nil
 }

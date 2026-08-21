@@ -70,6 +70,12 @@ func (s *Server) handleRoutineRoutes(w http.ResponseWriter, r *http.Request) {
 		s.setRoutineHeartbeat(w, r, routineID)
 	case action == "test" && r.Method == http.MethodPost:
 		s.testRoutine(w, r, routineID)
+	case action == "webhook" && r.Method == http.MethodGet:
+		s.getRoutineWebhook(w, r, routineID)
+	case action == "webhook" && r.Method == http.MethodPost:
+		s.rotateRoutineWebhook(w, r, routineID)
+	case action == "webhook" && r.Method == http.MethodDelete:
+		s.revokeRoutineWebhook(w, r, routineID)
 	case action == "runs" && r.Method == http.MethodGet:
 		s.listRoutineRuns(w, r, routineID)
 	case action == "history" && r.Method == http.MethodGet:
@@ -304,6 +310,56 @@ func (s *Server) testRoutine(w http.ResponseWriter, r *http.Request, routineID s
 		"routine": updated,
 		"run":     claimed,
 	})
+}
+
+func (s *Server) getRoutineWebhook(w http.ResponseWriter, r *http.Request, routineID string) {
+	if s.Store == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("agent store unavailable"))
+		return
+	}
+	item, err := s.Store.GetRoutineWebhook(r.Context(), routineID)
+	if err != nil {
+		s.writeRoutineError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"webhook": item, "path": routineWebhookPath(routineID)})
+}
+
+func (s *Server) rotateRoutineWebhook(w http.ResponseWriter, r *http.Request, routineID string) {
+	if s.Store == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("agent store unavailable"))
+		return
+	}
+	item, secret, err := s.Store.RotateRoutineWebhook(r.Context(), routineID)
+	if err != nil {
+		s.writeRoutineError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, map[string]any{
+		"webhook": item,
+		"secret":  secret,
+		"path":    routineWebhookPath(routineID),
+	})
+}
+
+func (s *Server) revokeRoutineWebhook(w http.ResponseWriter, r *http.Request, routineID string) {
+	if s.Store == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("agent store unavailable"))
+		return
+	}
+	if err := s.Store.RevokeRoutineWebhook(r.Context(), routineID); err != nil {
+		if errors.Is(err, store.ErrRoutineWebhookInvalid) {
+			s.writeErrorStatus(w, http.StatusNotFound, errors.New("webhook is not configured"))
+			return
+		}
+		s.writeRoutineError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func routineWebhookPath(routineID string) string {
+	return "/hooks/routines/" + strings.TrimSpace(routineID)
 }
 
 func (s *Server) setRoutineHeartbeat(w http.ResponseWriter, r *http.Request, routineID string) {

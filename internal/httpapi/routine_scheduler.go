@@ -173,7 +173,7 @@ func (s *Server) finishRoutineOccurrence(ctx context.Context, routine domain.Rou
 		Reason:     reason,
 		Now:        now,
 	}
-	if state == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron && claimed.Trigger != domain.RoutineTriggerTest {
+	if state == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron && !domain.RoutineSkipsSchedule(claimed.Trigger) {
 		next, err := domain.NextCronTime(routine.CronExpression, routine.TimeZone, now)
 		if err != nil {
 			finish.State = domain.RoutineLedgerFailed
@@ -330,6 +330,43 @@ func (s *Server) routineTestClaimApprovalID(ctx context.Context, routine domain.
 	return "", "", errRoutineWaitingApproval
 }
 
+func (s *Server) routineWebhookClaimApprovalID(ctx context.Context, routine domain.Routine, now time.Time) (approvalID, occurrenceKey string, err error) {
+	if routine.ApprovalPolicy != domain.RoutineApprovalAlways {
+		return "", "", nil
+	}
+	approvals, err := s.Store.ListApprovals(ctx, "")
+	if err != nil {
+		return "", "", err
+	}
+	var pending bool
+	for _, approval := range approvals {
+		trigger, routineID, key, ok := store.ParseRoutineApprovalAction(approval.Action)
+		if !ok || trigger != domain.RoutineTriggerWebhook || routineID != routine.ID {
+			continue
+		}
+		switch approval.Status {
+		case "approved":
+			used, usedErr := s.Store.RoutineLedgerHasApproval(ctx, approval.ID)
+			if usedErr != nil {
+				return "", "", usedErr
+			}
+			if used {
+				continue
+			}
+			return approval.ID, key, nil
+		case "pending":
+			pending = true
+		}
+	}
+	if pending {
+		return "", "", errRoutineWaitingApproval
+	}
+	if err := s.requestRoutineApproval(ctx, routine, now, id.New("occurrence"), domain.RoutineTriggerWebhook); err != nil {
+		return "", "", err
+	}
+	return "", "", errRoutineWaitingApproval
+}
+
 func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Routine, now time.Time, occurrenceKey, trigger string) error {
 	occurrenceKey = strings.TrimSpace(occurrenceKey)
 	if occurrenceKey == "" {
@@ -342,6 +379,11 @@ func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Rout
 		action = store.RoutineTestApprovalAction(routine.ID, occurrenceKey)
 		title = "Test routine: " + routine.Name
 		prompt = "Approve test routine: " + routine.Name
+	}
+	if trigger == domain.RoutineTriggerWebhook {
+		action = store.RoutineWebhookApprovalAction(routine.ID, occurrenceKey)
+		title = "Webhook routine: " + routine.Name
+		prompt = "Approve webhook routine: " + routine.Name
 	}
 	existing, err := s.Store.ListApprovals(ctx, "pending")
 	if err != nil {
@@ -397,11 +439,15 @@ func (s *Server) finishRoutineApproval(ctx context.Context, approval domain.Appr
 			s.startApprovedRoutineTest(ctx, routineID, occurrenceKey, approval.ID)
 			return
 		}
+		if trigger == domain.RoutineTriggerWebhook {
+			s.startApprovedRoutineWebhook(ctx, routineID, occurrenceKey, approval.ID)
+			return
+		}
 		go func() { _ = s.TickRoutines(s.occurrenceContext(context.Background())) }()
 		return
 	}
 	_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "routine occurrence denied", "run.stopped", `{"status":"stopped","reason":"routine_denied"}`)
-	if trigger == domain.RoutineTriggerTest {
+	if domain.RoutineSkipsSchedule(trigger) {
 		if item, getErr := s.Store.GetRoutine(ctx, routineID); getErr == nil {
 			s.publishRoutine(item)
 		}
@@ -435,6 +481,28 @@ func (s *Server) startApprovedRoutineTest(ctx context.Context, routineID, occurr
 	})
 	if err != nil {
 		slog.Warn("approved test routine claim failed", "routine", routineID, "error", err)
+		return
+	}
+	s.launchRoutineOccurrence(ctx, item, claimed)
+}
+
+func (s *Server) startApprovedRoutineWebhook(ctx context.Context, routineID, occurrenceKey, approvalID string) {
+	item, err := s.Store.GetRoutine(ctx, routineID)
+	if err != nil {
+		slog.Warn("approved webhook routine missing", "routine", routineID, "error", err)
+		return
+	}
+	claimed, err := s.Store.ClaimWebhookRoutineRun(ctx, domain.RoutineClaim{
+		RoutineID:      routineID,
+		LeaseOwner:     s.routineOwner(),
+		LeaseDuration:  s.leaseDuration(),
+		IdempotencyKey: id.New("claim"),
+		ApprovalID:     approvalID,
+		OccurrenceKey:  occurrenceKey,
+		Now:            s.currentTime(),
+	})
+	if err != nil {
+		slog.Warn("approved webhook routine claim failed", "routine", routineID, "error", err)
 		return
 	}
 	s.launchRoutineOccurrence(ctx, item, claimed)
@@ -518,6 +586,10 @@ func scheduledRoutinePrompt(routine domain.Routine, trigger string) (content, pr
 	if trigger == domain.RoutineTriggerTest {
 		label = "Test routine"
 		due = "was requested as a test run. Complete this task now."
+	}
+	if trigger == domain.RoutineTriggerWebhook {
+		label = "Webhook routine"
+		due = "was triggered by a signed webhook. Complete this task now."
 	}
 	content = label + ": " + strings.TrimSpace(routine.Name)
 	if description := strings.TrimSpace(routine.Description); description != "" {

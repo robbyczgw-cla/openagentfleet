@@ -385,7 +385,7 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 		claim.Trigger = domain.RoutineTriggerSchedule
 	}
 	claim.Now = routineNow(claim.Now)
-	if claim.Trigger != domain.RoutineTriggerSchedule && claim.Trigger != domain.RoutineTriggerTest {
+	if claim.Trigger != domain.RoutineTriggerSchedule && claim.Trigger != domain.RoutineTriggerTest && claim.Trigger != domain.RoutineTriggerWebhook {
 		return domain.RoutineRun{}, fmt.Errorf("unsupported routine trigger %q", claim.Trigger)
 	}
 	if claim.RoutineID == "" || !validRoutineTokenText(claim.LeaseOwner, maxRoutineOwnerBytes) {
@@ -429,8 +429,8 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 	if routine.Status == domain.RoutineStatusNeedsAttention {
 		return domain.RoutineRun{}, ErrRoutineNeedsAttention
 	}
-	isTest := claim.Trigger == domain.RoutineTriggerTest
-	if !isTest {
+	skipSchedule := domain.RoutineSkipsSchedule(claim.Trigger)
+	if !skipSchedule || claim.Trigger == domain.RoutineTriggerWebhook {
 		if routine.Status == domain.RoutineStatusPaused {
 			return domain.RoutineRun{}, ErrRoutinePaused
 		}
@@ -446,7 +446,7 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 	}
 	occurrenceKey := routine.OccurrenceKey
 	scheduledFor := routine.NextRunAt
-	if isTest {
+	if skipSchedule {
 		occurrenceKey = claim.OccurrenceKey
 		if occurrenceKey == "" {
 			occurrenceKey = id.New("occurrence")
@@ -458,7 +458,7 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 			return domain.RoutineRun{}, err
 		}
 	}
-	if !isTest {
+	if !skipSchedule {
 		if routine.NextRunAt == "" || routine.OccurrenceKey == "" || routine.NextRunAt > routineTimestamp(claim.Now) {
 			return domain.RoutineRun{}, ErrRoutineNotDue
 		}
@@ -518,8 +518,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?, ?, ?)`,
 		return domain.RoutineRun{}, fmt.Errorf("claim routine run: %w", err)
 	}
 	claimedMessage := fmt.Sprintf("attempt %d claimed", run.Attempt)
-	if isTest {
-		claimedMessage = fmt.Sprintf("test attempt %d claimed", run.Attempt)
+	if skipSchedule {
+		claimedMessage = fmt.Sprintf("%s attempt %d claimed", claim.Trigger, run.Attempt)
 	}
 	if err := appendRoutineEvent(ctx, conn, routine.ID, run.ID, "run.claimed", claimedMessage, timestamp); err != nil {
 		return domain.RoutineRun{}, err
@@ -573,8 +573,8 @@ func (s *Store) FinishRoutineRun(ctx context.Context, finish domain.RoutineFinis
 	if err != nil {
 		return domain.RoutineRun{}, err
 	}
-	isTest := run.Trigger == domain.RoutineTriggerTest
-	if !isTest && finish.State == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron {
+	skipSchedule := domain.RoutineSkipsSchedule(run.Trigger)
+	if !skipSchedule && finish.State == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron {
 		if finish.NextRunAt.IsZero() || !finish.NextRunAt.After(finish.Now) {
 			return domain.RoutineRun{}, ErrRoutineNextRunRequired
 		}
@@ -597,7 +597,7 @@ WHERE id = ? AND lease_owner = ? AND lease_token = ? AND state IN ('claimed', 'r
 	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
 		return domain.RoutineRun{}, ErrRoutineLeaseLost
 	}
-	if !isTest {
+	if !skipSchedule {
 		if finish.State == domain.RoutineLedgerCompleted {
 			nextRun := finish.NextRunAt.UTC()
 			if routine.Kind == domain.RoutineKindHeartbeat {
@@ -1090,14 +1090,19 @@ func RoutineTestApprovalAction(routineID, occurrenceKey string) string {
 	return "routine.test:" + strings.TrimSpace(routineID) + ":" + strings.TrimSpace(occurrenceKey)
 }
 
+func RoutineWebhookApprovalAction(routineID, occurrenceKey string) string {
+	return "routine.webhook:" + strings.TrimSpace(routineID) + ":" + strings.TrimSpace(occurrenceKey)
+}
+
 // ParseRoutineApprovalAction extracts trigger, routine id, and occurrence key
-// from a scheduled or test gate-approval action.
+// from a scheduled, test, or webhook gate-approval action.
 func ParseRoutineApprovalAction(action string) (trigger, routineID, occurrenceKey string, ok bool) {
 	action = strings.TrimSpace(action)
 	prefixes := []struct {
 		prefix  string
 		trigger string
 	}{
+		{"routine.webhook:", domain.RoutineTriggerWebhook},
 		{"routine.test:", domain.RoutineTriggerTest},
 		{"routine.run:", domain.RoutineTriggerSchedule},
 	}
@@ -1139,6 +1144,9 @@ func validateRoutineApproval(ctx context.Context, source routineSQL, approvalID,
 	expected := RoutineApprovalAction(routineID, occurrenceKey)
 	if trigger == domain.RoutineTriggerTest {
 		expected = RoutineTestApprovalAction(routineID, occurrenceKey)
+	}
+	if trigger == domain.RoutineTriggerWebhook {
+		expected = RoutineWebhookApprovalAction(routineID, occurrenceKey)
 	}
 	if status != "approved" || action != expected {
 		return ErrRoutineApprovalInvalid

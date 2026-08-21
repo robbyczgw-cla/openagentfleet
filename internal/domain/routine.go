@@ -77,7 +77,22 @@ const (
 const (
 	RoutineTriggerSchedule = "schedule"
 	RoutineTriggerTest     = "test"
+	RoutineTriggerWebhook  = "webhook"
 )
+
+// RoutineSkipsSchedule is true when a run must not consume next_run_at.
+func RoutineSkipsSchedule(trigger string) bool {
+	return trigger == RoutineTriggerTest || trigger == RoutineTriggerWebhook
+}
+
+// RoutineWebhook is the public view of a delivery credential. The secret is
+// never stored here; Create/Rotate return it once on a different type.
+type RoutineWebhook struct {
+	RoutineID  string `json:"routine_id"`
+	Configured bool   `json:"configured"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+}
 
 type RoutineRetryPolicy struct {
 	MaxAttempts    int `json:"max_attempts"`

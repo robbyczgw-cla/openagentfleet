@@ -43,6 +43,9 @@ built from the same commit. The current public download remains
 - The workspace Routines panel lists next run, pause/enable, and history.
 - Routines can be test-run without enabling or consuming the next scheduled
   occurrence.
+- Enabled routines can expose a signed loopback webhook (`127.0.0.1:4319`).
+  The secret is hashed at rest and shown once. Delivery does not inject the
+  request body into the Agent prompt and does not consume next-run.
 
 ## 0.3.0-alpha
 

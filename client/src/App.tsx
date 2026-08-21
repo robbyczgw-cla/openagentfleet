@@ -1596,6 +1596,13 @@ function App() {
   );
   const [routineRuns, setRoutineRuns] = useState<RoutineRun[]>([]);
   const [routineHistory, setRoutineHistory] = useState<RoutineEvent[]>([]);
+  const [routineWebhook, setRoutineWebhook] = useState<{
+    configured: boolean;
+    path: string;
+  } | null>(null);
+  const [routineWebhookSecret, setRoutineWebhookSecret] = useState<string | null>(
+    null,
+  );
   const [routineDraft, setRoutineDraft] = useState<RoutineDraftForm>(() =>
     emptyRoutineDraft(),
   );
@@ -2401,6 +2408,7 @@ function App() {
 
   useEffect(() => {
     selectedRoutineIDRef.current = selectedRoutineID;
+    setRoutineWebhookSecret(null);
   }, [selectedRoutineID]);
 
   useEffect(() => {
@@ -3307,6 +3315,25 @@ function App() {
     }
     setRoutineRuns(payload.runs ?? []);
     setRoutineHistory(payload.history ?? []);
+    try {
+      const webhookResponse = await apiFetch(
+        `/api/routines/${encodeURIComponent(routineID)}/webhook`,
+      );
+      if (!webhookResponse.ok) {
+        setRoutineWebhook(null);
+        return;
+      }
+      const webhookPayload = (await webhookResponse.json()) as {
+        webhook?: { configured?: boolean };
+        path?: string;
+      };
+      setRoutineWebhook({
+        configured: Boolean(webhookPayload.webhook?.configured),
+        path: webhookPayload.path || `/hooks/routines/${routineID}`,
+      });
+    } catch {
+      setRoutineWebhook(null);
+    }
   }
 
   async function mutateRoutine(
@@ -3380,6 +3407,61 @@ function App() {
     } catch (error) {
       setRoutineError(
         error instanceof Error ? error.message : "Test run failed",
+      );
+    } finally {
+      setRoutineBusy(false);
+    }
+  }
+
+  async function rotateRoutineWebhook(routineID: string) {
+    setRoutineBusy(true);
+    setRoutineError(null);
+    try {
+      const response = await apiFetch(
+        `/api/routines/${encodeURIComponent(routineID)}/webhook`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        throw new Error(await readAPIError(response, "Webhook update failed"));
+      }
+      const payload = (await response.json()) as {
+        secret?: string;
+        path?: string;
+        webhook?: { configured?: boolean };
+      };
+      setRoutineWebhook({
+        configured: Boolean(payload.webhook?.configured),
+        path: payload.path || `/hooks/routines/${routineID}`,
+      });
+      setRoutineWebhookSecret(payload.secret ?? null);
+    } catch (error) {
+      setRoutineError(
+        error instanceof Error ? error.message : "Webhook update failed",
+      );
+    } finally {
+      setRoutineBusy(false);
+    }
+  }
+
+  async function revokeRoutineWebhook(routineID: string) {
+    setRoutineBusy(true);
+    setRoutineError(null);
+    try {
+      const response = await apiFetch(
+        `/api/routines/${encodeURIComponent(routineID)}/webhook`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 404) {
+        throw new Error(await readAPIError(response, "Webhook revoke failed"));
+      }
+      setRoutineWebhook({
+        configured: false,
+        path: `/hooks/routines/${routineID}`,
+      });
+      setRoutineWebhookSecret(null);
+    } catch (error) {
+      setRoutineError(
+        error instanceof Error ? error.message : "Webhook revoke failed",
       );
     } finally {
       setRoutineBusy(false);
@@ -8717,6 +8799,45 @@ function App() {
             </section>
             {selectedRoutineID ? (
               <section>
+                <h3>Webhook</h3>
+                <p>
+                  Signed deliveries stay on loopback <code>127.0.0.1:4319</code>.
+                  Proxy only that listener. The secret is shown once.
+                </p>
+                <p>
+                  <code>
+                    POST {routineWebhook?.path || `/hooks/routines/${selectedRoutineID}`}
+                  </code>
+                </p>
+                {routineWebhookSecret ? (
+                  <p>
+                    Bearer <code>{routineWebhookSecret}</code>
+                  </p>
+                ) : (
+                  <p>
+                    {routineWebhook?.configured
+                      ? "A secret is configured. Rotate to see a new one."
+                      : "No webhook secret yet."}
+                  </p>
+                )}
+                <div className="routine-actions">
+                  <button
+                    type="button"
+                    disabled={routineBusy}
+                    onClick={() => void rotateRoutineWebhook(selectedRoutineID)}
+                  >
+                    {routineWebhook?.configured ? "Rotate secret" : "Create webhook"}
+                  </button>
+                  {routineWebhook?.configured ? (
+                    <button
+                      type="button"
+                      disabled={routineBusy}
+                      onClick={() => void revokeRoutineWebhook(selectedRoutineID)}
+                    >
+                      Revoke
+                    </button>
+                  ) : null}
+                </div>
                 <h3>History</h3>
                 {routineRuns.length === 0 && routineHistory.length === 0 ? (
                   <p>No runs yet. The controller claims due routines every few seconds.</p>
@@ -8726,7 +8847,11 @@ function App() {
                       <li key={run.id}>
                         <strong>{run.state}</strong>
                         <span>
-                          {run.trigger === "test" ? "test · " : ""}
+                          {run.trigger === "test"
+                            ? "test · "
+                            : run.trigger === "webhook"
+                              ? "webhook · "
+                              : ""}
                           attempt {run.attempt}
                           {run.outcome_reason ? ` · ${run.outcome_reason}` : ""}
                         </span>
