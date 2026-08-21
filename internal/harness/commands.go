@@ -38,7 +38,8 @@ func BuildCommandWithOptions(provider, prompt, workdir string, options CommandOp
 	case "pi":
 		return buildPiRPCCommand(workdir, options)
 	case "claude":
-		return Command{Program: "claude", Args: []string{"--print", "--output-format", "stream-json", "--input-format", "text", prompt}, Dir: workdir}, nil
+		// Claude Code requires --verbose with --output-format=stream-json in --print mode.
+		return Command{Program: "claude", Args: []string{"--print", "--verbose", "--output-format", "stream-json", "--input-format", "text", prompt}, Dir: workdir}, nil
 	case "codex":
 		return Command{Program: "codex", Args: []string{"exec", "--json", "--cd", workdir, prompt}, Dir: workdir}, nil
 	case "grok":

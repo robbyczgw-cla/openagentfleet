@@ -6,7 +6,9 @@ ship paragraph dumps.
 
 ## Unreleased
 
-Nothing yet. Next work lands here.
+### Fixed
+
+- Claude Code `--print --output-format stream-json` now passes `--verbose`, which the CLI requires. Headless Claude runs no longer exit 1 on that flag pair.
 
 ## 0.3.0-alpha - 2026-08-21
 

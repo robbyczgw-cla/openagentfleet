@@ -44,6 +44,17 @@ func TestBuildCommandKeepsProviderArgumentsStructured(t *testing.T) {
 	}
 }
 
+func TestClaudePrintStreamJSONIncludesVerbose(t *testing.T) {
+	command, err := BuildCommand("claude", "inspect safely", "/tmp/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(command.Args, " ")
+	if !strings.Contains(joined, "--print") || !strings.Contains(joined, "--verbose") || !strings.Contains(joined, "--output-format stream-json") {
+		t.Fatalf("claude command missing print/verbose/stream-json: %s", joined)
+	}
+}
+
 func TestCursorCommandDoesNotEnableBroadAutoApproval(t *testing.T) {
 	command, err := BuildCommandWithOptions("cursor", "inspect safely", "/tmp/work", CommandOptions{SessionID: "chat-1", Model: "sonnet"})
 	if err != nil {
