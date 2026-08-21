@@ -19,6 +19,7 @@ built from the same commit. The current public download remains
   approval, with in-app Approve / Deny / Stop / Open Agent actions.
   Linux uses notify-send. macOS uses Notification Center
   (UNUserNotificationCenter, osascript fallback).
+- Review panel lists pending approvals and recent Agent runs.
 - Sidebar Agents can be pinned, marked unread, or hidden.
 - Mobile pairing in Settings shows a QR code of the same Tailnet bundle
   JSON as the copyable text.

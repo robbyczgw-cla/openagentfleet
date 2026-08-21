@@ -26,6 +26,12 @@ import {
 } from "./presence";
 import { hiddenAgentCount, visibleSortedBots } from "./agentRoster";
 import { pairingQRSvg } from "./pairingQr";
+import {
+  firstAllowOptionID,
+  parseReviewQueue,
+  reviewApprovalStub,
+  type ReviewItem,
+} from "./reviewQueue";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -1589,6 +1595,10 @@ function App() {
   const [preferences, setPreferences] = useState<Preferences>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [routinesOpen, setRoutinesOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [routineBusy, setRoutineBusy] = useState(false);
   const [routineError, setRoutineError] = useState<string | null>(null);
   const [selectedRoutineID, setSelectedRoutineID] = useState<string | null>(
@@ -1706,6 +1716,7 @@ function App() {
   const computerFrameFocusPendingRef = useRef(false);
   const settingsCloseRef = useRef<HTMLButtonElement>(null);
   const routinesCloseRef = useRef<HTMLButtonElement>(null);
+  const reviewCloseRef = useRef<HTMLButtonElement>(null);
   const teachGoalRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -2352,6 +2363,11 @@ function App() {
   }, [settingsOpen, apiReady, memoryBotID]);
 
   useEffect(() => {
+    if (!reviewOpen || !apiReady) return;
+    void loadReviewQueue();
+  }, [reviewOpen, apiReady]);
+
+  useEffect(() => {
     if (
       !mobilePairingBundle ||
       new Date(mobilePairingBundle.expiresAt).getTime() > now
@@ -2379,6 +2395,7 @@ function App() {
       !computerViewOpen &&
       !settingsOpen &&
       !routinesOpen &&
+      !reviewOpen &&
       !teachGoalOpen &&
       !agentBuilderOpen
     )
@@ -2388,6 +2405,7 @@ function App() {
       if (botMenuID) setBotMenuID(null);
       else if (agentBuilderOpen) setAgentBuilderOpen(false);
       else if (teachGoalOpen) setTeachGoalOpen(false);
+      else if (reviewOpen) setReviewOpen(false);
       else if (routinesOpen) setRoutinesOpen(false);
       else if (settingsOpen) closeSettings();
       else closeComputerView();
@@ -2397,14 +2415,16 @@ function App() {
       ? undefined
       : teachGoalOpen
       ? teachGoalRef.current
-      : routinesOpen
-        ? routinesCloseRef.current
-        : settingsOpen
-          ? settingsCloseRef.current
-          : computerCloseRef.current;
+      : reviewOpen
+        ? reviewCloseRef.current
+        : routinesOpen
+          ? routinesCloseRef.current
+          : settingsOpen
+            ? settingsCloseRef.current
+            : computerCloseRef.current;
     window.setTimeout(() => focusTarget?.focus(), 0);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [computerViewOpen, settingsOpen, routinesOpen, teachGoalOpen, agentBuilderOpen, botMenuID]);
+  }, [computerViewOpen, settingsOpen, routinesOpen, reviewOpen, teachGoalOpen, agentBuilderOpen, botMenuID]);
 
   useEffect(() => {
     selectedRoutineIDRef.current = selectedRoutineID;
@@ -5044,6 +5064,29 @@ function App() {
       .slice(0, 240);
   }
 
+  async function loadReviewQueue() {
+    setReviewBusy(true);
+    try {
+      const response = await apiFetch("/api/review");
+      const payload: unknown = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = (payload as { error?: string }).error;
+        throw new Error(error ?? `botd returned ${response.status}`);
+      }
+      setReviewItems(parseReviewQueue(payload));
+      setReviewError(null);
+    } catch (reviewLoadError) {
+      setReviewItems([]);
+      setReviewError(
+        reviewLoadError instanceof Error
+          ? reviewLoadError.message
+          : "Review queue could not be loaded",
+      );
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
   async function resolveApproval(
     approval: Approval,
     status: "approved" | "denied",
@@ -5085,6 +5128,7 @@ function App() {
       // Reload the additive transcript read model so the resolved decision
       // remains visible after the pending card disappears.
       void load(data?.conversation.id ?? "");
+      if (reviewOpen) void loadReviewQueue();
     } catch (approvalError) {
       setNotice(
         approvalError instanceof Error
@@ -5997,6 +6041,13 @@ function App() {
           }
         >
           Routines
+        </button>
+        <button
+          type="button"
+          className="quiet-button"
+          onClick={() => setReviewOpen(true)}
+        >
+          Review
         </button>
         <button
           type="button"
@@ -8657,6 +8708,104 @@ function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {reviewOpen && (
+        <div
+          className="dialog-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="review-title"
+        >
+          <section className="settings-dialog review-dialog">
+            <button
+              ref={reviewCloseRef}
+              className="icon-button dialog-close"
+              onClick={() => setReviewOpen(false)}
+              aria-label="Close review"
+            >
+              ×
+            </button>
+            <div className="eyebrow">Shows its work</div>
+            <h2 id="review-title">Review</h2>
+            <p>
+              Pending approvals across Agents, then each Agent’s last finished
+              run (completed, failed, blocked, or stopped).
+            </p>
+            {reviewError ? (
+              <p className="routine-error" role="alert">
+                {reviewError}
+              </p>
+            ) : null}
+            {reviewBusy && reviewItems.length === 0 ? (
+              <p className="review-empty">Loading…</p>
+            ) : reviewItems.length === 0 ? (
+              <p className="review-empty">Nothing to review.</p>
+            ) : (
+              <ul className="review-list">
+                {reviewItems.map((item) => {
+                  const approval = reviewApprovalStub(item);
+                  return (
+                    <li
+                      key={`${item.kind}-${item.id ?? item.run_id}`}
+                      className={`review-card${item.kind === "approval" ? " is-approval" : ""}`}
+                    >
+                      <strong>
+                        {item.bot_name}
+                        {item.kind === "approval" ? " needs approval" : ""}
+                      </strong>
+                      <p>
+                        {item.kind === "approval"
+                          ? item.action || "Pending approval"
+                          : item.summary || item.status || "Run finished"}
+                      </p>
+                      <span className="review-card-meta">
+                        {item.kind === "approval" ? "Pending" : item.status} ·{" "}
+                        {formatRelativeDate(item.created_at, now)}
+                      </span>
+                      <div className="review-card-actions">
+                        {item.kind === "approval" && approval ? (
+                          <>
+                            <button
+                              type="button"
+                              className="approve-button"
+                              onClick={() =>
+                                void resolveApproval(
+                                  approval,
+                                  "approved",
+                                  firstAllowOptionID(item),
+                                )
+                              }
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void resolveApproval(approval, "denied")
+                              }
+                            >
+                              Deny
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void selectAgent(item.bot_id);
+                              setReviewOpen(false);
+                            }}
+                          >
+                            Open Agent
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         </div>
       )}
       {routinesOpen && (

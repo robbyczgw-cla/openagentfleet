@@ -291,6 +291,8 @@ func (s *Server) Handler() http.Handler {
 			s.events(w, r)
 		case r.URL.Path == "/api/approvals" && r.Method == http.MethodGet:
 			s.listApprovals(w, r)
+		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
+			s.listReview(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/approvals/") && r.Method == http.MethodPost:
 			s.resolveApproval(w, r)
 		case r.URL.Path == "/api/sessions" && r.Method == http.MethodGet:

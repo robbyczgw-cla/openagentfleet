@@ -7,16 +7,31 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 )
 
-// ListLatestRunsByBot returns at most one run per bot: the newest by
-// updated_at, then id. Used to derive live Agent roster presence.
-func (s *Store) ListLatestRunsByBot(ctx context.Context) ([]domain.Run, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, bot_id, provider, status, prompt, error, created_at, updated_at
+const latestRunSelect = `SELECT id, conversation_id, bot_id, provider, status, prompt, error, created_at, updated_at
 FROM runs r
 WHERE NOT EXISTS (
   SELECT 1 FROM runs newer
   WHERE newer.bot_id = r.bot_id
-    AND (newer.updated_at > r.updated_at OR (newer.updated_at = r.updated_at AND newer.id > r.id))
-)`)
+    AND (newer.updated_at > r.updated_at OR (newer.updated_at = r.updated_at AND newer.id > r.id))`
+
+// ListLatestRunsByBot returns at most one run per bot: the newest by
+// updated_at, then id. Used to derive live Agent roster presence.
+func (s *Store) ListLatestRunsByBot(ctx context.Context) ([]domain.Run, error) {
+	return s.listLatestRunsByBot(ctx, latestRunSelect+")")
+}
+
+// ListLatestTerminalRunsByBot returns the newest finished run per bot.
+// Blocked and stopped count as finished; queued/running/waiting do not.
+func (s *Store) ListLatestTerminalRunsByBot(ctx context.Context) ([]domain.Run, error) {
+	const terminal = "'completed', 'failed', 'blocked', 'stopped'"
+	return s.listLatestRunsByBot(ctx, latestRunSelect+`
+    AND newer.status IN (`+terminal+`)
+)
+AND r.status IN (`+terminal+`)`)
+}
+
+func (s *Store) listLatestRunsByBot(ctx context.Context, query string) ([]domain.Run, error) {
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list latest runs: %w", err)
 	}

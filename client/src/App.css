@@ -311,6 +311,18 @@ kbd { color: var(--ink-3); font-size: 11px; }
 .routine-history strong { font-size: 12px; }
 .routine-history span, .routine-history time { color: var(--ink-3); font-size: 11px; }
 .routines-dialog .primary-button { margin-top: 16px; padding: 9px 13px; border-radius: 9px; color: #fff; background: var(--accent); font-size: 12px; }
+.review-list { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+.review-card { padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.review-card.is-approval { border-color: #DCCDBF; background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface)); }
+.review-card strong { display: block; color: var(--ink); font-size: 12px; }
+.review-card p { margin: 4px 0 0; color: var(--ink-2); font-size: 12px; line-height: 1.45; }
+.review-card-meta { display: block; margin-top: 5px; color: var(--ink-3); font-size: 11px; }
+.review-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.review-card-actions button { padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--ink-2); background: var(--surface); font-size: 11px; }
+.review-card-actions button:hover:not(:disabled) { color: var(--accent-hover); background: var(--accent-soft); }
+.review-card-actions .approve-button { color: #fff; background: var(--accent); border-color: var(--accent); }
+.review-card-actions .approve-button:hover:not(:disabled) { color: #fff; background: var(--accent-hover); }
+.review-empty { margin: 16px 0 0; color: var(--ink-3); font-size: 13px; }
 .advanced-context { margin-top: 22px; border-top: 1px solid var(--border); }
 .advanced-context summary { display: flex; align-items: center; justify-content: space-between; padding: 14px 3px 2px; color: var(--ink-2); cursor: pointer; font-size: 12px; list-style: none; }
 .advanced-context summary::-webkit-details-marker { display: none; }

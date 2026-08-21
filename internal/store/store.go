@@ -728,6 +728,19 @@ func (s *Store) ListMessages(ctx context.Context, conversationID string) ([]doma
 	return result, rows.Err()
 }
 
+// LastAssistantContent returns the newest assistant message body for a
+// conversation, or empty when none exists.
+func (s *Store) LastAssistantContent(ctx context.Context, conversationID string) (string, error) {
+	var content string
+	err := s.db.QueryRowContext(ctx, `SELECT content FROM messages
+		WHERE conversation_id = ? AND role = 'assistant'
+		ORDER BY created_at DESC, id DESC LIMIT 1`, conversationID).Scan(&content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return content, err
+}
+
 func (s *Store) CreateMessage(ctx context.Context, conversationID, role, content string) (domain.Message, error) {
 	item := domain.Message{ID: id.New("msg"), ConversationID: conversationID, Role: role, Content: content, CreatedAt: now()}
 	_, err := s.db.ExecContext(ctx, "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)", item.ID, item.ConversationID, item.Role, item.Content, item.CreatedAt)
