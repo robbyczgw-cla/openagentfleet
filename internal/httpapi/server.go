@@ -253,6 +253,8 @@ func (s *Server) Handler() http.Handler {
 			s.listAgents(w, r)
 		case r.URL.Path == "/api/agents" && r.Method == http.MethodPost:
 			s.createAgent(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/agents/") && strings.HasSuffix(r.URL.Path, "/roster") && r.Method == http.MethodPatch:
+			s.patchAgentRoster(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/agents/") && r.Method == http.MethodPatch:
 			s.patchAgent(w, r)
 		case r.URL.Path == "/api/conversations" && r.Method == http.MethodGet:
@@ -2924,7 +2926,18 @@ func (s *Server) commitRunLifecycleEvent(ctx context.Context, run domain.Run, st
 	if err != nil {
 		return domain.StreamEvent{}, err
 	}
+	s.markAgentUnreadForRunStatus(ctx, run.BotID, status)
 	return s.publishStoredRunEvent(run, item), nil
+}
+
+func (s *Server) markAgentUnreadForRunStatus(ctx context.Context, botID, status string) {
+	if s.Store == nil || botID == "" {
+		return
+	}
+	switch status {
+	case "waiting_for_approval", "failed", "blocked":
+		_ = s.Store.MarkAgentUnread(ctx, botID)
+	}
 }
 
 // commitTerminalRunLifecycleEvent keeps terminal state transitions durable

@@ -290,6 +290,126 @@ func TestRoutineSchedulerDeniedOccurrenceAdvances(t *testing.T) {
 	}
 }
 
+func TestRoutineTestRunOnDisabledLeavesNextRunUnchanged(t *testing.T) {
+	server, instance, botID := openRoutineScheduler(t)
+	now := time.Date(2027, time.March, 4, 11, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	enableRoutineFeatures(t, instance, false)
+	var runs atomic.Int32
+	server.routineRunner = func(context.Context, domain.Routine, domain.RoutineRun) error {
+		runs.Add(1)
+		return nil
+	}
+	created, err := instance.CreateRoutine(t.Context(), domain.RoutineDraft{
+		BotID:          botID,
+		Name:           "Draft notes",
+		Kind:           domain.RoutineKindCron,
+		CronExpression: "0 9 * * *",
+		TimeZone:       "UTC",
+		LeadHarness:    domain.RoutineLeadGrokBuild,
+		Worker:         domain.RoutineWorkerGrok,
+		ApprovalPolicy: domain.RoutineApprovalNever,
+		Retry:          domain.RoutineRetryPolicy{MaxAttempts: 1, BackoffSeconds: 0},
+		NextRunAt:      now.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Status != domain.RoutineStatusDisabled {
+		t.Fatalf("created status = %s", created.Status)
+	}
+	handler := server.Handler()
+	tested := performRequest(handler, http.MethodPost, "/api/routines/"+created.ID+"/test", "", "")
+	if tested.Code != http.StatusAccepted {
+		t.Fatalf("test disabled = %d %s", tested.Code, tested.Body.String())
+	}
+	if runs.Load() != 1 {
+		t.Fatalf("test executor calls = %d, want 1", runs.Load())
+	}
+	ledger, err := instance.ListRoutineRuns(t.Context(), created.ID, 10)
+	if err != nil || len(ledger) != 1 || ledger[0].State != domain.RoutineLedgerCompleted || ledger[0].Trigger != domain.RoutineTriggerTest {
+		t.Fatalf("test ledger = %#v, %v", ledger, err)
+	}
+	updated, err := instance.GetRoutine(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != domain.RoutineStatusDisabled || updated.NextRunAt != created.NextRunAt || updated.OccurrenceKey != created.OccurrenceKey {
+		t.Fatalf("disabled test rotated the schedule: before=%#v after=%#v", created, updated)
+	}
+	missing := performRequest(handler, http.MethodPost, "/api/routines/routine-missing/test", "", "")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing test = %d %s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestRoutineTestRunConflictsWhenNeedsAttention(t *testing.T) {
+	server, instance, botID := openRoutineScheduler(t)
+	now := time.Date(2027, time.March, 4, 11, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	enableRoutineFeatures(t, instance, false)
+	server.routineRunner = func(context.Context, domain.Routine, domain.RoutineRun) error {
+		return errors.New("boom")
+	}
+	routine := createEnabledRoutine(t, instance, botID, now, domain.RoutineApprovalNever)
+	if err := server.TickRoutines(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := instance.GetRoutine(t.Context(), routine.ID)
+	if err != nil || updated.Status != domain.RoutineStatusNeedsAttention {
+		t.Fatalf("failed routine = %#v, %v", updated, err)
+	}
+	tested := performRequest(server.Handler(), http.MethodPost, "/api/routines/"+routine.ID+"/test", "", "")
+	if tested.Code != http.StatusConflict || !strings.Contains(tested.Body.String(), "needs attention") {
+		t.Fatalf("test needs_attention = %d %s", tested.Code, tested.Body.String())
+	}
+}
+
+func TestRoutineTestRunDenyDoesNotRotateNextRun(t *testing.T) {
+	server, instance, botID := openRoutineScheduler(t)
+	now := time.Date(2027, time.March, 4, 11, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	enableRoutineFeatures(t, instance, false)
+	var runs atomic.Int32
+	server.routineRunner = func(context.Context, domain.Routine, domain.RoutineRun) error {
+		runs.Add(1)
+		return nil
+	}
+	routine := createEnabledRoutine(t, instance, botID, now, domain.RoutineApprovalAlways)
+	tested := performRequest(server.Handler(), http.MethodPost, "/api/routines/"+routine.ID+"/test", "", "")
+	if tested.Code != http.StatusAccepted || !strings.Contains(tested.Body.String(), `"waiting_for_approval":true`) {
+		t.Fatalf("test always-approval = %d %s", tested.Code, tested.Body.String())
+	}
+	if runs.Load() != 0 {
+		t.Fatal("always-approval test ran before approval")
+	}
+	approvals, err := instance.ListApprovals(t.Context(), "pending")
+	if err != nil || len(approvals) != 1 {
+		t.Fatalf("pending approvals = %#v, %v", approvals, err)
+	}
+	denied := performRequest(server.Handler(), http.MethodPost, "/api/approvals/"+approvals[0].ID, `{"status":"denied","option_id":"reject"}`, "")
+	if denied.Code != http.StatusOK {
+		t.Fatalf("deny test = %d %s", denied.Code, denied.Body.String())
+	}
+	updated, err := instance.GetRoutine(t.Context(), routine.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != domain.RoutineStatusEnabled {
+		t.Fatalf("denied test status = %s", updated.Status)
+	}
+	if updated.NextRunAt != routine.NextRunAt || updated.OccurrenceKey != routine.OccurrenceKey {
+		t.Fatalf("denied test rotated the schedule: before=%#v after=%#v", routine, updated)
+	}
+	if runs.Load() != 0 {
+		t.Fatalf("denied test still ran: %d", runs.Load())
+	}
+	ledger, err := instance.ListRoutineRuns(t.Context(), routine.ID, 10)
+	if err != nil || len(ledger) != 0 {
+		t.Fatalf("denied test claimed a run: %#v, %v", ledger, err)
+	}
+}
+
 func TestEnableAndResolveIgnorePastNextRun(t *testing.T) {
 	server, instance, botID := openRoutineScheduler(t)
 	now := time.Date(2027, time.March, 4, 11, 0, 0, 0, time.UTC)

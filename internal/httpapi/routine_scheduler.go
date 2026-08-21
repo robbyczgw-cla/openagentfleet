@@ -107,6 +107,10 @@ func (s *Server) claimDueRoutine(ctx context.Context, routine domain.Routine, no
 		slog.Warn("routine claim failed", "routine", routine.ID, "error", err)
 		return
 	}
+	s.launchRoutineOccurrence(ctx, routine, claimed)
+}
+
+func (s *Server) launchRoutineOccurrence(ctx context.Context, routine domain.Routine, claimed domain.RoutineRun) {
 	runCtx := s.occurrenceContext(ctx)
 	if s.routineRunner != nil {
 		s.completeRoutineOccurrence(runCtx, routine, claimed)
@@ -169,7 +173,7 @@ func (s *Server) finishRoutineOccurrence(ctx context.Context, routine domain.Rou
 		Reason:     reason,
 		Now:        now,
 	}
-	if state == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron {
+	if state == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron && claimed.Trigger != domain.RoutineTriggerTest {
 		next, err := domain.NextCronTime(routine.CronExpression, routine.TimeZone, now)
 		if err != nil {
 			finish.State = domain.RoutineLedgerFailed
@@ -187,7 +191,7 @@ func (s *Server) finishRoutineOccurrence(ctx context.Context, routine domain.Rou
 	}
 }
 
-func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Routine, _ domain.RoutineRun) error {
+func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Routine, occurrence domain.RoutineRun) error {
 	conversation, err := s.Store.CanonicalConversationForBot(ctx, routine.BotID)
 	if err != nil {
 		return err
@@ -201,7 +205,7 @@ func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Rou
 		return err
 	}
 	provider := configuredLeadProvider(string(routine.LeadHarness))
-	content, prompt := scheduledRoutinePrompt(routine)
+	content, prompt := scheduledRoutinePrompt(routine, occurrence.Trigger)
 	memories, err := s.Store.RetrieveBotMemories(ctx, routine.BotID, memoryPromptMaxCount, memoryPromptMaxBytes)
 	if err != nil {
 		return err
@@ -283,14 +287,62 @@ func (s *Server) routineClaimApprovalID(ctx context.Context, routine domain.Rout
 	if pending {
 		return "", errRoutineWaitingApproval
 	}
-	if err := s.requestRoutineApproval(ctx, routine, now); err != nil {
+	if err := s.requestRoutineApproval(ctx, routine, now, routine.OccurrenceKey, domain.RoutineTriggerSchedule); err != nil {
 		return "", err
 	}
 	return "", errRoutineWaitingApproval
 }
 
-func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Routine, now time.Time) error {
-	action := store.RoutineApprovalAction(routine.ID, routine.OccurrenceKey)
+func (s *Server) routineTestClaimApprovalID(ctx context.Context, routine domain.Routine, now time.Time) (approvalID, occurrenceKey string, err error) {
+	if routine.ApprovalPolicy != domain.RoutineApprovalAlways {
+		return "", "", nil
+	}
+	approvals, err := s.Store.ListApprovals(ctx, "")
+	if err != nil {
+		return "", "", err
+	}
+	var pending bool
+	for _, approval := range approvals {
+		trigger, routineID, key, ok := store.ParseRoutineApprovalAction(approval.Action)
+		if !ok || trigger != domain.RoutineTriggerTest || routineID != routine.ID {
+			continue
+		}
+		switch approval.Status {
+		case "approved":
+			used, usedErr := s.Store.RoutineLedgerHasApproval(ctx, approval.ID)
+			if usedErr != nil {
+				return "", "", usedErr
+			}
+			if used {
+				continue
+			}
+			return approval.ID, key, nil
+		case "pending":
+			pending = true
+		}
+	}
+	if pending {
+		return "", "", errRoutineWaitingApproval
+	}
+	if err := s.requestRoutineApproval(ctx, routine, now, id.New("occurrence"), domain.RoutineTriggerTest); err != nil {
+		return "", "", err
+	}
+	return "", "", errRoutineWaitingApproval
+}
+
+func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Routine, now time.Time, occurrenceKey, trigger string) error {
+	occurrenceKey = strings.TrimSpace(occurrenceKey)
+	if occurrenceKey == "" {
+		occurrenceKey = routine.OccurrenceKey
+	}
+	action := store.RoutineApprovalAction(routine.ID, occurrenceKey)
+	title := "Scheduled routine: " + routine.Name
+	prompt := "Approve scheduled routine: " + routine.Name
+	if trigger == domain.RoutineTriggerTest {
+		action = store.RoutineTestApprovalAction(routine.ID, occurrenceKey)
+		title = "Test routine: " + routine.Name
+		prompt = "Approve test routine: " + routine.Name
+	}
 	existing, err := s.Store.ListApprovals(ctx, "pending")
 	if err != nil {
 		return err
@@ -304,7 +356,7 @@ func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Rout
 	if err != nil {
 		return err
 	}
-	run, queued, err := s.Store.CreateRunWithQueuedEvent(ctx, conversation.ID, conversation.BotID, "openagentfleet", "Approve scheduled routine: "+routine.Name)
+	run, queued, err := s.Store.CreateRunWithQueuedEvent(ctx, conversation.ID, conversation.BotID, "openagentfleet", prompt)
 	if err != nil {
 		return err
 	}
@@ -314,9 +366,9 @@ func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Rout
 			{"optionId": "allow_once", "name": "Allow this run", "kind": "allow_once"},
 			{"optionId": "reject", "name": "Deny this run", "kind": "reject_once"},
 		},
-		"tool_call": map[string]string{"title": "Scheduled routine: " + routine.Name},
+		"tool_call": map[string]string{"title": title},
 	})
-	approval, err := s.Store.CreateApproval(ctx, run.ID, "openagentfleet", store.RoutineApprovalAction(routine.ID, routine.OccurrenceKey), string(payload))
+	approval, err := s.Store.CreateApproval(ctx, run.ID, "openagentfleet", action, string(payload))
 	if err != nil {
 		return err
 	}
@@ -331,26 +383,61 @@ func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Rout
 }
 
 func (s *Server) finishRoutineApproval(ctx context.Context, approval domain.ApprovalRequest, status string) {
-	if !strings.HasPrefix(approval.Action, "routine.run:") {
+	trigger, routineID, occurrenceKey, ok := store.ParseRoutineApprovalAction(approval.Action)
+	if !ok {
 		return
 	}
 	run, err := s.Store.GetRun(ctx, approval.RunID)
 	if err != nil {
 		return
 	}
-	routineID := strings.TrimPrefix(approval.Action, "routine.run:")
-	routineID, _, _ = strings.Cut(routineID, ":")
 	if status == "approved" {
 		_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped","reason":"routine_gate_approved"}`)
+		if trigger == domain.RoutineTriggerTest {
+			s.startApprovedRoutineTest(ctx, routineID, occurrenceKey, approval.ID)
+			return
+		}
 		go func() { _ = s.TickRoutines(s.occurrenceContext(context.Background())) }()
 		return
 	}
 	_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "routine occurrence denied", "run.stopped", `{"status":"stopped","reason":"routine_denied"}`)
+	if trigger == domain.RoutineTriggerTest {
+		if item, getErr := s.Store.GetRoutine(ctx, routineID); getErr == nil {
+			s.publishRoutine(item)
+		}
+		return
+	}
 	if routineID != "" {
 		if err := s.skipRoutineOccurrence(ctx, routineID); err != nil {
 			slog.Warn("skip denied routine occurrence", "routine", routineID, "error", err)
 		}
 	}
+}
+
+func (s *Server) startApprovedRoutineTest(ctx context.Context, routineID, occurrenceKey, approvalID string) {
+	item, err := s.Store.GetRoutine(ctx, routineID)
+	if err != nil {
+		slog.Warn("approved test routine missing", "routine", routineID, "error", err)
+		return
+	}
+	if item.Status == domain.RoutineStatusNeedsAttention {
+		slog.Warn("approved test routine needs attention", "routine", routineID)
+		return
+	}
+	claimed, err := s.Store.ClaimTestRoutineRun(ctx, domain.RoutineClaim{
+		RoutineID:      routineID,
+		LeaseOwner:     s.routineOwner(),
+		LeaseDuration:  s.leaseDuration(),
+		IdempotencyKey: id.New("claim"),
+		ApprovalID:     approvalID,
+		OccurrenceKey:  occurrenceKey,
+		Now:            s.currentTime(),
+	})
+	if err != nil {
+		slog.Warn("approved test routine claim failed", "routine", routineID, "error", err)
+		return
+	}
+	s.launchRoutineOccurrence(ctx, item, claimed)
 }
 
 func (s *Server) skipRoutineOccurrence(ctx context.Context, routineID string) error {
@@ -425,11 +512,17 @@ func (s *Server) routineOwner() string {
 	return "botd"
 }
 
-func scheduledRoutinePrompt(routine domain.Routine) (content, prompt string) {
-	content = "Scheduled routine: " + strings.TrimSpace(routine.Name)
+func scheduledRoutinePrompt(routine domain.Routine, trigger string) (content, prompt string) {
+	label := "Scheduled routine"
+	due := "is due. Complete this task now."
+	if trigger == domain.RoutineTriggerTest {
+		label = "Test routine"
+		due = "was requested as a test run. Complete this task now."
+	}
+	content = label + ": " + strings.TrimSpace(routine.Name)
 	if description := strings.TrimSpace(routine.Description); description != "" {
 		content += "\n\n" + description
 	}
-	prompt = "OpenAgentFleet scheduled routine " + strings.TrimSpace(routine.Name) + " is due. Complete this task now.\n\n" + content
+	prompt = "OpenAgentFleet " + strings.ToLower(label) + " " + strings.TrimSpace(routine.Name) + " " + due + "\n\n" + content
 	return content, prompt
 }

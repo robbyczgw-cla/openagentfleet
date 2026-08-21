@@ -46,6 +46,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := s.MigrateRoster(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -231,6 +235,15 @@ CREATE TABLE IF NOT EXISTS mobile_message_idempotency (
   device_id TEXT NOT NULL REFERENCES remote_devices(id) ON DELETE CASCADE,
   key_hash BLOB NOT NULL CHECK(length(key_hash) = 32),
   request_hash BLOB NOT NULL CHECK(length(request_hash) = 32),
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(device_id, key_hash)
+);
+CREATE TABLE IF NOT EXISTS mobile_mutation_idempotency (
+  device_id TEXT NOT NULL REFERENCES remote_devices(id) ON DELETE CASCADE,
+  key_hash BLOB NOT NULL CHECK(length(key_hash) = 32),
+  request_hash BLOB NOT NULL CHECK(length(request_hash) = 32),
+  status_code INTEGER NOT NULL,
   response_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY(device_id, key_hash)

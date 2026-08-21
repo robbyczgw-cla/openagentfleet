@@ -138,6 +138,51 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, s.decorateOneAgent(r.Context(), agent))
 }
 
+type agentRosterPatchRequest struct {
+	Pinned *bool `json:"pinned"`
+	Hidden *bool `json:"hidden"`
+	Unread *bool `json:"unread"`
+}
+
+func (s *Server) patchAgentRoster(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("agent store unavailable"))
+		return
+	}
+	botID, ok := parseAgentRosterPath(r.URL.Path)
+	if !ok {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("agent id is required"))
+		return
+	}
+	var request agentRosterPatchRequest
+	if err := decodeStrictJSON(w, r, &request); err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	if request.Pinned == nil && request.Hidden == nil && request.Unread == nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("at least one roster field is required"))
+		return
+	}
+	agent, err := s.Store.PatchAgentRoster(r.Context(), botID, store.AgentRosterUpdate{
+		Pinned: request.Pinned, Hidden: request.Hidden, Unread: request.Unread,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrAgentNotFound) {
+			s.writeErrorStatus(w, http.StatusNotFound, err)
+			return
+		}
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.decorateOneAgent(r.Context(), agent))
+}
+
+func parseAgentRosterPath(path string) (string, bool) {
+	rest := strings.TrimPrefix(path, "/api/agents/")
+	botID, suffix, ok := strings.Cut(rest, "/")
+	return botID, ok && suffix == "roster" && botID != "" && !strings.Contains(botID, "/")
+}
+
 func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMetadataPatchRequest) (domain.AgentMetadata, error) {
 	if patch == nil {
 		return domain.AgentMetadata{}, errors.New("agent metadata patch is required")

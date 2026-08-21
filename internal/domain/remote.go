@@ -88,6 +88,32 @@ type MobileRun struct {
 	UpdatedAt      string `json:"updated_at"`
 }
 
+// MobileApproval is the phone-visible gate. It never carries provider, payload,
+// or tool_call JSON; options are optionId/name/kind only.
+type MobileApproval struct {
+	ID             string           `json:"id"`
+	RunID          string           `json:"run_id"`
+	ConversationID string           `json:"conversation_id"`
+	BotID          string           `json:"bot_id"`
+	Action         string           `json:"action"`
+	Status         string           `json:"status"`
+	CreatedAt      string           `json:"created_at"`
+	Options        []ApprovalOption `json:"options,omitempty"`
+}
+
+// MobileRoutine is the phone-visible schedule. Skill internals, workers,
+// prompts, and approval policy stay off this DTO.
+type MobileRoutine struct {
+	ID              string        `json:"id"`
+	BotID           string        `json:"bot_id"`
+	Name            string        `json:"name"`
+	Status          RoutineStatus `json:"status"`
+	Kind            RoutineKind   `json:"kind"`
+	NextRunAt       string        `json:"next_run_at,omitempty"`
+	LastRunAt       string        `json:"last_run_at,omitempty"`
+	AttentionReason string        `json:"attention_reason,omitempty"`
+}
+
 type MobileMessageResponse struct {
 	Message Message   `json:"message"`
 	Run     MobileRun `json:"run"`

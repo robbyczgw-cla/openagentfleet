@@ -10,11 +10,14 @@ The app only calls the mobile V1 API:
 
 - `GET /api/v1/meta` before pairing.
 - `POST /api/v1/pair` once with an exact, short-lived pairing bundle.
-- Authenticated bootstrap, conversations, messages, computer status/frame,
-  V1 SSE, and optional session logout routes.
+- Authenticated bootstrap, conversations, messages, pending approvals, run
+  stop, routines list/pause/enable, computer status/frame, V1 SSE, and
+  optional session logout routes.
 
 There is no manual Tailnet URL or global-token field. Paste exactly this JSON
-bundle created by the trusted Mac app:
+bundle created by the trusted Mac app, or Scan QR and paste the captured
+single-line JSON if camera permission is denied. Native camera scanning is
+not in this alpha:
 
 ```json
 {
@@ -38,6 +41,11 @@ profile are stored only through `expo-secure-store` (iOS Keychain / Android
 Keystore abstraction). Local **Disconnect this device** immediately removes
 both secure-store entries; it also best-effort calls the optional server logout
 route without relying on it for local removal.
+
+Controller and owner devices can Allow/Deny pending approvals, stop an
+active run, and pause or enable routines. Observer devices can list those
+states. Secret handoff, typing, and preferences stay in the trusted macOS
+app.
 
 ## Computer boundary
 

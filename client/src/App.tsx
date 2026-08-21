@@ -24,6 +24,8 @@ import {
   engineShortLabel,
   type AgentPresence,
 } from "./presence";
+import { hiddenAgentCount, visibleSortedBots } from "./agentRoster";
+import { pairingQRSvg } from "./pairingQr";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -250,6 +252,9 @@ type Agent = {
     notify_needs_input?: boolean;
   };
   presence?: AgentPresence;
+  pinned?: boolean;
+  hidden?: boolean;
+  unread?: boolean;
 };
 
 type Conversation = {
@@ -468,6 +473,7 @@ type RoutineRun = {
   state: string;
   scheduled_for: string;
   attempt: number;
+  trigger?: string;
   outcome_reason?: string;
   claimed_at: string;
   started_at?: string;
@@ -1469,6 +1475,7 @@ function App() {
   const [selectedConversationID, setSelectedConversationID] = useState("");
   const [agentBuilderOpen, setAgentBuilderOpen] = useState(false);
   const [botMenuID, setBotMenuID] = useState<string | null>(null);
+  const [showHiddenAgents, setShowHiddenAgents] = useState(false);
   const [composerModelOpen, setComposerModelOpen] = useState(false);
   const [composerModelDraft, setComposerModelDraft] = useState("");
   const [composerModelBusy, setComposerModelBusy] = useState(false);
@@ -2460,6 +2467,11 @@ function App() {
 		}
 		return map;
 	}, [data?.agents, data?.computer, fleetHandoffs, fleetRuns]);
+  const sidebarBots = useMemo(
+    () => visibleSortedBots(data?.bots ?? [], data?.agents, showHiddenAgents),
+    [data?.agents, data?.bots, showHiddenAgents],
+  );
+  const hiddenAgents = hiddenAgentCount(data?.agents);
 	const activeLead = activeAgent?.metadata?.lead;
 	const activeEngine = activeLead?.harness ?? preferences.workspace?.engine ?? provider;
 	const activeModel =
@@ -2637,6 +2649,14 @@ function App() {
   const mobilePairingTimer = `${String(
     Math.floor(mobilePairingRemainingSeconds / 60),
   ).padStart(2, "0")}:${String(mobilePairingRemainingSeconds % 60).padStart(2, "0")}`;
+  const mobilePairingQR = useMemo(() => {
+    if (!mobilePairingBundle) return "";
+    try {
+      return pairingQRSvg(mobilePairingBundle.text);
+    } catch {
+      return "";
+    }
+  }, [mobilePairingBundle]);
   const pendingMobileRevoke = mobileRevokeCandidateID
     ? mobileDevices.find((device) => device.id === mobileRevokeCandidateID)
     : null;
@@ -3328,6 +3348,50 @@ function App() {
     } finally {
       setRoutineBusy(false);
     }
+  }
+
+  async function testRoutine(routineID: string) {
+    setRoutineBusy(true);
+    setRoutineError(null);
+    try {
+      const response = await apiFetch(
+        `/api/routines/${encodeURIComponent(routineID)}/test`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        throw new Error(await readAPIError(response, "Test run failed"));
+      }
+      const payload = (await response.json()) as { routine?: Routine };
+      if (payload.routine) {
+        const routine = payload.routine;
+        setData((current) => {
+          if (!current) return current;
+          const items = current.routines ?? [];
+          const index = items.findIndex((item) => item.id === routine.id);
+          const next =
+            index >= 0
+              ? items.map((item) => (item.id === routine.id ? routine : item))
+              : [routine, ...items];
+          return { ...current, routines: next };
+        });
+      }
+      setSelectedRoutineID(routineID);
+      await refreshRoutineDetail(routineID);
+    } catch (error) {
+      setRoutineError(
+        error instanceof Error ? error.message : "Test run failed",
+      );
+    } finally {
+      setRoutineBusy(false);
+    }
+  }
+
+  function routineTestDisabled(routine: Routine) {
+    if (routine.status === "needs_attention" || routineBusy) return true;
+    if (selectedRoutineID !== routine.id) return false;
+    return routineRuns.some(
+      (run) => run.state === "claimed" || run.state === "running",
+    );
   }
 
   async function createRoutineFromDraft() {
@@ -5374,11 +5438,11 @@ function App() {
   }
 
   async function selectAgent(botID: string) {
+    const selected = data?.agents?.find((agent) => agent.bot.id === botID);
+    if (selected?.unread) void patchAgentRoster(botID, { unread: false });
     if (botID === data?.conversation.bot_id) return;
     try {
-      const conversation = data?.agents?.find(
-        (agent) => agent.bot.id === botID,
-      )?.conversation;
+      const conversation = selected?.conversation;
       if (!conversation) throw new Error("Agent has no canonical chat yet");
       setMemoryBotID(botID);
       await selectConversation(conversation.id);
@@ -5438,8 +5502,68 @@ function App() {
     return data?.agents?.find((agent) => agent.bot.id === botID);
   }
 
+  function applyRosterToData(
+    botID: string,
+    patch: { pinned?: boolean; hidden?: boolean; unread?: boolean },
+  ) {
+    setData((current) => {
+      if (!current?.agents) return current;
+      return {
+        ...current,
+        agents: current.agents.map((agent) =>
+          agent.bot.id === botID ? { ...agent, ...patch } : agent,
+        ),
+      };
+    });
+  }
+
+  async function patchAgentRoster(
+    botID: string,
+    patch: { pinned?: boolean; hidden?: boolean; unread?: boolean },
+  ) {
+    const previous = agentForBot(botID);
+    applyRosterToData(botID, patch);
+    try {
+      const response = await apiFetch(
+        `/api/agents/${encodeURIComponent(botID)}/roster`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        pinned?: boolean;
+        hidden?: boolean;
+        unread?: boolean;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Roster returned ${response.status}`);
+      }
+      applyRosterToData(botID, {
+        pinned: payload.pinned,
+        hidden: payload.hidden,
+        unread: payload.unread,
+      });
+    } catch (rosterError) {
+      if (previous) {
+        applyRosterToData(botID, {
+          pinned: previous.pinned,
+          hidden: previous.hidden,
+          unread: previous.unread,
+        });
+      }
+      setNotice(
+        rosterError instanceof Error
+          ? rosterError.message
+          : "Agent roster could not be updated",
+      );
+    }
+  }
+
   async function handleBotMenuAction(
-    action: "edit" | "memory" | "computer" | "copy",
+    action: "edit" | "memory" | "computer" | "copy" | "pin" | "unread" | "hide",
     botID: string,
   ) {
     setBotMenuID(null);
@@ -5464,6 +5588,18 @@ function App() {
       } catch {
         setNotice("Agent ID could not be copied.");
       }
+      return;
+    }
+    if (action === "pin") {
+      await patchAgentRoster(botID, { pinned: !agent.pinned });
+      return;
+    }
+    if (action === "unread") {
+      await patchAgentRoster(botID, { unread: true });
+      return;
+    }
+    if (action === "hide") {
+      await patchAgentRoster(botID, { hidden: !agent.hidden });
       return;
     }
     try {
@@ -5896,29 +6032,39 @@ function App() {
                 data.bots.find((item) => item.id === routine.bot_id)?.name ??
                 "Agent";
               return (
-                <button
-                  type="button"
-                  className="routine-row"
-                  key={routine.id}
-                  onClick={() => {
-                    setSelectedRoutineID(routine.id);
-                    setRoutinesOpen(true);
-                  }}
-                >
-                  <span
-                    className={`routine-dot is-${routine.status}`}
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <strong>{routine.name}</strong>
-                    <span>
-                      {owner} · {routine.kind} ·{" "}
-                      {routine.status === "enabled"
-                        ? formatRoutineWhen(routine.next_run_at, now)
-                        : routineStatusLabel(routine.status)}
-                    </span>
-                  </div>
-                </button>
+                <div className="routine-row-wrap" key={routine.id}>
+                  <button
+                    type="button"
+                    className="routine-row"
+                    onClick={() => {
+                      setSelectedRoutineID(routine.id);
+                      setRoutinesOpen(true);
+                    }}
+                  >
+                    <span
+                      className={`routine-dot is-${routine.status}`}
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <strong>{routine.name}</strong>
+                      <span>
+                        {owner} · {routine.kind} ·{" "}
+                        {routine.status === "enabled"
+                          ? formatRoutineWhen(routine.next_run_at, now)
+                          : routineStatusLabel(routine.status)}
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="quiet-button"
+                    title="A test run does real work. Use safe inputs."
+                    disabled={routineTestDisabled(routine)}
+                    onClick={() => void testRoutine(routine.id)}
+                  >
+                    Test run
+                  </button>
+                </div>
               );
             })
           )}
@@ -6244,9 +6390,20 @@ function App() {
         </button>
         <div className="sidebar-section">
           <div className="section-label">
-            Agents <span>{data.bots.length}</span>
+            <span>
+              Agents <span>{sidebarBots.length}</span>
+            </span>
+            {hiddenAgents > 0 ? (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setShowHiddenAgents((current) => !current)}
+              >
+                {showHiddenAgents ? "Hide hidden" : "Show hidden"}
+              </button>
+            ) : null}
           </div>
-          {data.bots.map((item) => {
+          {sidebarBots.map((item) => {
             const agent = data.agents?.find((entry) => entry.bot.id === item.id);
             const presence = rosterPresence.get(item.id) ??
               agent?.presence ?? { state: "idle", label: "Idle" };
@@ -6265,6 +6422,9 @@ function App() {
                 <div className="bot-copy">
                   <strong>
                     {item.name}
+                    {agent?.pinned ? (
+                      <em className="roster-pin" title="Pinned" aria-label="Pinned" />
+                    ) : null}
                     {engine ? <em className="engine-chip">{engine}</em> : null}
                   </strong>
                   <span>
@@ -6273,11 +6433,16 @@ function App() {
                       : item.title || "Personal agent"}
                   </span>
                 </div>
-                <span
-                  className={`presence is-${presence.state}`}
-                  title={presence.detail || presence.label}
-                  aria-label={presence.label}
-                />
+                <span className="bot-row-status">
+                  {agent?.unread ? (
+                    <span className="unread-dot" title="Unread" aria-label="Unread" />
+                  ) : null}
+                  <span
+                    className={`presence is-${presence.state}`}
+                    title={presence.detail || presence.label}
+                    aria-label={presence.label}
+                  />
+                </span>
               </button>
               <button
                 type="button"
@@ -6325,6 +6490,27 @@ function App() {
                     onClick={() => void handleBotMenuAction("copy", item.id)}
                   >
                     Copy agent ID
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleBotMenuAction("pin", item.id)}
+                  >
+                    {agent?.pinned ? "Unpin" : "Pin"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleBotMenuAction("unread", item.id)}
+                  >
+                    Mark unread
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void handleBotMenuAction("hide", item.id)}
+                  >
+                    {agent?.hidden ? "Unhide" : "Hide"}
                   </button>
                 </div>
               )}
@@ -8412,7 +8598,8 @@ function App() {
             <p>
               Enabled schedules are claimed by the local controller, run as a
               visible Agent turn, then advance to the next time. Heartbeats
-              stay off until you opt in.
+              stay off until you opt in. A test run does real work. Use safe
+              inputs.
             </p>
             {routineError ? (
               <p className="routine-error" role="alert">
@@ -8495,6 +8682,14 @@ function App() {
                               Enable
                             </button>
                           )}
+                          <button
+                            type="button"
+                            title="A test run does real work. Use safe inputs."
+                            disabled={routineTestDisabled(routine)}
+                            onClick={() => void testRoutine(routine.id)}
+                          >
+                            Test run
+                          </button>
                           {routine.kind === "heartbeat" ? (
                             <button
                               type="button"
@@ -8531,6 +8726,7 @@ function App() {
                       <li key={run.id}>
                         <strong>{run.state}</strong>
                         <span>
+                          {run.trigger === "test" ? "test · " : ""}
                           attempt {run.attempt}
                           {run.outcome_reason ? ` · ${run.outcome_reason}` : ""}
                         </span>
@@ -9448,7 +9644,7 @@ function App() {
                   >
                     <option value="observer">Observer — view status only</option>
                     <option value="controller">
-                      Controller — chat
+                      Controller — chat, approvals, routines
                     </option>
                   </select>
                 </label>
@@ -9482,12 +9678,22 @@ function App() {
                     </div>
                     <span className="bundle-live-dot" aria-hidden="true" />
                   </div>
-                  <textarea
-                    aria-label={`Pairing bundle for grant ${mobilePairingBundle.grantID}`}
-                    readOnly
-                    value={mobilePairingBundle.text}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
+                  <div className="pairing-bundle-body">
+                    {mobilePairingQR ? (
+                      <div
+                        className="pairing-qr"
+                        role="img"
+                        aria-label={`Pairing QR code for grant ${mobilePairingBundle.grantID}`}
+                        dangerouslySetInnerHTML={{ __html: mobilePairingQR }}
+                      />
+                    ) : null}
+                    <textarea
+                      aria-label={`Pairing bundle for grant ${mobilePairingBundle.grantID}`}
+                      readOnly
+                      value={mobilePairingBundle.text}
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                  </div>
                   <div className="pairing-bundle-actions">
                     <button
                       type="button"

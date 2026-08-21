@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
+	"github.com/robbyczgw-cla/openagentfleet/internal/id"
 	"github.com/robbyczgw-cla/openagentfleet/internal/skillworkshop"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
 )
@@ -67,6 +68,8 @@ func (s *Server) handleRoutineRoutes(w http.ResponseWriter, r *http.Request) {
 		s.resolveRoutine(w, r, routineID)
 	case action == "heartbeat" && r.Method == http.MethodPost:
 		s.setRoutineHeartbeat(w, r, routineID)
+	case action == "test" && r.Method == http.MethodPost:
+		s.testRoutine(w, r, routineID)
 	case action == "runs" && r.Method == http.MethodGet:
 		s.listRoutineRuns(w, r, routineID)
 	case action == "history" && r.Method == http.MethodGet:
@@ -241,6 +244,66 @@ func (s *Server) changeRoutineLifecycle(w http.ResponseWriter, r *http.Request, 
 	}
 	s.publishRoutine(item)
 	s.writeJSON(w, http.StatusOK, map[string]any{"routine": item})
+}
+
+func (s *Server) testRoutine(w http.ResponseWriter, r *http.Request, routineID string) {
+	if s.Store == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("agent store unavailable"))
+		return
+	}
+	item, err := s.Store.GetRoutine(r.Context(), routineID)
+	if err != nil {
+		s.writeRoutineError(w, err)
+		return
+	}
+	if item.Status == domain.RoutineStatusNeedsAttention {
+		s.writeRoutineError(w, store.ErrRoutineNeedsAttention)
+		return
+	}
+	now := s.currentTime()
+	approvalID, occurrenceKey, err := s.routineTestClaimApprovalID(r.Context(), item, now)
+	if errors.Is(err, errRoutineWaitingApproval) {
+		s.writeJSON(w, http.StatusAccepted, map[string]any{
+			"routine":              item,
+			"waiting_for_approval": true,
+		})
+		return
+	}
+	if err != nil {
+		s.writeRoutineError(w, err)
+		return
+	}
+	claimed, err := s.Store.ClaimTestRoutineRun(r.Context(), domain.RoutineClaim{
+		RoutineID:      item.ID,
+		LeaseOwner:     s.routineOwner(),
+		LeaseDuration:  s.leaseDuration(),
+		IdempotencyKey: id.New("claim"),
+		ApprovalID:     approvalID,
+		OccurrenceKey:  occurrenceKey,
+		Now:            now,
+	})
+	if err != nil {
+		s.writeRoutineError(w, err)
+		return
+	}
+	s.launchRoutineOccurrence(r.Context(), item, claimed)
+	updated, err := s.Store.GetRoutine(r.Context(), item.ID)
+	if err != nil {
+		updated = item
+	}
+	if runs, listErr := s.Store.ListRoutineRuns(r.Context(), item.ID, 1); listErr == nil {
+		for _, run := range runs {
+			if run.ID == claimed.ID {
+				claimed = run
+				break
+			}
+		}
+	}
+	s.publishRoutine(updated)
+	s.writeJSON(w, http.StatusAccepted, map[string]any{
+		"routine": updated,
+		"run":     claimed,
+	})
 }
 
 func (s *Server) setRoutineHeartbeat(w http.ResponseWriter, r *http.Request, routineID string) {

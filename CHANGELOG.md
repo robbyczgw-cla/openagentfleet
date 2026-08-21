@@ -19,6 +19,16 @@ built from the same commit. The current public download remains
   approval, with in-app Approve / Deny / Stop / Open Agent actions.
   Linux uses notify-send. macOS uses Notification Center
   (UNUserNotificationCenter, osascript fallback).
+- Sidebar Agents can be pinned, marked unread, or hidden.
+- Mobile pairing in Settings shows a QR code of the same Tailnet bundle
+  JSON as the copyable text.
+
+### Mobile control surface
+
+- Paired controller/owner phones can list and resolve pending approvals, stop
+  an active run, and pause or enable routines. Observer devices stay
+  read-only. Bootstrap includes pending approvals so the phone sees gates
+  without a second round trip.
 
 ### Routines scheduler
 
@@ -31,6 +41,8 @@ built from the same commit. The current public download remains
 - Leases last 15 minutes and renew while the Agent turn is running, so a
   long job is not marked unknown mid-run.
 - The workspace Routines panel lists next run, pause/enable, and history.
+- Routines can be test-run without enabling or consuming the next scheduled
+  occurrence.
 
 ## 0.3.0-alpha
 
@@ -59,8 +71,8 @@ and is not on by default.
 Inspect an enabled Skill, create a Routine from it, and enable the Routine
 explicitly. Create always starts disabled. A Skill that is not enabled cannot
 become a Routine. Heartbeat Routines still require the heartbeat opt-in.
-Skills never auto-enable. This ships the inspect/create/enable contract; a
-full scheduler is remaining work.
+Skills never auto-enable. This ships the inspect/create/enable contract. The
+Unreleased scheduler loop, test-run, and Routines panel sit on top of it.
 
 ### Fleet Host MVP
 

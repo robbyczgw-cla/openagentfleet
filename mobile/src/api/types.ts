@@ -4,6 +4,7 @@ export interface DeviceMetadata {
   id?: string;
   name: string;
   platform: string;
+  scope_profile?: string;
 }
 
 export interface RemoteProfile {
@@ -66,11 +67,50 @@ export interface ComputerStatus {
   detail?: string;
 }
 
+export interface MobileRun {
+  id: string;
+  conversation_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MobileApprovalOption {
+  optionId: string;
+  name: string;
+  kind?: string;
+}
+
+export interface MobileApproval {
+  id: string;
+  run_id: string;
+  conversation_id: string;
+  bot_id: string;
+  action: string;
+  status: string;
+  created_at: string;
+  options?: MobileApprovalOption[];
+}
+
+export interface MobileRoutine {
+  id: string;
+  bot_id: string;
+  name: string;
+  status: string;
+  kind: string;
+  next_run_at?: string;
+  last_run_at?: string;
+  attention_reason?: string;
+}
+
 export interface Bootstrap {
   conversations: Conversation[];
   conversation: Conversation;
   messages: ChatMessage[];
+  runs?: MobileRun[];
+  approvals?: MobileApproval[];
   computer: ComputerStatus;
+  device?: DeviceMetadata;
   /** Durable V1 cursor returned with the snapshot when the server supports it. */
   event_cursor?: number;
 }

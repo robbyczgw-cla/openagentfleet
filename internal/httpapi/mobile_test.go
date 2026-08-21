@@ -43,6 +43,13 @@ func TestMobileHandlerIsAnExactOriginFreeAllowlist(t *testing.T) {
 		{http.MethodGet, "/api/secret-handoffs/transport"},
 		{http.MethodOptions, "/api/v1/meta"},
 		{http.MethodPost, "/api/v1/meta"},
+		{http.MethodPost, "/api/v1/approvals"},
+		{http.MethodGet, "/api/v1/approvals/approval-x"},
+		{http.MethodPost, "/api/v1/runs/run-x"},
+		{http.MethodGet, "/api/v1/runs/run-x/stop"},
+		{http.MethodPost, "/api/v1/routines"},
+		{http.MethodGet, "/api/v1/routines/routine-x"},
+		{http.MethodPost, "/api/v1/routines/routine-x/resolve"},
 	}
 	for _, item := range unsafe {
 		response := mobileHTTPCall(handler, item.method, item.path, "", "", "")
@@ -152,7 +159,14 @@ func TestMobileBootstrapAndComputerDTOsDoNotLeakLocalState(t *testing.T) {
 	if _, err := instance.CreateMessage(t.Context(), conversation.ID, "user", "safe visible message"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := instance.CreateRun(t.Context(), conversation.ID, conversation.BotID, "grok", "PRIVATE_PROMPT_SENTINEL"); err != nil {
+	run, err := instance.CreateRun(t.Context(), conversation.ID, conversation.BotID, "grok", "PRIVATE_PROMPT_SENTINEL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.UpdateRun(t.Context(), run.ID, "waiting_for_approval", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.CreateApproval(t.Context(), run.ID, "grok", "Run host command", `{"options":[{"optionId":"allow_once","name":"Allow once","kind":"allow_once"}],"tool_call":{"command":"PRIVATE_COMMAND_SENTINEL","url":"https://example.invalid","provider":"grok"}}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := instance.UpsertHarnessSession(t.Context(), conversation.ID, "grok", "NATIVE_SESSION_SENTINEL", "/private/workdir/sentinel", "session", "ready"); err != nil {
@@ -179,6 +193,169 @@ func TestMobileBootstrapAndComputerDTOsDoNotLeakLocalState(t *testing.T) {
 		t.Fatalf("computer = %d, body = %s", computer.Code, computer.Body.String())
 	}
 	assertMobileResponseHasNoBannedState(t, computer.Body.String())
+}
+
+func TestMobileControlSurfaceApprovalsRunsAndRoutines(t *testing.T) {
+	instance := openMobileHTTPStore(t)
+	conversation, err := instance.GetConversation(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalRun, err := instance.CreateRun(t.Context(), conversation.ID, conversation.BotID, "grok", "needs a gate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.UpdateRun(t.Context(), approvalRun.ID, "waiting_for_approval", ""); err != nil {
+		t.Fatal(err)
+	}
+	approval, err := instance.CreateApproval(t.Context(), approvalRun.ID, "grok", "Run host command", `{"options":[{"optionId":"allow_once","name":"Allow once","kind":"allow_once"}],"tool_call":{"command":"rm -rf /","url":"https://example.invalid","provider":"grok"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRun, err := instance.CreateRun(t.Context(), conversation.ID, conversation.BotID, "grok", "active work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.UpdateRun(t.Context(), activeRun.ID, "running", ""); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-2 * time.Hour)
+	routine, err := instance.CreateRoutine(t.Context(), domain.RoutineDraft{
+		BotID:          conversation.BotID,
+		Name:           "Check failed CI",
+		Kind:           domain.RoutineKindCron,
+		CronExpression: "0 9 * * *",
+		TimeZone:       "Europe/Vienna",
+		LeadHarness:    domain.RoutineLeadGrokBuild,
+		Worker:         domain.RoutineWorkerClaude,
+		ApprovalPolicy: domain.RoutineApprovalOnRisk,
+		Retry:          domain.RoutineRetryPolicy{MaxAttempts: 1, BackoffSeconds: 0},
+		NextRunAt:      past.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, observerToken := issueMobileHTTPCredential(t, instance, domain.RemoteScopeObserver)
+	_, controllerToken := issueMobileHTTPCredential(t, instance, domain.RemoteScopeController)
+	stopped := false
+	server := &Server{Store: instance, Broker: events.New()}
+	server.registerRun(activeRun.ID, func() { stopped = true })
+	handler := server.MobileHandler()
+
+	for _, path := range []string{
+		"/api/v1/approvals/" + approval.ID,
+		"/api/v1/runs/" + activeRun.ID + "/stop",
+		"/api/v1/routines/" + routine.ID + "/pause",
+		"/api/v1/routines/" + routine.ID + "/enable",
+	} {
+		response := mobileHTTPCall(handler, http.MethodPost, path, `{}`, observerToken, "observer-mutation")
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("observer POST %s = %d, body = %s", path, response.Code, response.Body.String())
+		}
+	}
+
+	listed := mobileHTTPCall(handler, http.MethodGet, "/api/v1/approvals", "", observerToken, "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("observer list approvals = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	assertMobileResponseHasNoBannedState(t, listed.Body.String())
+	if !strings.Contains(listed.Body.String(), `"id":"`+approval.ID+`"`) || !strings.Contains(listed.Body.String(), `"optionId":"allow_once"`) {
+		t.Fatalf("pending approvals missing sanitized option: %s", listed.Body.String())
+	}
+	if strings.Contains(listed.Body.String(), "rm -rf") || strings.Contains(listed.Body.String(), "tool_call") {
+		t.Fatalf("approval list leaked tool call: %s", listed.Body.String())
+	}
+
+	bootstrap := mobileHTTPCall(handler, http.MethodGet, "/api/v1/bootstrap?conversation_id="+conversation.ID, "", controllerToken, "")
+	if bootstrap.Code != http.StatusOK {
+		t.Fatalf("bootstrap = %d, body = %s", bootstrap.Code, bootstrap.Body.String())
+	}
+	assertMobileResponseHasNoBannedState(t, bootstrap.Body.String())
+	if !strings.Contains(bootstrap.Body.String(), `"approvals":[`) || !strings.Contains(bootstrap.Body.String(), approval.ID) {
+		t.Fatalf("bootstrap missing pending approvals: %s", bootstrap.Body.String())
+	}
+	if !strings.Contains(bootstrap.Body.String(), `"id":"`+activeRun.ID+`"`) || !strings.Contains(bootstrap.Body.String(), `"status":"running"`) {
+		t.Fatalf("bootstrap missing active run: %s", bootstrap.Body.String())
+	}
+
+	missingKey := mobileHTTPCall(handler, http.MethodPost, "/api/v1/approvals/"+approval.ID, `{"status":"approved","option_id":"allow_once"}`, controllerToken, "")
+	if missingKey.Code != http.StatusBadRequest {
+		t.Fatalf("resolve without idempotency = %d, body = %s", missingKey.Code, missingKey.Body.String())
+	}
+	resolveBody := `{"status":"approved","option_id":"allow_once"}`
+	first := mobileHTTPCall(handler, http.MethodPost, "/api/v1/approvals/"+approval.ID, resolveBody, controllerToken, "resolve-1")
+	if first.Code != http.StatusOK {
+		t.Fatalf("controller resolve = %d, body = %s", first.Code, first.Body.String())
+	}
+	assertMobileResponseHasNoBannedState(t, first.Body.String())
+	if !strings.Contains(first.Body.String(), `"status":"approved"`) || strings.Contains(first.Body.String(), "tool_call") {
+		t.Fatalf("resolve response = %s", first.Body.String())
+	}
+	repeated := mobileHTTPCall(handler, http.MethodPost, "/api/v1/approvals/"+approval.ID, resolveBody, controllerToken, "resolve-1")
+	if repeated.Code != http.StatusOK || repeated.Body.String() != first.Body.String() {
+		t.Fatalf("idempotent resolve = %d body=%q; first=%q", repeated.Code, repeated.Body.String(), first.Body.String())
+	}
+	conflict := mobileHTTPCall(handler, http.MethodPost, "/api/v1/approvals/"+approval.ID, `{"status":"denied","option_id":""}`, controllerToken, "resolve-1")
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("resolve idempotency conflict = %d, body = %s", conflict.Code, conflict.Body.String())
+	}
+
+	stop := mobileHTTPCall(handler, http.MethodPost, "/api/v1/runs/"+activeRun.ID+"/stop", "", controllerToken, "stop-1")
+	if stop.Code != http.StatusAccepted || !stopped {
+		t.Fatalf("controller stop = %d stopped=%v body=%s", stop.Code, stopped, stop.Body.String())
+	}
+	assertMobileResponseHasNoBannedState(t, stop.Body.String())
+	stopAgain := mobileHTTPCall(handler, http.MethodPost, "/api/v1/runs/"+activeRun.ID+"/stop", "", controllerToken, "stop-1")
+	if stopAgain.Code != http.StatusAccepted || stopAgain.Body.String() != stop.Body.String() {
+		t.Fatalf("idempotent stop = %d body=%q; first=%q", stopAgain.Code, stopAgain.Body.String(), stop.Body.String())
+	}
+	inactive := mobileHTTPCall(handler, http.MethodPost, "/api/v1/runs/"+approvalRun.ID+"/stop", "", controllerToken, "stop-inactive")
+	if inactive.Code != http.StatusConflict {
+		t.Fatalf("inactive stop = %d, body = %s", inactive.Code, inactive.Body.String())
+	}
+
+	enable := mobileHTTPCall(handler, http.MethodPost, "/api/v1/routines/"+routine.ID+"/enable", "", controllerToken, "enable-1")
+	if enable.Code != http.StatusOK {
+		t.Fatalf("controller enable = %d, body = %s", enable.Code, enable.Body.String())
+	}
+	enableBody := enable.Body.String()
+	assertMobileResponseHasNoBannedState(t, enableBody)
+	var enabled struct {
+		Routine domain.MobileRoutine `json:"routine"`
+	}
+	if err := json.Unmarshal([]byte(enableBody), &enabled); err != nil {
+		t.Fatal(err)
+	}
+	if enabled.Routine.Status != domain.RoutineStatusEnabled {
+		t.Fatalf("enabled status = %q", enabled.Routine.Status)
+	}
+	nextRun, err := time.Parse(time.RFC3339Nano, enabled.Routine.NextRunAt)
+	if err != nil || !nextRun.After(time.Now().UTC()) {
+		t.Fatalf("enabled next_run_at = %q, err = %v", enabled.Routine.NextRunAt, err)
+	}
+	enableAgain := mobileHTTPCall(handler, http.MethodPost, "/api/v1/routines/"+routine.ID+"/enable", "", controllerToken, "enable-1")
+	if enableAgain.Code != http.StatusOK || enableAgain.Body.String() != enableBody {
+		t.Fatalf("idempotent enable = %d body=%q; first=%q", enableAgain.Code, enableAgain.Body.String(), enableBody)
+	}
+
+	pause := mobileHTTPCall(handler, http.MethodPost, "/api/v1/routines/"+routine.ID+"/pause", `{"reason":"phone"}`, controllerToken, "pause-1")
+	if pause.Code != http.StatusOK {
+		t.Fatalf("controller pause = %d, body = %s", pause.Code, pause.Body.String())
+	}
+	assertMobileResponseHasNoBannedState(t, pause.Body.String())
+	if !strings.Contains(pause.Body.String(), `"status":"paused"`) {
+		t.Fatalf("pause response = %s", pause.Body.String())
+	}
+
+	routines := mobileHTTPCall(handler, http.MethodGet, "/api/v1/routines?bot_id="+conversation.BotID, "", observerToken, "")
+	if routines.Code != http.StatusOK {
+		t.Fatalf("observer list routines = %d, body = %s", routines.Code, routines.Body.String())
+	}
+	assertMobileResponseHasNoBannedState(t, routines.Body.String())
+	if !strings.Contains(routines.Body.String(), `"id":"`+routine.ID+`"`) || strings.Contains(routines.Body.String(), `"lead_harness"`) || strings.Contains(routines.Body.String(), `"cron_expression"`) {
+		t.Fatalf("routine list leaked internals: %s", routines.Body.String())
+	}
 }
 
 func TestMobileComputerControlUsesDeviceBoundLease(t *testing.T) {
