@@ -218,7 +218,7 @@ FROM mobile_message_idempotency WHERE device_id = ? AND key_hash = ?`, deviceID,
 	timestamp := now()
 	message := domain.Message{ID: id.New("msg"), ConversationID: conversationID, Role: "user", Content: content, CreatedAt: timestamp}
 	run := domain.Run{ID: id.New("run"), ConversationID: conversationID, BotID: botID, Provider: "grok", Status: "queued", Prompt: content, CreatedAt: timestamp, UpdatedAt: timestamp}
-	event := domain.StreamEvent{ID: id.New("evt"), RunID: run.ID, ConversationID: conversationID, Type: "run.queued", Data: `{"status":"queued"}`, CreatedAt: timestamp}
+	event := domain.StreamEvent{ID: id.New("evt"), RunID: run.ID, BotID: botID, ConversationID: conversationID, Type: "run.queued", Data: `{"status":"queued"}`, CreatedAt: timestamp}
 	if _, err := conn.ExecContext(ctx, `INSERT INTO messages
 (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)`, message.ID, message.ConversationID, message.Role, message.Content, message.CreatedAt); err != nil {
 		return domain.MobileMessageResponse{}, domain.Run{}, domain.StreamEvent{}, false, fmt.Errorf("create mobile message: %w", err)
@@ -293,6 +293,62 @@ ORDER BY e.rowid LIMIT ?`, after, maxMobileEventBatch)
 		return nil, fmt.Errorf("iterate mobile events: %w", err)
 	}
 	return items, nil
+}
+
+type MobileMutationIdempotency struct {
+	RequestHash []byte
+	StatusCode  int
+	Response    []byte
+}
+
+func (s *Store) GetMobileMutationIdempotency(ctx context.Context, deviceID, key string) (MobileMutationIdempotency, bool, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || !validMobileIdempotencyKey(key) {
+		return MobileMutationIdempotency{}, false, errors.New("invalid mobile idempotency key")
+	}
+	keyHash := sha256.Sum256([]byte(key))
+	var item MobileMutationIdempotency
+	err := s.db.QueryRowContext(ctx, `SELECT request_hash, status_code, response_json
+FROM mobile_mutation_idempotency WHERE device_id = ? AND key_hash = ?`, deviceID, keyHash[:]).Scan(&item.RequestHash, &item.StatusCode, &item.Response)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MobileMutationIdempotency{}, false, nil
+	}
+	if err != nil {
+		return MobileMutationIdempotency{}, false, fmt.Errorf("load mobile mutation idempotency: %w", err)
+	}
+	return item, true, nil
+}
+
+func (s *Store) SaveMobileMutationIdempotency(ctx context.Context, deviceID, key string, requestHash []byte, statusCode int, response []byte) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || !validMobileIdempotencyKey(key) {
+		return errors.New("invalid mobile idempotency key")
+	}
+	if len(requestHash) != sha256.Size || statusCode < 200 || statusCode > 599 || len(response) == 0 {
+		return errors.New("invalid mobile idempotency record")
+	}
+	keyHash := sha256.Sum256([]byte(key))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO mobile_mutation_idempotency
+(device_id, key_hash, request_hash, status_code, response_json, created_at)
+VALUES (?, ?, ?, ?, ?, ?)`, deviceID, keyHash[:], requestHash, statusCode, string(response), now())
+	if err == nil {
+		return nil
+	}
+	if !isSQLiteConstraintError(err) {
+		return fmt.Errorf("store mobile mutation idempotency: %w", err)
+	}
+	existing, found, loadErr := s.GetMobileMutationIdempotency(ctx, deviceID, key)
+	if loadErr != nil {
+		return loadErr
+	}
+	if found && len(existing.RequestHash) == sha256.Size && subtle.ConstantTimeCompare(existing.RequestHash, requestHash) == 1 {
+		return nil
+	}
+	return ErrMobileIdempotencyConflict
+}
+
+func validMobileIdempotencyKey(key string) bool {
+	return len(key) > 0 && len(key) <= maxMobileIdempotencyKeyBytes && strings.IndexFunc(key, unicode.IsControl) < 0
 }
 
 func listMobileConversations(ctx context.Context, tx *sql.Tx) ([]domain.Conversation, error) {

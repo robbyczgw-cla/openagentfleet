@@ -42,6 +42,14 @@
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
     },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
     "linux": {
       "deb": {
         "depends": [

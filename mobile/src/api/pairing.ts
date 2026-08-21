@@ -6,13 +6,15 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 
 /**
  * Parses the exact V1 pairing payload emitted by the trusted Mac app.
- * It deliberately accepts neither URL wrappers nor extra properties, so a
- * pasted browser URL can never quietly become a pairing credential.
+ * A single-line JSON string, including a JSON-encoded scanner string, is
+ * accepted. URL wrappers and extra properties are rejected, so a pasted
+ * browser URL can never quietly become a pairing credential.
  */
 export function parsePairingBundle(value: string, now = Date.now()): PairingBundle {
   let candidate: unknown;
   try {
-    candidate = JSON.parse(value);
+    candidate = JSON.parse(value.trim());
+    if (typeof candidate === "string") candidate = JSON.parse(candidate);
   } catch {
     throw new RemoteApiError("Paste the complete OpenAgentFleet pairing bundle.");
   }

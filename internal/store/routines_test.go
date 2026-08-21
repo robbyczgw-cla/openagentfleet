@@ -462,6 +462,58 @@ func TestRoutineStaleRecoveryIsUnknownAndInvalidatesOldLease(t *testing.T) {
 	}
 }
 
+func TestRoutineTestClaimOnDisabledLeavesScheduleUnchanged(t *testing.T) {
+	ctx := context.Background()
+	instance, botID := openRoutineTestStore(t)
+	base := time.Date(2027, 8, 9, 16, 0, 0, 0, time.UTC)
+	created, err := instance.CreateRoutine(ctx, routineTestDraft(botID, base))
+	if err != nil {
+		t.Fatalf("CreateRoutine: %v", err)
+	}
+	if created.Status != domain.RoutineStatusDisabled {
+		t.Fatalf("created = %#v", created)
+	}
+	if _, err := instance.ClaimRoutineRun(ctx, routineTestClaim(created.ID, "scheduler", "scheduled", base)); !errors.Is(err, ErrRoutineDisabled) {
+		t.Fatalf("scheduled claim on disabled = %v", err)
+	}
+	run, err := instance.ClaimTestRoutineRun(ctx, routineTestClaim(created.ID, "tester", "test-1", base))
+	if err != nil || run.Trigger != domain.RoutineTriggerTest || run.OccurrenceKey == created.OccurrenceKey {
+		t.Fatalf("ClaimTestRoutineRun = %#v, %v", run, err)
+	}
+	if _, err := instance.StartRoutineRun(ctx, run.ID, run.LeaseOwner, run.LeaseToken, base.Add(time.Second)); err != nil {
+		t.Fatalf("StartRoutineRun: %v", err)
+	}
+	if _, err := instance.FinishRoutineRun(ctx, domain.RoutineFinish{
+		RunID: run.ID, LeaseOwner: run.LeaseOwner, LeaseToken: run.LeaseToken,
+		State: domain.RoutineLedgerCompleted, NextRunAt: base.Add(time.Hour), Now: base.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("FinishRoutineRun test: %v", err)
+	}
+	updated, err := instance.GetRoutine(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != domain.RoutineStatusDisabled || updated.NextRunAt != created.NextRunAt || updated.OccurrenceKey != created.OccurrenceKey || updated.LastRunAt != "" {
+		t.Fatalf("test finish rotated the schedule: before=%#v after=%#v", created, updated)
+	}
+
+	failed := createAndResumeRoutine(t, instance, routineTestDraft(botID, base.Add(2*time.Hour)), time.Time{})
+	first := claimRoutineForTest(t, instance, routineTestClaim(failed.ID, "scheduler", "fail-1", base.Add(2*time.Hour)))
+	if _, err := instance.FinishRoutineRun(ctx, domain.RoutineFinish{
+		RunID: first.ID, LeaseOwner: first.LeaseOwner, LeaseToken: first.LeaseToken,
+		State: domain.RoutineLedgerFailed, Reason: "boom", Now: base.Add(2*time.Hour + time.Second),
+	}); err != nil {
+		t.Fatalf("scheduled failure: %v", err)
+	}
+	attention, err := instance.GetRoutine(ctx, failed.ID)
+	if err != nil || attention.Status != domain.RoutineStatusNeedsAttention {
+		t.Fatalf("needs attention = %#v, %v", attention, err)
+	}
+	if _, err := instance.ClaimTestRoutineRun(ctx, routineTestClaim(failed.ID, "tester", "test-attention", base.Add(3*time.Hour))); !errors.Is(err, ErrRoutineNeedsAttention) {
+		t.Fatalf("test claim on needs_attention = %v", err)
+	}
+}
+
 func TestRoutineHeartbeatCompletionComputesNextRunWithoutScheduler(t *testing.T) {
 	ctx := context.Background()
 	instance, botID := openRoutineTestStore(t)

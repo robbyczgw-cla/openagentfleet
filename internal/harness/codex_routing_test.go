@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 const (
@@ -229,19 +230,16 @@ func newTestCodexAppServerWithExpectedConfig(t *testing.T, expectedWebSearch str
 
 func newTestCodexAppServerWithExpectedConfigAndParams(t *testing.T, expectedWebSearch string, expectPreserved bool, paramsPath string) *CodexAppServer {
 	t.Helper()
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrapper := filepath.Join(t.TempDir(), "fake-codex-app-server")
 	preserved := "0"
 	if expectPreserved {
 		preserved = "1"
 	}
-	script := "#!/bin/sh\nexport " + codexAppServerHelperEnv + "=1\nexport " + codexAppServerExpectedWebSearchEnv + "=" + shellQuote(expectedWebSearch) + "\nexport " + codexAppServerExpectedPreservedEnv + "=" + preserved + "\nexport " + codexAppServerParamsPathEnv + "=" + shellQuote(paramsPath) + "\nexec " + shellQuote(binary) + " -test.run " + shellQuote("^TestCodexAppServerHelper$") + "\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	wrapper := testexe.WriteReexec(t, t.TempDir(), "fake-codex-app-server", "^TestCodexAppServerHelper$", "", map[string]string{
+		codexAppServerHelperEnv:            "1",
+		codexAppServerExpectedWebSearchEnv: expectedWebSearch,
+		codexAppServerExpectedPreservedEnv: preserved,
+		codexAppServerParamsPathEnv:        paramsPath,
+	})
 	server := NewCodexAppServer(wrapper, t.TempDir())
 	t.Cleanup(func() { _ = server.Close() })
 	return server

@@ -16,9 +16,10 @@ QA.
 
 The current alpha remains deliberately limited: the shipped mobile lease is a
 30-second device-bound lease for browser-frame click actions. It does not yet
-carry the full frame/epoch/action-id contract below, and password/OTP
-handoff, keyboard input, desktop control and mobile approvals remain on the
-trusted Mac app.
+carry the full frame/epoch/action-id contract below. Password/OTP handoff,
+keyboard input, and desktop control remain on the trusted Mac app. Controller
+and owner devices can resolve approvals, stop an active run, and pause or
+enable routines.
 
 ## Boundary
 
@@ -73,15 +74,16 @@ approximated with a client-set header.
 
 | Profile | Permitted mobile capabilities |
 | --- | --- |
-| `observer` | State, conversations, event stream, Agent Computer frames |
-| `controller` | Observer + chat, attachments, transcription, approvals, run stop, scoped computer-control lease |
+| `observer` | State, conversations, event stream, Agent Computer frames, pending approvals, routines list |
+| `controller` | Observer + chat, approvals, run stop, routine pause/enable, scoped computer-control lease |
 | `owner` | Controller + explicit Agent Computer start/delegation controls |
 
-Remote alpha V1 implements `observer` (snapshot, events, Computer View) and
-`controller` (the same plus chat and a short click-control lease); `owner`
-shares the controller boundary. Attachments, transcription, approvals, run
-control, keyboard input and secure secret handoff remain subsequent,
-separately gated slices.
+Remote alpha V1 implements `observer` (snapshot, events, Computer View,
+approvals, and routines as read-only) and `controller` (the same plus chat, a
+short click-control lease, approval resolve, run stop, and routine
+pause/enable); `owner` shares the controller boundary. Attachments,
+transcription, keyboard input, typing, and secure secret handoff remain
+Mac-local.
 
 The following remain Mac-local in the first remote release regardless of
 profile: preferences, MCP/plugin administration, harness OAuth, native Grok
@@ -95,11 +97,13 @@ The dedicated listener will expose only versioned `/api/v1/**` routes:
 
 | Route family | Required scope | Notes |
 | --- | --- | --- |
-| `GET /api/v1/meta`, `GET /api/v1/bootstrap` | `state:read` | Mobile-safe DTO only; no workdirs, command paths, container IDs, or native sessions |
+| `GET /api/v1/meta`, `GET /api/v1/bootstrap` | `state:read` | Mobile-safe DTO only; no workdirs, command paths, container IDs, or native sessions. Bootstrap includes pending approvals and conversation runs. |
 | Conversations and message submission | `state:read`, `chat:write` | Mutations require idempotency keys |
-| Attachments and transcription | `attachments:*`, `stt:use` | Bounded sizes and rate limits |
+| Attachments and transcription | `attachments:*`, `stt:use` | Not implemented on the mobile listener |
 | Events | `events:read` | Durable cursor, reconnect, stream close on revocation |
-| Approvals | `approvals:*` | Bound to action hash, revision, run, and idempotency key |
+| `GET /api/v1/approvals`, `POST /api/v1/approvals/{id}` | `state:read`, `approvals:*` | Pending approvals only. Resolve body is `{status, option_id}`. No `persist` / always-allow. Mutations require Idempotency-Key. |
+| `POST /api/v1/runs/{id}/stop` | `chat:write` | 409 if the run is not active. Requires Idempotency-Key. |
+| `GET /api/v1/routines`, `POST /api/v1/routines/{id}/pause`, `POST /api/v1/routines/{id}/enable` | `state:read`, `chat:write` | Mobile-safe routine DTO. Enable ignores a past next-run timestamp. Mutations require Idempotency-Key. |
 | Computer status and frames | `computer:view` | No raw desktop protocol |
 | Computer takeover/action | `computer:control` | Device-bound 30-second browser click lease; typing, navigation, desktop actions, and frame/epoch/action IDs remain out of scope |
 

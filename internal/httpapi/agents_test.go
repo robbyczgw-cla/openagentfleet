@@ -15,6 +15,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 const httpGrokWebSearchHelperEnv = "OPENAGENTFLEET_HTTP_GROK_WEB_SEARCH_TEST_HELPER"
@@ -205,11 +206,16 @@ func TestConfiguredLeadProviderRoutesAllThreeLeadHarnesses(t *testing.T) {
 func TestConfiguredOpenCodeLeadExecutesJSONStreamAndResumesSession(t *testing.T) {
 	directory := t.TempDir()
 	argumentsPath := filepath.Join(directory, "opencode-arguments")
-	wrapper := filepath.Join(directory, harness.OpenCodeProvider)
-	script := "#!/bin/sh\n{\nprintf 'CALL\\n'\nfor argument in \"$@\"; do printf 'ARG=%s\\n' \"$argument\"; done\n} >> " + shellQuoteHTTPTest(argumentsPath) + "\nprintf '%s\\n' '{\"type\":\"step_start\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"step-start\"}}'\nprintf '%s\\n' '{\"type\":\"text\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"text\",\"text\":\"OpenCode answer\"}}'\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+	stdoutPath := filepath.Join(directory, "opencode-stdout.txt")
+	if err := os.WriteFile(stdoutPath, []byte("{\"type\":\"step_start\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"step-start\"}}\n{\"type\":\"text\",\"sessionID\":\"ses_http_opencode\",\"part\":{\"type\":\"text\",\"text\":\"OpenCode answer\"}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	wrapper := testexe.Path(directory, harness.OpenCodeProvider)
+	testexe.WritePowerShell(t, wrapper,
+		"#!/bin/sh\n{\nprintf 'CALL\\n'\nfor argument in \"$@\"; do printf 'ARG=%s\\n' \"$argument\"; done\n} >> "+shellQuoteHTTPTest(argumentsPath)+"\ncat "+shellQuoteHTTPTest(stdoutPath)+"\n",
+		"[IO.File]::AppendAllText('"+powershellHTTPPath(argumentsPath)+"', \"CALL`n\")\nforeach ($argument in $args) { [IO.File]::AppendAllText('"+powershellHTTPPath(argumentsPath)+"', \"ARG=$argument`n\") }\nGet-Content -LiteralPath '"+powershellHTTPPath(stdoutPath)+"'\n",
+	)
+	t.Setenv("OPENAGENTFLEET_OPENCODE_BINARY", wrapper)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))
@@ -309,17 +315,11 @@ func TestConfiguredOpenCodeLeadExecutesJSONStreamAndResumesSession(t *testing.T)
 }
 
 func TestConfiguredAgentWebSearchReachesNativeLeadHarness(t *testing.T) {
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	directory := t.TempDir()
 	argumentsPath := filepath.Join(directory, "arguments")
-	wrapper := filepath.Join(directory, "grok")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuoteHTTPTest(argumentsPath) + "\nexport " + httpGrokWebSearchHelperEnv + "=1\nexec " + shellQuoteHTTPTest(binary) + " -test.run " + shellQuoteHTTPTest("^TestHTTPGrokWebSearchHelper$") + "\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testexe.WriteReexec(t, directory, "grok", "^TestHTTPGrokWebSearchHelper$", argumentsPath, map[string]string{
+		httpGrokWebSearchHelperEnv: "1",
+	})
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))
@@ -371,7 +371,8 @@ func TestConfiguredAgentWebSearchReachesNativeLeadHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains("\n"+string(arguments), "\n--disable-web-search\n") {
+	normalized := strings.ReplaceAll(string(arguments), "\r\n", "\n")
+	if !strings.Contains("\n"+normalized, "\n--disable-web-search\n") {
 		t.Fatalf("configured web_search did not reach Grok: %q", arguments)
 	}
 }
@@ -414,6 +415,10 @@ func TestHTTPGrokWebSearchHelper(t *testing.T) {
 
 func shellQuoteHTTPTest(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func powershellHTTPPath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), "'", "''")
 }
 
 func TestGrokAgentPermissionMappingNeverBroadensWorkspaceToAuto(t *testing.T) {
@@ -562,6 +567,147 @@ func TestConcurrentAgentMetadataPatchesDoNotLoseIndependentUpdates(t *testing.T)
 	}
 	if len(agents) != 1 || agents[0].Metadata == nil || len(agents[0].Metadata.PluginIDs) != 1 || len(agents[0].Metadata.MCPIDs) != 1 {
 		t.Fatalf("concurrent patch lost an update: %#v", agents)
+	}
+}
+
+func TestAgentsAPIPresenceAndClearLead(t *testing.T) {
+	instance, handler := openAgentsAPIServer(t)
+	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{
+		"name":"Andy","title":"Builder","description":"Builds.",
+		"metadata":{"lead":{"harness":"codex_app_server","model":"gpt-5.5","reasoning":"high","service_tier":"default","permission":"ask"}}
+	}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created domain.Agent
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Metadata == nil || created.Metadata.Lead == nil || created.Metadata.Lead.Harness != "codex_app_server" {
+		t.Fatalf("lead override not persisted: %#v", created.Metadata)
+	}
+	run, err := instance.CreateRun(t.Context(), created.Conversation.ID, created.Bot.ID, "codex_app_server", "ship it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.UpdateRun(t.Context(), run.ID, "waiting_for_approval", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	listed := agentsAPIRequest(handler, http.MethodGet, "/api/agents", "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	var body struct {
+		Agents []domain.Agent `json:"agents"`
+	}
+	if err := json.NewDecoder(listed.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Agents) != 1 || body.Agents[0].Presence == nil || body.Agents[0].Presence.State != domain.PresenceWaitingApproval {
+		t.Fatalf("presence = %#v", body.Agents)
+	}
+
+	cleared := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/"+created.Bot.ID, `{"metadata":{"clear_lead":true}}`)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear lead = %d, body = %s", cleared.Code, cleared.Body.String())
+	}
+	var after domain.Agent
+	if err := json.NewDecoder(cleared.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Metadata == nil || after.Metadata.Lead != nil || after.Metadata.LeadHarness != "" {
+		t.Fatalf("cleared lead = %#v", after.Metadata)
+	}
+
+	stored, err := instance.ListAgents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].Metadata == nil || stored[0].Metadata.Lead != nil {
+		t.Fatalf("cleared lead was not persisted: %#v", stored)
+	}
+}
+
+func TestAgentsAPIRosterPatchAndUnreadOnAttentionRun(t *testing.T) {
+	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instance.Close() })
+	server := &Server{Store: instance, HarnessWorkdir: t.TempDir()}
+	handler := server.Handler()
+
+	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{"name":"Scout","title":"Research teammate"}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created domain.Agent
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Pinned || created.Hidden || created.Unread {
+		t.Fatalf("created roster = %#v", created)
+	}
+
+	listed := agentsAPIRequest(handler, http.MethodGet, "/api/agents", "")
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	var body struct {
+		Agents []domain.Agent `json:"agents"`
+	}
+	if err := json.NewDecoder(listed.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Agents) != 1 || body.Agents[0].Pinned || body.Agents[0].Unread || body.Agents[0].Hidden {
+		t.Fatalf("listed roster = %#v", body.Agents)
+	}
+
+	patched := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/"+created.Bot.ID+"/roster", `{"pinned":true,"unread":true}`)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("PATCH roster = %d, body = %s", patched.Code, patched.Body.String())
+	}
+	var after domain.Agent
+	if err := json.NewDecoder(patched.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.Pinned || !after.Unread || after.Hidden {
+		t.Fatalf("patched roster = %#v", after)
+	}
+
+	listed = agentsAPIRequest(handler, http.MethodGet, "/api/agents", "")
+	if err := json.NewDecoder(listed.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Agents) != 1 || !body.Agents[0].Pinned || !body.Agents[0].Unread {
+		t.Fatalf("GET roster = %#v", body.Agents)
+	}
+
+	hidden := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/"+created.Bot.ID+"/roster", `{"hidden":true,"unread":false}`)
+	if hidden.Code != http.StatusOK {
+		t.Fatalf("PATCH hidden = %d, body = %s", hidden.Code, hidden.Body.String())
+	}
+	if empty := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/"+created.Bot.ID+"/roster", `{}`); empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty roster status = %d, body = %s", empty.Code, empty.Body.String())
+	}
+	if missing := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/missing/roster", `{"pinned":true}`); missing.Code != http.StatusNotFound {
+		t.Fatalf("missing roster status = %d, body = %s", missing.Code, missing.Body.String())
+	}
+
+	run, err := instance.CreateRun(t.Context(), created.Conversation.ID, created.Bot.ID, "codex_app_server", "ship it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.commitRunLifecycleEvent(t.Context(), run, "failed", "boom", "run.failed", `{"status":"failed"}`); err != nil {
+		t.Fatalf("commit failed run: %v", err)
+	}
+	listed = agentsAPIRequest(handler, http.MethodGet, "/api/agents", "")
+	if err := json.NewDecoder(listed.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Agents) != 1 || !body.Agents[0].Unread || !body.Agents[0].Pinned || !body.Agents[0].Hidden {
+		t.Fatalf("failed run unread = %#v", body.Agents)
 	}
 }
 

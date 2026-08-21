@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 var ErrExecutionDisabled = errors.New("computer execution is disabled; set OPENAGENTFLEET_ALLOW_COMPUTER_EXECUTION=1 to enable it")
@@ -1288,10 +1290,7 @@ func (d *Docker) restoreControlToken() error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() {
-		return errors.New("control token file is not a regular file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if !ospath.OwnerOnlyFile(info) {
 		return errors.New("control token file is accessible outside its owner")
 	}
 	if err := ensurePrivateDirectory(filepath.Dir(d.ControlTokenPath)); err != nil {
@@ -1366,7 +1365,7 @@ func ensurePrivateDirectory(directory string) error {
 	if !info.IsDir() {
 		return errors.New("control token parent is not a directory")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if !ospath.OwnerOnlyDir(info) {
 		return errors.New("control token parent is accessible outside its owner")
 	}
 	return nil

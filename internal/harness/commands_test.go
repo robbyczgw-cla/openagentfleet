@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,10 @@ func TestCursorCommandDoesNotEnableBroadAutoApproval(t *testing.T) {
 }
 
 func TestOpenCodeCommandUsesPureJSONAndSafeExplicitOptions(t *testing.T) {
+	workdir, err := filepath.Abs("/tmp/work")
+	if err != nil {
+		t.Fatal(err)
+	}
 	command, err := BuildCommandWithOptions(OpenCodeProvider, "inspect safely", "/tmp/work", CommandOptions{
 		SessionID:       "ses_123",
 		Model:           "openai/gpt-5",
@@ -69,7 +74,7 @@ func TestOpenCodeCommandUsesPureJSONAndSafeExplicitOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"run", "--pure", "--format", "json", "--dir", "/tmp/work",
+		"run", "--pure", "--format", "json", "--dir", workdir,
 		"--session", "ses_123", "--model", "openai/gpt-5", "--variant", "high",
 		"inspect safely",
 	}

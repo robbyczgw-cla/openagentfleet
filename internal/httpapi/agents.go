@@ -53,6 +53,7 @@ type agentMetadataPatchRequest struct {
 	NotifyNeedsInput *bool                           `json:"notify_needs_input"`
 	Avatar           *domain.AgentAvatarMetadata     `json:"avatar"`
 	Collaboration    *domain.AgentCollaboration      `json:"collaboration"`
+	ClearLead        *bool                           `json:"clear_lead"`
 }
 
 type agentExecutionProfilePatch struct {
@@ -94,7 +95,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusConflict, err)
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, agent)
+	s.writeJSON(w, http.StatusCreated, s.decorateOneAgent(r.Context(), agent))
 }
 
 func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +135,52 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusBadRequest, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, agent)
+	s.writeJSON(w, http.StatusOK, s.decorateOneAgent(r.Context(), agent))
+}
+
+type agentRosterPatchRequest struct {
+	Pinned *bool `json:"pinned"`
+	Hidden *bool `json:"hidden"`
+	Unread *bool `json:"unread"`
+}
+
+func (s *Server) patchAgentRoster(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("agent store unavailable"))
+		return
+	}
+	botID, ok := parseAgentRosterPath(r.URL.Path)
+	if !ok {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("agent id is required"))
+		return
+	}
+	var request agentRosterPatchRequest
+	if err := decodeStrictJSON(w, r, &request); err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	if request.Pinned == nil && request.Hidden == nil && request.Unread == nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("at least one roster field is required"))
+		return
+	}
+	agent, err := s.Store.PatchAgentRoster(r.Context(), botID, store.AgentRosterUpdate{
+		Pinned: request.Pinned, Hidden: request.Hidden, Unread: request.Unread,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrAgentNotFound) {
+			s.writeErrorStatus(w, http.StatusNotFound, err)
+			return
+		}
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.decorateOneAgent(r.Context(), agent))
+}
+
+func parseAgentRosterPath(path string) (string, bool) {
+	rest := strings.TrimPrefix(path, "/api/agents/")
+	botID, suffix, ok := strings.Cut(rest, "/")
+	return botID, ok && suffix == "roster" && botID != "" && !strings.Contains(botID, "/")
 }
 
 func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMetadataPatchRequest) (domain.AgentMetadata, error) {
@@ -146,6 +192,12 @@ func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMet
 		metadata = *existing
 	}
 	changed := false
+	if patch.ClearLead != nil && *patch.ClearLead {
+		metadata.Lead = nil
+		metadata.LeadHarness = ""
+		metadata.Model = ""
+		changed = true
+	}
 	if patch.Lead != nil {
 		lead := domain.AgentExecutionProfile{}
 		if metadata.Lead != nil {
@@ -254,7 +306,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
+	s.writeJSON(w, http.StatusOK, map[string]any{"agents": s.decorateAgentPresence(r.Context(), agents)})
 }
 
 func normalizeAgentMetadataRequest(request *agentMetadataRequest) (domain.AgentMetadata, error) {

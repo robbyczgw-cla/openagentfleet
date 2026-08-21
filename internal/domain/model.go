@@ -98,6 +98,7 @@ type RunEvent struct {
 type StreamEvent struct {
 	ID             string `json:"id"`
 	RunID          string `json:"run_id,omitempty"`
+	BotID          string `json:"bot_id,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	Type           string `json:"type"`
 	Data           string `json:"data"`

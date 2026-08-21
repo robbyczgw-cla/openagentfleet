@@ -131,6 +131,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]domain.Agent, error) {
 		items[index] = newAgent(items[index].Bot, items[index].Conversations)
 		items[index].Metadata = metadata
 	}
+	if err := s.applyAgentRoster(ctx, items); err != nil {
+		return nil, err
+	}
 	return items, nil
 }
 

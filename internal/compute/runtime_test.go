@@ -21,6 +21,7 @@ func TestClassifyDockerContextIdentifiesSupportedMacRuntimes(t *testing.T) {
 		{name: "openagentfleet", endpoint: "unix:///Users/test/.colima/openagentfleet/docker.sock", want: RuntimeColima},
 		{name: "orbstack", endpoint: "unix:///Users/test/.orbstack/run/docker.sock", want: RuntimeOrbStack},
 		{name: "remote-linux", endpoint: "ssh://builder@example.com", want: RuntimeDocker},
+		{name: "desktop-windows", endpoint: `npipe:////./pipe/docker_engine`, want: RuntimeDockerDesktop},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -47,6 +48,10 @@ func TestReconcilePreferredRuntimeUsesDockerWhenColimaIsMissingOnLinux(t *testin
 	if runtime.GOOS == "linux" {
 		if _, err := exec.LookPath("colima"); err != nil && got != RuntimeDocker {
 			t.Fatalf("linux without colima = %q, want docker", got)
+		}
+	} else if runtime.GOOS == "windows" {
+		if got != RuntimeDockerDesktop {
+			t.Fatalf("windows colima leftover = %q, want docker_desktop", got)
 		}
 	} else if got != RuntimeColima {
 		t.Fatalf("non-linux colima = %q", got)
@@ -105,6 +110,9 @@ func TestStoppedColimaSelectionUsesDedicatedProfile(t *testing.T) {
 }
 
 func TestDockerStartsStoppedColimaWithoutChangingGlobalContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Colima is not a Windows runtime")
+	}
 	tempDir := t.TempDir()
 	t.Setenv("COLIMA_HOME", filepath.Join(tempDir, "colima-home"))
 	marker := filepath.Join(tempDir, "started")
@@ -134,6 +142,9 @@ func TestDockerStartsStoppedColimaWithoutChangingGlobalContext(t *testing.T) {
 }
 
 func TestDockerStartsColimaWithSelectedResourceFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Colima is not a Windows runtime")
+	}
 	tempDir := t.TempDir()
 	t.Setenv("COLIMA_HOME", filepath.Join(tempDir, "colima-home"))
 	marker := filepath.Join(tempDir, "started")

@@ -1,11 +1,15 @@
 package compute
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestAddColimaMountsPreservesExistingEntriesAndIsIdempotent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Colima YAML is a macOS runtime")
+	}
 	config := "runtime: docker\nmounts:\n  - location: /Users/test/projects\n    writable: true\n\ndisk: 32\n"
 	required := []string{"/Users/test/projects", "/Users/test/openagentfleet-state"}
 	updated, changed, err := addColimaMounts(config, required)
@@ -28,6 +32,9 @@ func TestAddColimaMountsPreservesExistingEntriesAndIsIdempotent(t *testing.T) {
 }
 
 func TestAddColimaMountsExpandsEmptyMountList(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Colima YAML is a macOS runtime")
+	}
 	config := "runtime: docker\nmounts: []\nvmType: vz\n"
 	updated, changed, err := addColimaMounts(config, []string{"/Users/test/openagentfleet-state"})
 	if err != nil {

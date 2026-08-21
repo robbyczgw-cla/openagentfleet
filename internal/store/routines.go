@@ -51,7 +51,7 @@ next_run_at, occurrence_key, retry_not_before, last_run_at, attention_reason, cr
 
 const routineRunSelectColumns = `id, routine_id, state, scheduled_for, attempt,
 occurrence_key, lease_owner, lease_token, lease_expires_at, approval_id, idempotency_key,
-claimed_at, started_at, finished_at, outcome_reason, created_at, updated_at`
+claimed_at, started_at, finished_at, outcome_reason, trigger, created_at, updated_at`
 
 // MigrateRoutines is additive and idempotent. Store.Open invokes it so the
 // optional routine feature can be enabled without a separate database step;
@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS routine_run_ledger (
   started_at TEXT NOT NULL DEFAULT '',
   finished_at TEXT NOT NULL DEFAULT '',
   outcome_reason TEXT NOT NULL DEFAULT '',
+  trigger TEXT DEFAULT 'schedule',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(routine_id, idempotency_key),
@@ -141,6 +142,23 @@ CREATE INDEX IF NOT EXISTS routine_history_routine_idx
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate routines: %w", err)
+	}
+	if err := s.ensureRoutineLedgerTriggerColumn(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureRoutineLedgerTriggerColumn(ctx context.Context) error {
+	found, err := hasSQLiteColumn(s.db, "routine_run_ledger", "trigger")
+	if err != nil {
+		return fmt.Errorf("migrate routines: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE routine_run_ledger ADD COLUMN trigger TEXT DEFAULT 'schedule'`); err != nil {
+		return fmt.Errorf("migrate routines: add trigger: %w", err)
 	}
 	return nil
 }
@@ -345,6 +363,14 @@ ORDER BY r.next_run_at, r.id LIMIT ?`, routineTimestamp(at), routineTimestamp(at
 	return items, nil
 }
 
+// ClaimTestRoutineRun starts a leased ledger occurrence without requiring the
+// routine to be enabled or due. It uses a distinct occurrence key so finishing
+// the test does not consume the scheduled next run.
+func (s *Store) ClaimTestRoutineRun(ctx context.Context, claim domain.RoutineClaim) (domain.RoutineRun, error) {
+	claim.Trigger = domain.RoutineTriggerTest
+	return s.ClaimRoutineRun(ctx, claim)
+}
+
 // ClaimRoutineRun atomically creates one leased ledger occurrence. Its
 // idempotency key is mandatory and scoped to the routine. Repeating the exact
 // claim returns the original row, even after it becomes terminal.
@@ -353,7 +379,15 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 	claim.LeaseOwner = strings.TrimSpace(claim.LeaseOwner)
 	claim.IdempotencyKey = strings.TrimSpace(claim.IdempotencyKey)
 	claim.ApprovalID = strings.TrimSpace(claim.ApprovalID)
+	claim.OccurrenceKey = strings.TrimSpace(claim.OccurrenceKey)
+	claim.Trigger = strings.TrimSpace(claim.Trigger)
+	if claim.Trigger == "" {
+		claim.Trigger = domain.RoutineTriggerSchedule
+	}
 	claim.Now = routineNow(claim.Now)
+	if claim.Trigger != domain.RoutineTriggerSchedule && claim.Trigger != domain.RoutineTriggerTest && claim.Trigger != domain.RoutineTriggerWebhook {
+		return domain.RoutineRun{}, fmt.Errorf("unsupported routine trigger %q", claim.Trigger)
+	}
 	if claim.RoutineID == "" || !validRoutineTokenText(claim.LeaseOwner, maxRoutineOwnerBytes) {
 		return domain.RoutineRun{}, errors.New("routine id and printable lease owner are required")
 	}
@@ -392,31 +426,45 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 	if err != nil {
 		return domain.RoutineRun{}, err
 	}
-	if routine.Status == domain.RoutineStatusPaused {
-		return domain.RoutineRun{}, ErrRoutinePaused
-	}
 	if routine.Status == domain.RoutineStatusNeedsAttention {
 		return domain.RoutineRun{}, ErrRoutineNeedsAttention
 	}
-	if routine.Status != domain.RoutineStatusEnabled {
-		return domain.RoutineRun{}, ErrRoutineDisabled
-	}
-	if routine.Kind == domain.RoutineKindHeartbeat && !routine.HeartbeatOptIn {
-		return domain.RoutineRun{}, ErrRoutineHeartbeatOptIn
+	skipSchedule := domain.RoutineSkipsSchedule(claim.Trigger)
+	if !skipSchedule || claim.Trigger == domain.RoutineTriggerWebhook {
+		if routine.Status == domain.RoutineStatusPaused {
+			return domain.RoutineRun{}, ErrRoutinePaused
+		}
+		if routine.Status != domain.RoutineStatusEnabled {
+			return domain.RoutineRun{}, ErrRoutineDisabled
+		}
+		if routine.Kind == domain.RoutineKindHeartbeat && !routine.HeartbeatOptIn {
+			return domain.RoutineRun{}, ErrRoutineHeartbeatOptIn
+		}
 	}
 	if routine.ApprovalPolicy == domain.RoutineApprovalAlways && claim.ApprovalID == "" {
 		return domain.RoutineRun{}, ErrRoutineApprovalRequired
 	}
+	occurrenceKey := routine.OccurrenceKey
+	scheduledFor := routine.NextRunAt
+	if skipSchedule {
+		occurrenceKey = claim.OccurrenceKey
+		if occurrenceKey == "" {
+			occurrenceKey = id.New("occurrence")
+		}
+		scheduledFor = routineTimestamp(claim.Now)
+	}
 	if claim.ApprovalID != "" {
-		if err := validateRoutineApproval(ctx, conn, claim.ApprovalID, routine.ID, routine.OccurrenceKey); err != nil {
+		if err := validateRoutineApproval(ctx, conn, claim.ApprovalID, routine.ID, occurrenceKey, claim.Trigger); err != nil {
 			return domain.RoutineRun{}, err
 		}
 	}
-	if routine.NextRunAt == "" || routine.OccurrenceKey == "" || routine.NextRunAt > routineTimestamp(claim.Now) {
-		return domain.RoutineRun{}, ErrRoutineNotDue
-	}
-	if routine.RetryNotBefore != "" && routine.RetryNotBefore > routineTimestamp(claim.Now) {
-		return domain.RoutineRun{}, ErrRoutineNotDue
+	if !skipSchedule {
+		if routine.NextRunAt == "" || routine.OccurrenceKey == "" || routine.NextRunAt > routineTimestamp(claim.Now) {
+			return domain.RoutineRun{}, ErrRoutineNotDue
+		}
+		if routine.RetryNotBefore != "" && routine.RetryNotBefore > routineTimestamp(claim.Now) {
+			return domain.RoutineRun{}, ErrRoutineNotDue
+		}
 	}
 	if active, err := routineHasActiveRun(ctx, conn, routine.ID); err != nil {
 		return domain.RoutineRun{}, err
@@ -425,7 +473,7 @@ func (s *Store) ClaimRoutineRun(ctx context.Context, claim domain.RoutineClaim) 
 	}
 	var previousAttempts int
 	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM routine_run_ledger
-WHERE routine_id = ? AND occurrence_key = ?`, routine.ID, routine.OccurrenceKey).Scan(&previousAttempts); err != nil {
+WHERE routine_id = ? AND occurrence_key = ?`, routine.ID, occurrenceKey).Scan(&previousAttempts); err != nil {
 		return domain.RoutineRun{}, fmt.Errorf("count routine attempts: %w", err)
 	}
 	attempt := previousAttempts + 1
@@ -441,14 +489,15 @@ WHERE routine_id = ? AND occurrence_key = ?`, routine.ID, routine.OccurrenceKey)
 		ID:             id.New("routine-run"),
 		RoutineID:      routine.ID,
 		State:          domain.RoutineLedgerClaimed,
-		ScheduledFor:   routine.NextRunAt,
-		OccurrenceKey:  routine.OccurrenceKey,
+		ScheduledFor:   scheduledFor,
+		OccurrenceKey:  occurrenceKey,
 		Attempt:        attempt,
 		LeaseOwner:     claim.LeaseOwner,
 		LeaseToken:     leaseToken,
 		LeaseExpiresAt: routineTimestamp(claim.Now.Add(claim.LeaseDuration)),
 		ApprovalID:     claim.ApprovalID,
 		IdempotencyKey: claim.IdempotencyKey,
+		Trigger:        claim.Trigger,
 		ClaimedAt:      timestamp,
 		CreatedAt:      timestamp,
 		UpdatedAt:      timestamp,
@@ -456,11 +505,11 @@ WHERE routine_id = ? AND occurrence_key = ?`, routine.ID, routine.OccurrenceKey)
 	if _, err := conn.ExecContext(ctx, `INSERT INTO routine_run_ledger
 (id, routine_id, state, scheduled_for, occurrence_key, attempt, lease_owner, lease_token,
  lease_expires_at, approval_id, idempotency_key, request_hash, claimed_at,
- started_at, finished_at, outcome_reason, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?, ?)`,
+ started_at, finished_at, outcome_reason, trigger, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?, ?, ?)`,
 		run.ID, run.RoutineID, run.State, run.ScheduledFor, run.OccurrenceKey, run.Attempt,
 		run.LeaseOwner, run.LeaseToken, run.LeaseExpiresAt, run.ApprovalID,
-		run.IdempotencyKey, requestHash[:], run.ClaimedAt, run.CreatedAt, run.UpdatedAt); err != nil {
+		run.IdempotencyKey, requestHash[:], run.ClaimedAt, run.Trigger, run.CreatedAt, run.UpdatedAt); err != nil {
 		if isSQLiteConstraintError(err) {
 			if active, activeErr := routineHasActiveRun(ctx, conn, routine.ID); activeErr == nil && active {
 				return domain.RoutineRun{}, ErrRoutineRunActive
@@ -468,7 +517,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?, ?)`,
 		}
 		return domain.RoutineRun{}, fmt.Errorf("claim routine run: %w", err)
 	}
-	if err := appendRoutineEvent(ctx, conn, routine.ID, run.ID, "run.claimed", fmt.Sprintf("attempt %d claimed", run.Attempt), timestamp); err != nil {
+	claimedMessage := fmt.Sprintf("attempt %d claimed", run.Attempt)
+	if skipSchedule {
+		claimedMessage = fmt.Sprintf("%s attempt %d claimed", claim.Trigger, run.Attempt)
+	}
+	if err := appendRoutineEvent(ctx, conn, routine.ID, run.ID, "run.claimed", claimedMessage, timestamp); err != nil {
 		return domain.RoutineRun{}, err
 	}
 	if err := commitRoutineImmediate(ctx, conn, "claim routine run"); err != nil {
@@ -520,7 +573,8 @@ func (s *Store) FinishRoutineRun(ctx context.Context, finish domain.RoutineFinis
 	if err != nil {
 		return domain.RoutineRun{}, err
 	}
-	if finish.State == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron {
+	skipSchedule := domain.RoutineSkipsSchedule(run.Trigger)
+	if !skipSchedule && finish.State == domain.RoutineLedgerCompleted && routine.Kind == domain.RoutineKindCron {
 		if finish.NextRunAt.IsZero() || !finish.NextRunAt.After(finish.Now) {
 			return domain.RoutineRun{}, ErrRoutineNextRunRequired
 		}
@@ -543,29 +597,31 @@ WHERE id = ? AND lease_owner = ? AND lease_token = ? AND state IN ('claimed', 'r
 	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
 		return domain.RoutineRun{}, ErrRoutineLeaseLost
 	}
-	if finish.State == domain.RoutineLedgerCompleted {
-		nextRun := finish.NextRunAt.UTC()
-		if routine.Kind == domain.RoutineKindHeartbeat {
-			nextRun = finish.Now.Add(time.Duration(routine.HeartbeatIntervalSeconds) * time.Second)
+	if !skipSchedule {
+		if finish.State == domain.RoutineLedgerCompleted {
+			nextRun := finish.NextRunAt.UTC()
+			if routine.Kind == domain.RoutineKindHeartbeat {
+				nextRun = finish.Now.Add(time.Duration(routine.HeartbeatIntervalSeconds) * time.Second)
+			}
+			routine.NextRunAt = routineTimestamp(nextRun)
+			routine.OccurrenceKey = id.New("occurrence")
+			routine.RetryNotBefore = ""
+			routine.LastRunAt = timestamp
+			routine.AttentionReason = ""
+		} else if run.Attempt < routine.Retry.MaxAttempts {
+			routine.RetryNotBefore = routineTimestamp(finish.Now.Add(time.Duration(routine.Retry.BackoffSeconds) * time.Second))
+		} else {
+			routine.Status = domain.RoutineStatusNeedsAttention
+			routine.RetryNotBefore = ""
+			routine.AttentionReason = routineFailureReason(finish.Reason)
 		}
-		routine.NextRunAt = routineTimestamp(nextRun)
-		routine.OccurrenceKey = id.New("occurrence")
-		routine.RetryNotBefore = ""
-		routine.LastRunAt = timestamp
-		routine.AttentionReason = ""
-	} else if run.Attempt < routine.Retry.MaxAttempts {
-		routine.RetryNotBefore = routineTimestamp(finish.Now.Add(time.Duration(routine.Retry.BackoffSeconds) * time.Second))
-	} else {
-		routine.Status = domain.RoutineStatusNeedsAttention
-		routine.RetryNotBefore = ""
-		routine.AttentionReason = routineFailureReason(finish.Reason)
-	}
-	routine.UpdatedAt = timestamp
-	if _, err := conn.ExecContext(ctx, `UPDATE routine_schedules
+		routine.UpdatedAt = timestamp
+		if _, err := conn.ExecContext(ctx, `UPDATE routine_schedules
 SET status = ?, next_run_at = ?, occurrence_key = ?, retry_not_before = ?, last_run_at = ?, attention_reason = ?, updated_at = ? WHERE id = ?`,
-		routine.Status, routine.NextRunAt, routine.OccurrenceKey, routine.RetryNotBefore, routine.LastRunAt,
-		routine.AttentionReason, routine.UpdatedAt, routine.ID); err != nil {
-		return domain.RoutineRun{}, fmt.Errorf("finish routine run: update routine: %w", err)
+			routine.Status, routine.NextRunAt, routine.OccurrenceKey, routine.RetryNotBefore, routine.LastRunAt,
+			routine.AttentionReason, routine.UpdatedAt, routine.ID); err != nil {
+			return domain.RoutineRun{}, fmt.Errorf("finish routine run: update routine: %w", err)
+		}
 	}
 	if err := appendRoutineEvent(ctx, conn, routine.ID, run.ID, "run."+string(run.State), run.OutcomeReason, timestamp); err != nil {
 		return domain.RoutineRun{}, err
@@ -634,24 +690,26 @@ WHERE id = ? AND state IN ('claimed', 'running') AND lease_expires_at <> '' AND 
 		run.FinishedAt = timestamp
 		run.OutcomeReason = "lease expired before outcome was known"
 		run.UpdatedAt = timestamp
-		routine, err := loadRoutineFrom(ctx, conn, run.RoutineID)
-		if err != nil {
-			return nil, err
-		}
-		// An expired lease says nothing about the external side effect. Do not
-		// use the ordinary failure retry path here: launching another attempt
-		// could duplicate a payment, message, browser action, or deployment
-		// while the old worker is still alive. An operator must resolve this
-		// occurrence explicitly before the routine can run again.
-		routine.Status = domain.RoutineStatusNeedsAttention
-		routine.RetryNotBefore = ""
-		routine.AttentionReason = "run lease expired; outcome unknown"
-		if _, err := conn.ExecContext(ctx, `UPDATE routine_schedules
+		if run.Trigger != domain.RoutineTriggerTest {
+			routine, err := loadRoutineFrom(ctx, conn, run.RoutineID)
+			if err != nil {
+				return nil, err
+			}
+			// An expired lease says nothing about the external side effect. Do not
+			// use the ordinary failure retry path here: launching another attempt
+			// could duplicate a payment, message, browser action, or deployment
+			// while the old worker is still alive. An operator must resolve this
+			// occurrence explicitly before the routine can run again.
+			routine.Status = domain.RoutineStatusNeedsAttention
+			routine.RetryNotBefore = ""
+			routine.AttentionReason = "run lease expired; outcome unknown"
+			if _, err := conn.ExecContext(ctx, `UPDATE routine_schedules
 SET status = ?, retry_not_before = ?, attention_reason = ?, updated_at = ? WHERE id = ?`,
-			routine.Status, routine.RetryNotBefore, routine.AttentionReason, timestamp, routine.ID); err != nil {
-			return nil, fmt.Errorf("recover stale routine run: update routine: %w", err)
+				routine.Status, routine.RetryNotBefore, routine.AttentionReason, timestamp, routine.ID); err != nil {
+				return nil, fmt.Errorf("recover stale routine run: update routine: %w", err)
+			}
 		}
-		if err := appendRoutineEvent(ctx, conn, routine.ID, run.ID, "run.unknown", run.OutcomeReason, timestamp); err != nil {
+		if err := appendRoutineEvent(ctx, conn, run.RoutineID, run.ID, "run.unknown", run.OutcomeReason, timestamp); err != nil {
 			return nil, err
 		}
 		recovered = append(recovered, run)
@@ -868,8 +926,11 @@ func scanRoutineRun(row routineScanner) (domain.RoutineRun, error) {
 		&item.ID, &item.RoutineID, &item.State, &item.ScheduledFor, &item.Attempt,
 		&item.OccurrenceKey, &item.LeaseOwner, &item.LeaseToken, &item.LeaseExpiresAt, &item.ApprovalID,
 		&item.IdempotencyKey, &item.ClaimedAt, &item.StartedAt, &item.FinishedAt,
-		&item.OutcomeReason, &item.CreatedAt, &item.UpdatedAt,
+		&item.OutcomeReason, &item.Trigger, &item.CreatedAt, &item.UpdatedAt,
 	)
+	if item.Trigger == "" {
+		item.Trigger = domain.RoutineTriggerSchedule
+	}
 	return item, err
 }
 
@@ -879,8 +940,11 @@ func scanRoutineRunWithHash(row routineScanner, hash *[]byte) (domain.RoutineRun
 		&item.ID, &item.RoutineID, &item.State, &item.ScheduledFor, &item.Attempt,
 		&item.OccurrenceKey, &item.LeaseOwner, &item.LeaseToken, &item.LeaseExpiresAt, &item.ApprovalID,
 		&item.IdempotencyKey, &item.ClaimedAt, &item.StartedAt, &item.FinishedAt,
-		&item.OutcomeReason, &item.CreatedAt, &item.UpdatedAt, hash,
+		&item.OutcomeReason, &item.Trigger, &item.CreatedAt, &item.UpdatedAt, hash,
 	)
+	if item.Trigger == "" {
+		item.Trigger = domain.RoutineTriggerSchedule
+	}
 	return item, err
 }
 
@@ -1020,7 +1084,55 @@ func RoutineApprovalAction(routineID, occurrenceKey string) string {
 	return "routine.run:" + strings.TrimSpace(routineID) + ":" + strings.TrimSpace(occurrenceKey)
 }
 
-func validateRoutineApproval(ctx context.Context, source routineSQL, approvalID, routineID, occurrenceKey string) error {
+// RoutineTestApprovalAction binds an approval to a test occurrence so deny
+// cannot rotate the scheduled next run.
+func RoutineTestApprovalAction(routineID, occurrenceKey string) string {
+	return "routine.test:" + strings.TrimSpace(routineID) + ":" + strings.TrimSpace(occurrenceKey)
+}
+
+func RoutineWebhookApprovalAction(routineID, occurrenceKey string) string {
+	return "routine.webhook:" + strings.TrimSpace(routineID) + ":" + strings.TrimSpace(occurrenceKey)
+}
+
+// ParseRoutineApprovalAction extracts trigger, routine id, and occurrence key
+// from a scheduled, test, or webhook gate-approval action.
+func ParseRoutineApprovalAction(action string) (trigger, routineID, occurrenceKey string, ok bool) {
+	action = strings.TrimSpace(action)
+	prefixes := []struct {
+		prefix  string
+		trigger string
+	}{
+		{"routine.webhook:", domain.RoutineTriggerWebhook},
+		{"routine.test:", domain.RoutineTriggerTest},
+		{"routine.run:", domain.RoutineTriggerSchedule},
+	}
+	for _, item := range prefixes {
+		if !strings.HasPrefix(action, item.prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(action, item.prefix)
+		routineID, occurrenceKey, found := strings.Cut(rest, ":")
+		if !found || strings.TrimSpace(routineID) == "" || strings.TrimSpace(occurrenceKey) == "" {
+			return "", "", "", false
+		}
+		return item.trigger, routineID, occurrenceKey, true
+	}
+	return "", "", "", false
+}
+
+func (s *Store) RoutineLedgerHasApproval(ctx context.Context, approvalID string) (bool, error) {
+	approvalID = strings.TrimSpace(approvalID)
+	if approvalID == "" {
+		return false, nil
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM routine_run_ledger WHERE approval_id = ?)`, approvalID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("lookup routine approval: %w", err)
+	}
+	return exists == 1, nil
+}
+
+func validateRoutineApproval(ctx context.Context, source routineSQL, approvalID, routineID, occurrenceKey, trigger string) error {
 	var status, action string
 	err := source.QueryRowContext(ctx, "SELECT status, action FROM approval_requests WHERE id = ?", approvalID).Scan(&status, &action)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1029,7 +1141,14 @@ func validateRoutineApproval(ctx context.Context, source routineSQL, approvalID,
 	if err != nil {
 		return fmt.Errorf("validate routine approval: %w", err)
 	}
-	if status != "approved" || action != RoutineApprovalAction(routineID, occurrenceKey) {
+	expected := RoutineApprovalAction(routineID, occurrenceKey)
+	if trigger == domain.RoutineTriggerTest {
+		expected = RoutineTestApprovalAction(routineID, occurrenceKey)
+	}
+	if trigger == domain.RoutineTriggerWebhook {
+		expected = RoutineWebhookApprovalAction(routineID, occurrenceKey)
+	}
+	if status != "approved" || action != expected {
 		return ErrRoutineApprovalInvalid
 	}
 	return nil

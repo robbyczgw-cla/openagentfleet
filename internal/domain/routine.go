@@ -74,6 +74,26 @@ const (
 	RoutineLedgerUnknown   RoutineLedgerState = "unknown"
 )
 
+const (
+	RoutineTriggerSchedule = "schedule"
+	RoutineTriggerTest     = "test"
+	RoutineTriggerWebhook  = "webhook"
+)
+
+// RoutineSkipsSchedule is true when a run must not consume next_run_at.
+func RoutineSkipsSchedule(trigger string) bool {
+	return trigger == RoutineTriggerTest || trigger == RoutineTriggerWebhook
+}
+
+// RoutineWebhook is the public view of a delivery credential. The secret is
+// never stored here; Create/Rotate return it once on a different type.
+type RoutineWebhook struct {
+	RoutineID  string `json:"routine_id"`
+	Configured bool   `json:"configured"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+}
+
 type RoutineRetryPolicy struct {
 	MaxAttempts    int `json:"max_attempts"`
 	BackoffSeconds int `json:"backoff_seconds"`
@@ -140,6 +160,7 @@ type RoutineRun struct {
 	LeaseExpiresAt string             `json:"lease_expires_at,omitempty"`
 	ApprovalID     string             `json:"approval_id,omitempty"`
 	IdempotencyKey string             `json:"idempotency_key,omitempty"`
+	Trigger        string             `json:"trigger,omitempty"`
 	ClaimedAt      string             `json:"claimed_at"`
 	StartedAt      string             `json:"started_at,omitempty"`
 	FinishedAt     string             `json:"finished_at,omitempty"`
@@ -154,6 +175,8 @@ type RoutineClaim struct {
 	LeaseDuration  time.Duration
 	IdempotencyKey string
 	ApprovalID     string
+	Trigger        string
+	OccurrenceKey  string
 	Now            time.Time
 }
 

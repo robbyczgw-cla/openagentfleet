@@ -5,8 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -218,6 +219,9 @@ func TestMaterializePiLeadControllerIsIdempotent(t *testing.T) {
 
 func writePiRPCHelperPromptReject(t *testing.T, message string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Pi RPC helpers are POSIX scripts")
+	}
 	path := filepath.Join(t.TempDir(), "pi")
 	script := `#!/usr/bin/env python3
 import json, pathlib, sys
@@ -252,6 +256,9 @@ func jsonMarshalForTest(value string) ([]byte, error) {
 
 func writePiRPCHelperExit(t *testing.T, code int) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Pi RPC helpers are POSIX scripts")
+	}
 	path := filepath.Join(t.TempDir(), "pi")
 	script := `#!/bin/sh
 printf '%s\n' "$*" > "$0.args"
@@ -265,6 +272,9 @@ exit ` + strconv.Itoa(code) + `
 
 func writePiRPCHelperUIKitchenSink(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Pi RPC helpers are POSIX scripts")
+	}
 	path := filepath.Join(t.TempDir(), "pi")
 	script := `#!/usr/bin/env python3
 import json, pathlib, sys

@@ -56,6 +56,13 @@ type Agent struct {
 	ConversationMode    AgentConversationMode `json:"conversation_mode"`
 	Metadata            *AgentMetadata        `json:"metadata,omitempty"`
 	MetadataPersistence string                `json:"metadata_persistence"`
+	// Presence is computed at read time from runs, handoffs, and the computer.
+	Presence *AgentPresence `json:"presence,omitempty"`
+	// Pinned, Hidden, and Unread are user roster flags. They are never sent to
+	// a harness or treated as model context.
+	Pinned bool `json:"pinned"`
+	Hidden bool `json:"hidden,omitempty"`
+	Unread bool `json:"unread"`
 }
 
 // AgentDraft is the durable portion of an Agent creation request. Its first

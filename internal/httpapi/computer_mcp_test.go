@@ -3,7 +3,6 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/browsermcp"
 	"github.com/robbyczgw-cla/openagentfleet/internal/compute"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 func TestLeadMCPServerSpecsInjectsControllerComputerOnlyWithAgentControl(t *testing.T) {
@@ -173,9 +173,5 @@ func TestComputerCapabilityExpiresAndRejectsTerminalRun(t *testing.T) {
 
 func executableFixture(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "openagentfleet-browser-mcp")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return testexe.WriteEcho(t, t.TempDir(), "openagentfleet-browser-mcp", "ok")
 }

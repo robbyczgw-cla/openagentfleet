@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/compute"
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
@@ -63,15 +66,25 @@ type mobileComputerStatus struct {
 }
 
 type mobileBootstrapResponse struct {
-	AuthVersion   int                   `json:"auth_version"`
-	HostID        string                `json:"host_id"`
-	Device        domain.RemoteDevice   `json:"device"`
-	Conversations []domain.Conversation `json:"conversations"`
-	Conversation  domain.Conversation   `json:"conversation"`
-	Messages      []domain.Message      `json:"messages"`
-	Runs          []domain.MobileRun    `json:"runs"`
-	Computer      mobileComputerStatus  `json:"computer"`
-	EventCursor   uint64                `json:"event_cursor"`
+	AuthVersion   int                     `json:"auth_version"`
+	HostID        string                  `json:"host_id"`
+	Device        domain.RemoteDevice     `json:"device"`
+	Conversations []domain.Conversation   `json:"conversations"`
+	Conversation  domain.Conversation     `json:"conversation"`
+	Messages      []domain.Message        `json:"messages"`
+	Runs          []domain.MobileRun      `json:"runs"`
+	Approvals     []domain.MobileApproval `json:"approvals"`
+	Computer      mobileComputerStatus    `json:"computer"`
+	EventCursor   uint64                  `json:"event_cursor"`
+}
+
+type mobileApprovalResolutionRequest struct {
+	Status   string `json:"status"`
+	OptionID string `json:"option_id"`
+}
+
+type mobileRoutinePauseRequest struct {
+	Reason string `json:"reason"`
 }
 
 type mobileMessageRequest struct {
@@ -110,15 +123,7 @@ func (s *Server) MobileHandler() http.Handler {
 		case r.URL.Path == "/api/v1/pair" && r.Method == http.MethodPost:
 			s.mobilePair(w, r)
 			return
-		case r.URL.Path == "/api/v1/bootstrap" && r.Method == http.MethodGet,
-			r.URL.Path == "/api/v1/conversations" && r.Method == http.MethodGet,
-			r.URL.Path == "/api/v1/messages" && r.Method == http.MethodPost,
-			r.URL.Path == "/api/v1/computer" && r.Method == http.MethodGet,
-			r.URL.Path == "/api/v1/computer/frame" && r.Method == http.MethodGet,
-			r.URL.Path == "/api/v1/computer/control" && r.Method == http.MethodPost,
-			r.URL.Path == "/api/v1/computer/browser/action" && r.Method == http.MethodPost,
-			r.URL.Path == "/api/v1/events" && r.Method == http.MethodGet,
-			r.URL.Path == "/api/v1/session/logout" && r.Method == http.MethodPost:
+		case mobileAuthenticatedRoute(r):
 			// Explicit allowlist continues below after device authentication.
 		default:
 			s.mobileError(w, http.StatusNotFound, "not found")
@@ -135,30 +140,55 @@ func (s *Server) MobileHandler() http.Handler {
 			return
 		}
 
-		switch r.URL.Path {
-		case "/api/v1/bootstrap":
+		switch {
+		case r.URL.Path == "/api/v1/bootstrap" && r.Method == http.MethodGet:
 			s.mobileBootstrap(w, r, session)
-		case "/api/v1/conversations":
+		case r.URL.Path == "/api/v1/conversations" && r.Method == http.MethodGet:
 			s.mobileConversations(w, r)
-		case "/api/v1/messages":
+		case r.URL.Path == "/api/v1/messages" && r.Method == http.MethodPost:
 			s.mobileCreateMessage(w, r, session.Device)
-		case "/api/v1/computer":
+		case r.URL.Path == "/api/v1/computer" && r.Method == http.MethodGet:
 			s.writeJSON(w, http.StatusOK, s.mobileComputerForToken(r.Context(), rawBearer))
-		case "/api/v1/computer/frame":
+		case r.URL.Path == "/api/v1/computer/frame" && r.Method == http.MethodGet:
 			s.mobileComputerFrame(w, r)
-		case "/api/v1/computer/control":
+		case r.URL.Path == "/api/v1/computer/control" && r.Method == http.MethodPost:
 			s.mobileComputerControl(w, r, session.Device, rawBearer)
-		case "/api/v1/computer/browser/action":
+		case r.URL.Path == "/api/v1/computer/browser/action" && r.Method == http.MethodPost:
 			s.mobileComputerBrowserAction(w, r, session.Device, rawBearer)
-		case "/api/v1/events":
+		case r.URL.Path == "/api/v1/events" && r.Method == http.MethodGet:
 			s.mobileEvents(w, r, rawBearer)
-		case "/api/v1/session/logout":
+		case r.URL.Path == "/api/v1/session/logout" && r.Method == http.MethodPost:
 			s.releaseMobileComputerLeaseForDevice(session.Device.ID, rawBearer)
 			if err := s.Store.RevokeMobileCredential(r.Context(), session.Device.ID, rawBearer); err != nil {
 				s.mobileUnauthorized(w)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
+		case r.URL.Path == "/api/v1/approvals" && r.Method == http.MethodGet:
+			s.mobileListApprovals(w, r)
+		case r.Method == http.MethodPost:
+			if approvalID, ok := mobilePathID(r.URL.Path, "/api/v1/approvals/"); ok {
+				s.mobileResolveApproval(w, r, session.Device, approvalID)
+				return
+			}
+			if runID, ok := mobileRunStopID(r.URL.Path); ok {
+				s.mobileStopRun(w, r, session.Device, runID)
+				return
+			}
+			if routineID, action, ok := mobileRoutineAction(r.URL.Path); ok {
+				switch action {
+				case "pause":
+					s.mobilePauseRoutine(w, r, session.Device, routineID)
+				case "enable":
+					s.mobileEnableRoutine(w, r, session.Device, routineID)
+				}
+				return
+			}
+			s.mobileError(w, http.StatusNotFound, "not found")
+		case r.URL.Path == "/api/v1/routines" && r.Method == http.MethodGet:
+			s.mobileListRoutines(w, r)
+		default:
+			s.mobileError(w, http.StatusNotFound, "not found")
 		}
 	})
 }
@@ -241,6 +271,11 @@ func (s *Server) mobileBootstrap(w http.ResponseWriter, r *http.Request, session
 		s.mobileError(w, http.StatusServiceUnavailable, "mobile state unavailable")
 		return
 	}
+	approvals, err := s.mobilePendingApprovals(r.Context())
+	if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "mobile state unavailable")
+		return
+	}
 	s.writeJSON(w, http.StatusOK, mobileBootstrapResponse{
 		AuthVersion:   session.AuthVersion,
 		HostID:        hostID,
@@ -249,6 +284,7 @@ func (s *Server) mobileBootstrap(w http.ResponseWriter, r *http.Request, session
 		Conversation:  snapshot.Conversation,
 		Messages:      snapshot.Messages,
 		Runs:          snapshot.Runs,
+		Approvals:     approvals,
 		Computer:      s.mobileComputer(r.Context()),
 		EventCursor:   snapshot.EventCursor,
 	})
@@ -307,6 +343,402 @@ func (s *Server) mobileCreateMessage(w http.ResponseWriter, r *http.Request, dev
 		s.startMobileRun(run)
 	}
 	s.writeJSON(w, http.StatusAccepted, response)
+}
+
+func (s *Server) mobileListApprovals(w http.ResponseWriter, r *http.Request) {
+	approvals, err := s.mobilePendingApprovals(r.Context())
+	if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "approvals unavailable")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"approvals": approvals})
+}
+
+func (s *Server) mobileResolveApproval(w http.ResponseWriter, r *http.Request, device domain.RemoteDevice, approvalID string) {
+	key, ok := s.mobileMutationAuth(w, r, device)
+	if !ok {
+		return
+	}
+	var request mobileApprovalResolutionRequest
+	if err := decodeStrictMobileJSON(w, r, mobileJSONBodyBytes, &request); err != nil {
+		s.mobileError(w, http.StatusBadRequest, "invalid approval request")
+		return
+	}
+	request.Status = strings.TrimSpace(request.Status)
+	request.OptionID = strings.TrimSpace(request.OptionID)
+	if request.Status != "approved" && request.Status != "denied" {
+		s.mobileError(w, http.StatusBadRequest, "invalid approval request")
+		return
+	}
+	fingerprint := mobileMutationFingerprint("approval", approvalID, request.Status, request.OptionID)
+	if s.mobileReplayIdempotency(w, r.Context(), device.ID, key, fingerprint) {
+		return
+	}
+	approval, err := s.Store.GetApproval(r.Context(), approvalID)
+	if err != nil {
+		s.mobileError(w, http.StatusNotFound, "approval not found")
+		return
+	}
+	run, err := s.Store.GetRun(r.Context(), approval.RunID)
+	if err != nil {
+		s.mobileError(w, http.StatusConflict, "approval run is no longer waiting for input")
+		return
+	}
+	if run.Status != "waiting_for_approval" {
+		s.mobileError(w, http.StatusConflict, "approval run is no longer waiting for input")
+		return
+	}
+	if err := s.Store.ResolveApproval(r.Context(), approvalID, request.Status, request.OptionID); err != nil {
+		s.mobileError(w, http.StatusConflict, err.Error())
+		return
+	}
+	approval, err = s.Store.GetApproval(r.Context(), approvalID)
+	if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "approval unavailable")
+		return
+	}
+	s.finishRoutineApproval(r.Context(), approval, request.Status)
+	item, err := s.mobileApprovalFrom(r.Context(), approval)
+	if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "approval unavailable")
+		return
+	}
+	s.mobileWriteIdempotentJSON(w, r.Context(), device.ID, key, fingerprint, http.StatusOK, item)
+}
+
+func (s *Server) mobileStopRun(w http.ResponseWriter, r *http.Request, device domain.RemoteDevice, runID string) {
+	key, ok := s.mobileMutationAuth(w, r, device)
+	if !ok {
+		return
+	}
+	fingerprint := mobileMutationFingerprint("stop", runID)
+	if s.mobileReplayIdempotency(w, r.Context(), device.ID, key, fingerprint) {
+		return
+	}
+	s.activeMu.Lock()
+	cancel := s.activeRuns[runID]
+	s.activeMu.Unlock()
+	if cancel == nil {
+		s.mobileError(w, http.StatusConflict, "run is not active")
+		return
+	}
+	run, err := s.Store.GetRun(r.Context(), runID)
+	if err != nil {
+		s.mobileError(w, http.StatusConflict, "run is not active")
+		return
+	}
+	if terminalRunStatus(run.Status) {
+		s.mobileError(w, http.StatusConflict, "run is already terminal")
+		return
+	}
+	if _, err := s.commitRunLifecycleEvent(r.Context(), run, "stopped", "", "run.stopped", `{"status":"stopped","reason":"user_requested"}`); err != nil {
+		s.mobileError(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.finishCollaborationHandoff(run, "stopped", "cancelled")
+	cancel()
+	s.mobileWriteIdempotentJSON(w, r.Context(), device.ID, key, fingerprint, http.StatusAccepted, map[string]string{"run_id": runID, "status": "stopping"})
+}
+
+func (s *Server) mobileListRoutines(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "routines unavailable")
+		return
+	}
+	items, err := s.Store.ListRoutines(r.Context(), domain.RoutineListFilter{
+		BotID: strings.TrimSpace(r.URL.Query().Get("bot_id")),
+	})
+	if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "routines unavailable")
+		return
+	}
+	routines := make([]domain.MobileRoutine, 0, len(items))
+	for _, item := range items {
+		routines = append(routines, toMobileRoutine(item))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"routines": routines})
+}
+
+func (s *Server) mobilePauseRoutine(w http.ResponseWriter, r *http.Request, device domain.RemoteDevice, routineID string) {
+	key, ok := s.mobileMutationAuth(w, r, device)
+	if !ok {
+		return
+	}
+	var request mobileRoutinePauseRequest
+	if err := decodeOptionalMobileJSON(w, r, &request); err != nil {
+		s.mobileError(w, http.StatusBadRequest, "invalid routine request")
+		return
+	}
+	reason := strings.TrimSpace(request.Reason)
+	fingerprint := mobileMutationFingerprint("pause", routineID, reason)
+	if s.mobileReplayIdempotency(w, r.Context(), device.ID, key, fingerprint) {
+		return
+	}
+	item, err := s.Store.PauseRoutine(r.Context(), routineID, reason)
+	if err != nil {
+		s.mobileRoutineError(w, err)
+		return
+	}
+	s.publishRoutine(item)
+	s.mobileWriteIdempotentJSON(w, r.Context(), device.ID, key, fingerprint, http.StatusOK, map[string]any{"routine": toMobileRoutine(item)})
+}
+
+func (s *Server) mobileEnableRoutine(w http.ResponseWriter, r *http.Request, device domain.RemoteDevice, routineID string) {
+	key, ok := s.mobileMutationAuth(w, r, device)
+	if !ok {
+		return
+	}
+	fingerprint := mobileMutationFingerprint("enable", routineID)
+	if s.mobileReplayIdempotency(w, r.Context(), device.ID, key, fingerprint) {
+		return
+	}
+	item, err := s.Store.GetRoutine(r.Context(), routineID)
+	if err != nil {
+		s.mobileRoutineError(w, err)
+		return
+	}
+	nextRunAt, err := futureRoutineNextRun(item, time.Time{}, s.currentTime(), false)
+	if err != nil {
+		s.mobileError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, err = s.Store.ResumeRoutine(r.Context(), routineID, nextRunAt)
+	if err != nil {
+		s.mobileRoutineError(w, err)
+		return
+	}
+	s.publishRoutine(item)
+	s.mobileWriteIdempotentJSON(w, r.Context(), device.ID, key, fingerprint, http.StatusOK, map[string]any{"routine": toMobileRoutine(item)})
+}
+
+func (s *Server) mobilePendingApprovals(ctx context.Context) ([]domain.MobileApproval, error) {
+	items, err := s.Store.ListApprovals(ctx, "pending")
+	if err != nil {
+		return nil, err
+	}
+	approvals := make([]domain.MobileApproval, 0, len(items))
+	for _, item := range items {
+		approval, err := s.mobileApprovalFrom(ctx, item)
+		if err != nil {
+			continue
+		}
+		approvals = append(approvals, approval)
+	}
+	return approvals, nil
+}
+
+func (s *Server) mobileApprovalFrom(ctx context.Context, approval domain.ApprovalRequest) (domain.MobileApproval, error) {
+	run, err := s.Store.GetRun(ctx, approval.RunID)
+	if err != nil {
+		return domain.MobileApproval{}, err
+	}
+	return domain.MobileApproval{
+		ID:             approval.ID,
+		RunID:          approval.RunID,
+		ConversationID: run.ConversationID,
+		BotID:          run.BotID,
+		Action:         approval.Action,
+		Status:         approval.Status,
+		CreatedAt:      approval.CreatedAt,
+		Options:        mobileApprovalOptions(approval.Payload),
+	}, nil
+}
+
+func toMobileRoutine(item domain.Routine) domain.MobileRoutine {
+	return domain.MobileRoutine{
+		ID:              item.ID,
+		BotID:           item.BotID,
+		Name:            item.Name,
+		Status:          item.Status,
+		Kind:            item.Kind,
+		NextRunAt:       item.NextRunAt,
+		LastRunAt:       item.LastRunAt,
+		AttentionReason: item.AttentionReason,
+	}
+}
+
+func mobileApprovalOptions(payload string) []domain.ApprovalOption {
+	var envelope struct {
+		Options json.RawMessage `json:"options"`
+	}
+	if json.Unmarshal([]byte(payload), &envelope) != nil || len(envelope.Options) == 0 {
+		return nil
+	}
+	var options []domain.ApprovalOption
+	if json.Unmarshal(envelope.Options, &options) != nil {
+		return nil
+	}
+	clean := make([]domain.ApprovalOption, 0, len(options))
+	for _, option := range options {
+		option.OptionID = strings.TrimSpace(option.OptionID)
+		option.Name = strings.TrimSpace(option.Name)
+		option.Kind = strings.TrimSpace(option.Kind)
+		if option.OptionID == "" || option.Name == "" {
+			continue
+		}
+		if len(clean) >= 16 {
+			break
+		}
+		clean = append(clean, option)
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	return clean
+}
+
+func (s *Server) mobileMutationAuth(w http.ResponseWriter, r *http.Request, device domain.RemoteDevice) (string, bool) {
+	if device.ScopeProfile != domain.RemoteScopeController && device.ScopeProfile != domain.RemoteScopeOwner {
+		s.mobileError(w, http.StatusForbidden, "device is read only")
+		return "", false
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" || len(key) > 128 || strings.IndexFunc(key, unicode.IsControl) >= 0 {
+		s.mobileError(w, http.StatusBadRequest, "idempotency key is required")
+		return "", false
+	}
+	return key, true
+}
+
+func (s *Server) mobileReplayIdempotency(w http.ResponseWriter, ctx context.Context, deviceID, key string, requestHash []byte) bool {
+	record, found, err := s.Store.GetMobileMutationIdempotency(ctx, deviceID, key)
+	if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "idempotency store unavailable")
+		return true
+	}
+	if !found {
+		return false
+	}
+	if len(record.RequestHash) != sha256.Size || subtle.ConstantTimeCompare(record.RequestHash, requestHash) != 1 {
+		s.mobileError(w, http.StatusConflict, "idempotency key conflict")
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(record.StatusCode)
+	_, _ = w.Write(record.Response)
+	return true
+}
+
+func (s *Server) mobileWriteIdempotentJSON(w http.ResponseWriter, ctx context.Context, deviceID, key string, requestHash []byte, status int, value any) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		s.mobileError(w, http.StatusInternalServerError, "response unavailable")
+		return
+	}
+	payload = append(payload, '\n')
+	if err := s.Store.SaveMobileMutationIdempotency(ctx, deviceID, key, requestHash, status, payload); errors.Is(err, store.ErrMobileIdempotencyConflict) {
+		s.mobileError(w, http.StatusConflict, "idempotency key conflict")
+		return
+	} else if err != nil {
+		s.mobileError(w, http.StatusServiceUnavailable, "idempotency store unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(payload)
+}
+
+func (s *Server) mobileRoutineError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, store.ErrRoutineNotFound), errors.Is(err, store.ErrRoutineBotNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, store.ErrRoutineHeartbeatOptIn),
+		errors.Is(err, store.ErrRoutineNextRunRequired),
+		errors.Is(err, store.ErrRoutineNeedsAttention),
+		errors.Is(err, store.ErrRoutineDisabled),
+		errors.Is(err, store.ErrRoutinePaused),
+		errors.Is(err, store.ErrRoutineRunActive):
+		status = http.StatusConflict
+	case strings.Contains(err.Error(), "routine "):
+		status = http.StatusBadRequest
+	}
+	s.mobileError(w, status, err.Error())
+}
+
+func mobileAuthenticatedRoute(r *http.Request) bool {
+	path, method := r.URL.Path, r.Method
+	if method == http.MethodGet {
+		switch path {
+		case "/api/v1/bootstrap", "/api/v1/conversations", "/api/v1/computer",
+			"/api/v1/computer/frame", "/api/v1/events", "/api/v1/approvals", "/api/v1/routines":
+			return true
+		}
+		return false
+	}
+	if method != http.MethodPost {
+		return false
+	}
+	switch path {
+	case "/api/v1/messages", "/api/v1/computer/control", "/api/v1/computer/browser/action", "/api/v1/session/logout":
+		return true
+	}
+	if _, ok := mobilePathID(path, "/api/v1/approvals/"); ok {
+		return true
+	}
+	if _, ok := mobileRunStopID(path); ok {
+		return true
+	}
+	_, _, ok := mobileRoutineAction(path)
+	return ok
+}
+
+func mobilePathID(path, prefix string) (string, bool) {
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	id := strings.TrimPrefix(path, prefix)
+	if id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
+func mobileRunStopID(path string) (string, bool) {
+	const prefix = "/api/v1/runs/"
+	const suffix = "/stop"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
+func mobileRoutineAction(path string) (string, string, bool) {
+	const prefix = "/api/v1/routines/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", "", false
+	}
+	id, action, found := strings.Cut(strings.TrimPrefix(path, prefix), "/")
+	if !found || id == "" || strings.Contains(id, "/") || (action != "pause" && action != "enable") {
+		return "", "", false
+	}
+	return id, action, true
+}
+
+func mobileMutationFingerprint(parts ...string) []byte {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return sum[:]
+}
+
+func decodeOptionalMobileJSON(w http.ResponseWriter, r *http.Request, value any) error {
+	if r.Body == nil {
+		return nil
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, mobileJSONBodyBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(value)
 }
 
 func (s *Server) startMobileRun(run domain.Run) {

@@ -17,10 +17,14 @@ import (
 )
 
 func defaultComputerRuntime() string {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		return RuntimeDocker
+	case "windows":
+		return RuntimeDockerDesktop
+	default:
+		return RuntimeColima
 	}
-	return RuntimeColima
 }
 
 const (

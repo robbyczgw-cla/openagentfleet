@@ -16,10 +16,25 @@ import {
 } from "react-native";
 
 import { defaultDeviceName, parsePairingBundle } from "./src/api/pairing";
-import type { ComputerStatus, Conversation, RemoteProfile } from "./src/api/types";
+import type { ComputerStatus, Conversation, MobileApproval, MobileRoutine, MobileRun, RemoteProfile } from "./src/api/types";
 import { useRemoteSession } from "./src/hooks/useRemoteSession";
 
-type Screen = "chat" | "computer" | "settings";
+type Screen = "chat" | "computer" | "routines" | "settings";
+
+const TERMINAL_RUN_STATUS = new Set(["completed", "failed", "stopped", "blocked"]);
+
+function canControlDevice(profile: RemoteProfile | null): boolean {
+  return profile?.device.scope_profile !== "observer";
+}
+
+function activeRun(runs: MobileRun[] | undefined): MobileRun | undefined {
+  return [...(runs || [])].reverse().find((run) => !TERMINAL_RUN_STATUS.has(run.status));
+}
+
+function allowOptionID(approval: MobileApproval): string {
+  const allow = (approval.options || []).find((option) => (option.kind || "").includes("allow") || option.optionId.includes("allow"));
+  return allow?.optionId || approval.options?.[0]?.optionId || "";
+}
 
 export default function App() {
   const remote = useRemoteSession();
@@ -33,7 +48,11 @@ export default function App() {
   const [frameError, setFrameError] = useState<string | undefined>(undefined);
   const [computerControlHeld, setComputerControlHeld] = useState(false);
   const [computerControlBusy, setComputerControlBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [routines, setRoutines] = useState<MobileRoutine[]>([]);
+  const [routinesError, setRoutinesError] = useState<string | undefined>(undefined);
   const autoFrameClient = useRef<typeof remote.client>(null);
+  const canControl = canControlDevice(remote.profile);
 
   const computer = remote.bootstrap?.computer;
 
@@ -64,10 +83,10 @@ export default function App() {
     void refreshFrame();
   }, [refreshFrame, remote.client, screen]);
 
-  const pair = async () => {
+  const pair = async (rawBundle = pairingBundle) => {
     setConnecting(true);
     try {
-      const bundle = parsePairingBundle(pairingBundle);
+      const bundle = parsePairingBundle(rawBundle);
       await remote.pair(bundle, defaultDeviceName(Platform.OS), Platform.OS);
       setScreen("chat");
     } catch (error) {
@@ -76,6 +95,19 @@ export default function App() {
       setPairingBundle("");
       setConnecting(false);
     }
+  };
+
+  const scanQR = () => {
+    Alert.alert(
+      "Scan QR",
+      "Camera permission is not available in this alpha. Paste the pairing JSON from your scanner — a single-line bundle is accepted.",
+      pairingBundle.trim()
+        ? [
+            { text: "Cancel", style: "cancel" },
+            { text: "Use pasted text", onPress: () => void pair() }
+          ]
+        : [{ text: "OK" }]
+    );
   };
 
   const send = async () => {
@@ -106,6 +138,67 @@ export default function App() {
     }
   };
 
+  const loadRoutines = useCallback(async () => {
+    if (!remote.client) return;
+    try {
+      setRoutines(await remote.client.routines());
+      setRoutinesError(undefined);
+    } catch (error) {
+      setRoutinesError(error instanceof Error ? error.message : "Could not load routines.");
+    }
+  }, [remote.client]);
+
+  useEffect(() => {
+    if (screen !== "routines" || !remote.client) return;
+    void loadRoutines();
+  }, [loadRoutines, remote.client, screen]);
+
+  const mutate = async (work: () => Promise<void>, failedTitle: string) => {
+    if (actionBusy) return;
+    setActionBusy(true);
+    try {
+      await work();
+    } catch (error) {
+      Alert.alert(failedTitle, error instanceof Error ? error.message : "Try again.");
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const resolveApproval = (approval: MobileApproval, status: "approved" | "denied") => {
+    const client = remote.client;
+    if (!client) return;
+    void mutate(async () => {
+      await client.resolveApproval(approval.id, status, status === "approved" ? allowOptionID(approval) : "");
+      await remote.refresh(client, remote.bootstrap?.conversation.id);
+    }, "Approval not sent");
+  };
+
+  const stopActiveRun = (run: MobileRun) => {
+    const client = remote.client;
+    if (!client) return;
+    void mutate(async () => {
+      await client.stopRun(run.id);
+      await remote.refresh(client, remote.bootstrap?.conversation.id);
+    }, "Could not stop the run");
+  };
+
+  const pauseRoutine = (routine: MobileRoutine) => {
+    if (!remote.client) return;
+    void mutate(async () => {
+      await remote.client?.pauseRoutine(routine.id, "paused from phone");
+      await loadRoutines();
+    }, "Could not pause routine");
+  };
+
+  const enableRoutine = (routine: MobileRoutine) => {
+    if (!remote.client) return;
+    void mutate(async () => {
+      await remote.client?.enableRoutine(routine.id);
+      await loadRoutines();
+    }, "Could not enable routine");
+  };
+
   const clickComputer = async (x: number, y: number) => {
     if (!remote.client || !computerControlHeld || computerControlBusy) return;
     setComputerControlBusy(true);
@@ -125,8 +218,14 @@ export default function App() {
   };
 
   if (!remote.profile) {
-    return <ConnectionSetup pairingBundle={pairingBundle} setPairingBundle={setPairingBundle} connecting={connecting} error={remote.error} onPair={pair} />;
+    return <ConnectionSetup pairingBundle={pairingBundle} setPairingBundle={setPairingBundle} connecting={connecting} error={remote.error} onPair={() => void pair()} onScanQR={scanQR} />;
   }
+
+  const pending = remote.bootstrap?.approvals || [];
+  const conversationID = remote.bootstrap?.conversation.id;
+  const conversationApprovals = pending.filter((item) => item.conversation_id === conversationID && item.status === "pending");
+  const otherApprovalCount = pending.filter((item) => item.conversation_id !== conversationID && item.status === "pending").length;
+  const running = activeRun(remote.bootstrap?.runs);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -134,44 +233,169 @@ export default function App() {
       <View style={styles.header}>
         <View>
           <Text style={styles.eyebrow}>OPENAGENTFLEET</Text>
-          <Text style={styles.title}>{screen === "chat" ? remote.bootstrap?.conversation.title || "Remote agent" : screen === "computer" ? "Agent Computer" : "Remote Mac"}</Text>
+          <Text style={styles.title}>{screen === "chat" ? remote.bootstrap?.conversation.title || "Remote agent" : screen === "computer" ? "Agent Computer" : screen === "routines" ? "Routines" : "Remote Mac"}</Text>
         </View>
         <StatusPill state={remote.state} />
       </View>
-      {screen === "chat" && <ChatScreen conversations={remote.bootstrap?.conversations || []} activeID={remote.bootstrap?.conversation.id} messages={remote.bootstrap?.messages || []} composer={composer} onChange={setComposer} onSend={send} onSelectConversation={(id) => void remote.selectConversation(id).catch((error) => Alert.alert("Could not open conversation", error instanceof Error ? error.message : "Try again."))} sending={sending} />}
+      {screen === "chat" && (
+        <ChatScreen
+          conversations={remote.bootstrap?.conversations || []}
+          activeID={conversationID}
+          messages={remote.bootstrap?.messages || []}
+          approvals={conversationApprovals}
+          otherApprovalCount={otherApprovalCount}
+          activeRun={running}
+          canControl={canControl}
+          composer={composer}
+          onChange={setComposer}
+          onSend={send}
+          onSelectConversation={(id) => void remote.selectConversation(id).catch((error) => Alert.alert("Could not open conversation", error instanceof Error ? error.message : "Try again."))}
+          onResolve={resolveApproval}
+          onStop={stopActiveRun}
+          sending={sending || actionBusy}
+        />
+      )}
       {screen === "computer" && <ComputerScreen computer={computer} frame={frame} frameError={frameError} loading={frameLoading} controlHeld={computerControlHeld} controlBusy={computerControlBusy} onToggleControl={() => void toggleComputerControl()} onClick={clickComputer} onRefresh={() => void refreshFrame()} />}
+      {screen === "routines" && <RoutinesScreen routines={routines} error={routinesError} canControl={canControl} busy={actionBusy} onPause={pauseRoutine} onEnable={enableRoutine} onRefresh={() => void loadRoutines()} />}
       {screen === "settings" && <SettingsScreen profile={remote.profile} state={remote.state} computer={computer} onDisconnect={() => void remote.disconnect()} />}
       <View style={styles.tabs}>
         <Tab label="Chat" active={screen === "chat"} onPress={() => setScreen("chat")} />
         <Tab label="Computer" active={screen === "computer"} onPress={() => setScreen("computer")} />
+        <Tab label="Routines" active={screen === "routines"} onPress={() => setScreen("routines")} />
         <Tab label="Settings" active={screen === "settings"} onPress={() => setScreen("settings")} />
       </View>
     </SafeAreaView>
   );
 }
 
-function ConnectionSetup(props: { pairingBundle: string; setPairingBundle: (value: string) => void; connecting: boolean; error: string | null; onPair: () => void }) {
+function ConnectionSetup(props: { pairingBundle: string; setPairingBundle: (value: string) => void; connecting: boolean; error: string | null; onPair: () => void; onScanQR: () => void }) {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" />
       <ScrollView contentContainerStyle={styles.setup} keyboardShouldPersistTaps="handled">
         <Text style={styles.eyebrow}>OPENAGENTFLEET / REMOTE</Text>
         <Text style={styles.hero}>Pair this phone with your Mac.</Text>
-        <Text style={styles.lede}>Create a short-lived pairing bundle in the trusted Mac app, then paste the complete bundle here. The app only accepts private HTTPS Tailnet hosts.</Text>
+        <Text style={styles.lede}>Create a short-lived pairing bundle in the trusted Mac app, then paste the complete bundle here or scan the QR and paste the captured JSON. The app only accepts private HTTPS Tailnet hosts.</Text>
         <Text style={styles.label}>Pairing bundle</Text>
         <TextInput autoCapitalize="none" autoCorrect={false} multiline placeholder='Paste {"version":1,...} from your Mac' placeholderTextColor="#88857e" style={[styles.input, styles.bundleInput]} value={props.pairingBundle} onChangeText={props.setPairingBundle} />
         {props.error ? <Text style={styles.error}>{props.error}</Text> : null}
+        <Pressable accessibilityRole="button" disabled={props.connecting} style={[styles.secondaryButton, styles.scanButton, props.connecting && styles.disabled]} onPress={props.onScanQR}>
+          <Text style={styles.secondaryText}>Scan QR</Text>
+        </Pressable>
         <Pressable accessibilityRole="button" disabled={props.connecting || !props.pairingBundle.trim()} style={[styles.primaryButton, (props.connecting || !props.pairingBundle.trim()) && styles.disabled]} onPress={props.onPair}>
           {props.connecting ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Pair this device</Text>}
         </Pressable>
-        <View style={styles.notice}><Text style={styles.noticeTitle}>Alpha security boundary</Text><Text style={styles.noticeBody}>Pairing exchanges the one-time bundle for a device-specific Bearer credential in iOS Keychain / Android Keystore storage. Controller and owner devices can request a short computer-control lease; observer devices remain read-only.</Text></View>
+        <View style={styles.notice}><Text style={styles.noticeTitle}>Alpha security boundary</Text><Text style={styles.noticeBody}>Pairing exchanges the one-time bundle for a device-specific Bearer credential in iOS Keychain / Android Keystore storage. Controller and owner devices can request a short computer-control lease; observer devices remain read-only. Native camera scanning is not in this alpha; paste JSON from a scanner if camera permission is denied.</Text></View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function ChatScreen(props: { conversations: Conversation[]; activeID?: string; messages: { id: string; role: string; content: string; created_at: string }[]; composer: string; onChange: (value: string) => void; onSend: () => void; onSelectConversation: (id: string) => void; sending: boolean }) {
-  return <View style={styles.content}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conversationRow}>{props.conversations.map((conversation) => <Pressable accessibilityRole="button" key={conversation.id} onPress={() => props.onSelectConversation(conversation.id)} style={[styles.conversationPill, conversation.id === props.activeID && styles.conversationPillActive]}><Text numberOfLines={1} style={conversation.id === props.activeID ? styles.conversationTextActive : styles.conversationText}>{conversation.title || "Untitled"}</Text></Pressable>)}</ScrollView><ScrollView style={styles.messages} contentContainerStyle={styles.messageList}>{props.messages.map((message) => <View key={message.id} style={[styles.message, message.role === "user" ? styles.userMessage : styles.agentMessage]}><Text style={message.role === "user" ? styles.userMessageText : styles.agentMessageText}>{message.content}</Text></View>)}</ScrollView><View style={styles.composer}><TextInput multiline placeholder="Message your remote agent" placeholderTextColor="#8e8a82" style={styles.composerInput} value={props.composer} onChangeText={props.onChange} /><Pressable accessibilityRole="button" disabled={props.sending || !props.composer.trim()} style={[styles.sendButton, (!props.composer.trim() || props.sending) && styles.disabled]} onPress={props.onSend}><Text style={styles.sendText}>{props.sending ? "…" : "↑"}</Text></Pressable></View></View>;
+function ChatScreen(props: {
+  conversations: Conversation[];
+  activeID?: string;
+  messages: { id: string; role: string; content: string; created_at: string }[];
+  approvals: MobileApproval[];
+  otherApprovalCount: number;
+  activeRun?: MobileRun;
+  canControl: boolean;
+  composer: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  onSelectConversation: (id: string) => void;
+  onResolve: (approval: MobileApproval, status: "approved" | "denied") => void;
+  onStop: (run: MobileRun) => void;
+  sending: boolean;
+}) {
+  return (
+    <View style={styles.content}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conversationRow}>
+        {props.conversations.map((conversation) => (
+          <Pressable accessibilityRole="button" key={conversation.id} onPress={() => props.onSelectConversation(conversation.id)} style={[styles.conversationPill, conversation.id === props.activeID && styles.conversationPillActive]}>
+            <Text numberOfLines={1} style={conversation.id === props.activeID ? styles.conversationTextActive : styles.conversationText}>{conversation.title || "Untitled"}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <ScrollView style={styles.messages} contentContainerStyle={styles.messageList}>
+        {props.approvals.map((approval) => (
+          <View key={approval.id} style={styles.approvalCard}>
+            <Text style={styles.approvalTitle}>Needs approval</Text>
+            <Text style={styles.subtle}>{approval.action}</Text>
+            {props.canControl ? (
+              <View style={styles.approvalActions}>
+                <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.allowButton, props.sending && styles.disabled]} onPress={() => props.onResolve(approval, "approved")}>
+                  <Text style={styles.allowText}>Allow</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.denyButton, props.sending && styles.disabled]} onPress={() => props.onResolve(approval, "denied")}>
+                  <Text style={styles.denyText}>Deny</Text>
+                </Pressable>
+              </View>
+            ) : <Text style={styles.subtle}>This device is read-only.</Text>}
+          </View>
+        ))}
+        {props.otherApprovalCount > 0 ? <Text style={styles.otherApprovals}>{props.otherApprovalCount} pending approval{props.otherApprovalCount === 1 ? "" : "s"} in other conversations</Text> : null}
+        {props.messages.map((message) => (
+          <View key={message.id} style={[styles.message, message.role === "user" ? styles.userMessage : styles.agentMessage]}>
+            <Text style={message.role === "user" ? styles.userMessageText : styles.agentMessageText}>{message.content}</Text>
+          </View>
+        ))}
+      </ScrollView>
+      {props.activeRun && props.canControl ? (
+        <Pressable accessibilityRole="button" disabled={props.sending} style={[styles.stopButton, props.sending && styles.disabled]} onPress={() => {
+          if (props.activeRun) props.onStop(props.activeRun);
+        }}>
+          <Text style={styles.stopText}>Stop run</Text>
+        </Pressable>
+      ) : null}
+      <View style={styles.composer}>
+        <TextInput multiline placeholder="Message your remote agent" placeholderTextColor="#8e8a82" style={styles.composerInput} value={props.composer} onChangeText={props.onChange} />
+        <Pressable accessibilityRole="button" disabled={props.sending || !props.composer.trim()} style={[styles.sendButton, (!props.composer.trim() || props.sending) && styles.disabled]} onPress={props.onSend}>
+          <Text style={styles.sendText}>{props.sending ? "…" : "↑"}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function RoutinesScreen(props: {
+  routines: MobileRoutine[];
+  error?: string;
+  canControl: boolean;
+  busy: boolean;
+  onPause: (routine: MobileRoutine) => void;
+  onEnable: (routine: MobileRoutine) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.settings}>
+      <View style={styles.computerTop}>
+        <View>
+          <Text style={styles.sectionTitle}>Scheduled work</Text>
+          <Text style={styles.subtle}>{props.canControl ? "Pause or enable a routine from this phone." : "Observer devices can list routines only."}</Text>
+        </View>
+        <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={props.onRefresh}><Text style={styles.secondaryText}>Refresh</Text></Pressable>
+      </View>
+      {props.error ? <Text style={styles.error}>{props.error}</Text> : null}
+      {props.routines.length === 0 ? <Text style={styles.subtle}>No routines on this Mac yet.</Text> : null}
+      {props.routines.map((routine) => (
+        <View key={routine.id} style={styles.routineRow}>
+          <Text style={styles.routineName}>{routine.name}</Text>
+          <Text style={styles.routineMeta}>{routine.status} · {routine.kind}{routine.next_run_at ? ` · next ${routine.next_run_at}` : ""}</Text>
+          {routine.attention_reason ? <Text style={styles.error}>{routine.attention_reason}</Text> : null}
+          {props.canControl && routine.status === "enabled" ? (
+            <Pressable accessibilityRole="button" disabled={props.busy} style={[styles.secondaryButton, styles.routineAction, props.busy && styles.disabled]} onPress={() => props.onPause(routine)}>
+              <Text style={styles.secondaryText}>Pause</Text>
+            </Pressable>
+          ) : null}
+          {props.canControl && (routine.status === "paused" || routine.status === "disabled") ? (
+            <Pressable accessibilityRole="button" disabled={props.busy} style={[styles.secondaryButton, styles.routineAction, props.busy && styles.disabled]} onPress={() => props.onEnable(routine)}>
+              <Text style={styles.secondaryText}>Enable</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ))}
+    </ScrollView>
+  );
 }
 
 function ComputerScreen(props: { computer?: ComputerStatus; frame?: string; frameError?: string; loading: boolean; controlHeld: boolean; controlBusy: boolean; onToggleControl: () => void; onClick: (x: number, y: number) => void; onRefresh: () => void }) {
@@ -203,5 +427,20 @@ function Tab(props: { label: string; active: boolean; onPress: () => void }) { r
 function StatusPill(props: { state: string }) { return <View style={[styles.status, props.state === "connected" ? styles.statusGood : props.state === "degraded" ? styles.statusWarn : styles.statusNeutral]}><View style={styles.statusDot} /><Text style={styles.statusText}>{props.state}</Text></View>; }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f7f5f0" }, header: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, eyebrow: { color: "#817b70", fontSize: 11, fontWeight: "800", letterSpacing: 1.2 }, title: { color: "#1e201b", fontSize: 25, fontWeight: "700", marginTop: 3 }, hero: { color: "#1e201b", fontSize: 42, lineHeight: 47, fontWeight: "700", letterSpacing: -1.3, marginTop: 15 }, lede: { color: "#58564f", fontSize: 16, lineHeight: 23, marginTop: 20 }, setup: { padding: 26, flexGrow: 1, justifyContent: "center" }, label: { color: "#34342e", fontSize: 13, fontWeight: "700", marginTop: 24, marginBottom: 8 }, input: { backgroundColor: "#fffefa", color: "#20211d", borderColor: "#d8d2c7", borderWidth: 1, borderRadius: 14, minHeight: 54, paddingHorizontal: 15, fontSize: 15 }, bundleInput: { minHeight: 148, paddingVertical: 14, textAlignVertical: "top" }, primaryButton: { minHeight: 52, borderRadius: 15, backgroundColor: "#1d3f35", alignItems: "center", justifyContent: "center", marginTop: 23 }, primaryText: { color: "#fff", fontSize: 16, fontWeight: "800" }, disabled: { opacity: 0.48 }, notice: { marginTop: 22, padding: 16, backgroundColor: "#ece8dd", borderRadius: 15 }, noticeTitle: { color: "#31312b", fontWeight: "800", fontSize: 14 }, noticeBody: { color: "#5b584f", lineHeight: 20, marginTop: 5 }, error: { color: "#a42920", marginTop: 12, lineHeight: 20 }, content: { flex: 1 }, conversationRow: { paddingHorizontal: 17, paddingVertical: 13, gap: 8 }, conversationPill: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, maxWidth: 150, backgroundColor: "#ece8df" }, conversationPillActive: { backgroundColor: "#d5e0d0" }, conversationText: { color: "#5b584f", fontSize: 13 }, conversationTextActive: { color: "#1e3d34", fontSize: 13, fontWeight: "700" }, messages: { flex: 1 }, messageList: { paddingHorizontal: 18, paddingBottom: 18, gap: 10 }, message: { maxWidth: "87%", paddingHorizontal: 14, paddingVertical: 11, borderRadius: 16 }, userMessage: { backgroundColor: "#1d3f35", alignSelf: "flex-end", borderBottomRightRadius: 4 }, agentMessage: { backgroundColor: "#ece9e2", alignSelf: "flex-start", borderBottomLeftRadius: 4 }, userMessageText: { color: "#fff", fontSize: 16, lineHeight: 22 }, agentMessageText: { color: "#292a25", fontSize: 16, lineHeight: 22 }, composer: { flexDirection: "row", gap: 9, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", backgroundColor: "#fbfaf6", alignItems: "flex-end" }, composerInput: { flex: 1, minHeight: 45, maxHeight: 110, backgroundColor: "#f0eee8", borderRadius: 15, paddingHorizontal: 14, paddingVertical: 11, color: "#1e201b", fontSize: 16 }, sendButton: { width: 45, height: 45, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: "#1d3f35" }, sendText: { color: "#fff", fontSize: 23, fontWeight: "700", marginTop: -2 }, status: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 7 }, statusGood: { backgroundColor: "#dcebd9" }, statusWarn: { backgroundColor: "#f2e3ba" }, statusNeutral: { backgroundColor: "#e7e4de" }, statusDot: { width: 7, height: 7, backgroundColor: "#35654d", borderRadius: 4 }, statusText: { color: "#3d4038", fontWeight: "700", fontSize: 12 }, computerContent: { padding: 18 }, computerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }, sectionTitle: { fontSize: 21, color: "#20211d", fontWeight: "700" }, subtle: { color: "#716e66", marginTop: 4, lineHeight: 19 }, secondaryButton: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#e8e5dc" }, secondaryText: { color: "#3e4039", fontWeight: "700" }, frame: { marginTop: 18, height: 280, borderRadius: 16, overflow: "hidden", backgroundColor: "#292b27", borderWidth: 1, borderColor: "#cbc6bc" }, frameImage: { width: "100%", height: "100%" }, emptyFrame: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }, emptyTitle: { color: "#fff", fontWeight: "700", fontSize: 18 }, frameCaption: { color: "#827e74", fontSize: 12, marginTop: 8 }, footnote: { color: "#635f57", lineHeight: 20, marginTop: 14 }, settings: { padding: 20, gap: 10 }, setting: { paddingVertical: 15, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca" }, settingLabel: { color: "#77736a", fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 }, settingValue: { color: "#252620", fontSize: 16, marginTop: 5 }, destructiveButton: { borderWidth: 1, borderColor: "#bb4a42", borderRadius: 14, minHeight: 50, alignItems: "center", justifyContent: "center", marginTop: 12 }, destructiveText: { color: "#a8322a", fontWeight: "800" }, tabs: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", backgroundColor: "#fbfaf6", paddingVertical: 7 }, tab: { flex: 1, minHeight: 41, justifyContent: "center", alignItems: "center" }, tabText: { color: "#817d74", fontSize: 13, fontWeight: "700" }, tabActive: { color: "#1d3f35", fontSize: 13, fontWeight: "900" }
+  safe: { flex: 1, backgroundColor: "#f7f5f0" }, header: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, eyebrow: { color: "#817b70", fontSize: 11, fontWeight: "800", letterSpacing: 1.2 }, title: { color: "#1e201b", fontSize: 25, fontWeight: "700", marginTop: 3 }, hero: { color: "#1e201b", fontSize: 42, lineHeight: 47, fontWeight: "700", letterSpacing: -1.3, marginTop: 15 }, lede: { color: "#58564f", fontSize: 16, lineHeight: 23, marginTop: 20 }, setup: { padding: 26, flexGrow: 1, justifyContent: "center" }, label: { color: "#34342e", fontSize: 13, fontWeight: "700", marginTop: 24, marginBottom: 8 }, input: { backgroundColor: "#fffefa", color: "#20211d", borderColor: "#d8d2c7", borderWidth: 1, borderRadius: 14, minHeight: 54, paddingHorizontal: 15, fontSize: 15 }, bundleInput: { minHeight: 148, paddingVertical: 14, textAlignVertical: "top" }, primaryButton: { minHeight: 52, borderRadius: 15, backgroundColor: "#1d3f35", alignItems: "center", justifyContent: "center", marginTop: 23 }, primaryText: { color: "#fff", fontSize: 16, fontWeight: "800" }, disabled: { opacity: 0.48 }, notice: { marginTop: 22, padding: 16, backgroundColor: "#ece8dd", borderRadius: 15 }, noticeTitle: { color: "#31312b", fontWeight: "800", fontSize: 14 }, noticeBody: { color: "#5b584f", lineHeight: 20, marginTop: 5 }, error: { color: "#a42920", marginTop: 12, lineHeight: 20 }, content: { flex: 1 }, conversationRow: { paddingHorizontal: 17, paddingVertical: 13, gap: 8 }, conversationPill: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, maxWidth: 150, backgroundColor: "#ece8df" }, conversationPillActive: { backgroundColor: "#d5e0d0" }, conversationText: { color: "#5b584f", fontSize: 13 }, conversationTextActive: { color: "#1e3d34", fontSize: 13, fontWeight: "700" }, messages: { flex: 1 }, messageList: { paddingHorizontal: 18, paddingBottom: 18, gap: 10 }, message: { maxWidth: "87%", paddingHorizontal: 14, paddingVertical: 11, borderRadius: 16 }, userMessage: { backgroundColor: "#1d3f35", alignSelf: "flex-end", borderBottomRightRadius: 4 }, agentMessage: { backgroundColor: "#ece9e2", alignSelf: "flex-start", borderBottomLeftRadius: 4 }, userMessageText: { color: "#fff", fontSize: 16, lineHeight: 22 }, agentMessageText: { color: "#292a25", fontSize: 16, lineHeight: 22 }, composer: { flexDirection: "row", gap: 9, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", backgroundColor: "#fbfaf6", alignItems: "flex-end" }, composerInput: { flex: 1, minHeight: 45, maxHeight: 110, backgroundColor: "#f0eee8", borderRadius: 15, paddingHorizontal: 14, paddingVertical: 11, color: "#1e201b", fontSize: 16 }, sendButton: { width: 45, height: 45, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: "#1d3f35" }, sendText: { color: "#fff", fontSize: 23, fontWeight: "700", marginTop: -2 }, status: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 7 }, statusGood: { backgroundColor: "#dcebd9" }, statusWarn: { backgroundColor: "#f2e3ba" }, statusNeutral: { backgroundColor: "#e7e4de" }, statusDot: { width: 7, height: 7, backgroundColor: "#35654d", borderRadius: 4 }, statusText: { color: "#3d4038", fontWeight: "700", fontSize: 12 }, computerContent: { padding: 18 }, computerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }, sectionTitle: { fontSize: 21, color: "#20211d", fontWeight: "700" }, subtle: { color: "#716e66", marginTop: 4, lineHeight: 19 }, secondaryButton: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#e8e5dc" }, secondaryText: { color: "#3e4039", fontWeight: "700" }, frame: { marginTop: 18, height: 280, borderRadius: 16, overflow: "hidden", backgroundColor: "#292b27", borderWidth: 1, borderColor: "#cbc6bc" }, frameImage: { width: "100%", height: "100%" }, emptyFrame: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }, emptyTitle: { color: "#fff", fontWeight: "700", fontSize: 18 }, frameCaption: { color: "#827e74", fontSize: 12, marginTop: 8 }, footnote: { color: "#635f57", lineHeight: 20, marginTop: 14 }, settings: { padding: 20, gap: 10 }, setting: { paddingVertical: 15, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca" }, settingLabel: { color: "#77736a", fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 }, settingValue: { color: "#252620", fontSize: 16, marginTop: 5 }, destructiveButton: { borderWidth: 1, borderColor: "#bb4a42", borderRadius: 14, minHeight: 50, alignItems: "center", justifyContent: "center", marginTop: 12 }, destructiveText: { color: "#a8322a", fontWeight: "800" }, tabs: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca", backgroundColor: "#fbfaf6", paddingVertical: 7 }, tab: { flex: 1, minHeight: 41, justifyContent: "center", alignItems: "center" }, tabText: { color: "#817d74", fontSize: 13, fontWeight: "700" }, tabActive: { color: "#1d3f35", fontSize: 13, fontWeight: "900" },
+  scanButton: { marginTop: 12, alignSelf: "flex-start" },
+  approvalCard: { backgroundColor: "#efe6d2", borderRadius: 14, padding: 14, gap: 6 },
+  approvalTitle: { color: "#5a3b12", fontWeight: "800", fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5 },
+  approvalActions: { flexDirection: "row", gap: 8, marginTop: 6 },
+  allowButton: { backgroundColor: "#1d3f35", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  allowText: { color: "#fff", fontWeight: "800" },
+  denyButton: { backgroundColor: "#f3d7d3", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  denyText: { color: "#a8322a", fontWeight: "800" },
+  otherApprovals: { color: "#7a5a20", fontSize: 13, fontWeight: "700" },
+  stopButton: { marginHorizontal: 16, marginBottom: 8, minHeight: 42, borderRadius: 12, backgroundColor: "#bb4a42", alignItems: "center", justifyContent: "center" },
+  stopText: { color: "#fff", fontWeight: "800" },
+  routineRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#d9d4ca" },
+  routineName: { color: "#20211d", fontSize: 17, fontWeight: "700" },
+  routineMeta: { color: "#716e66", marginTop: 4, lineHeight: 19 },
+  routineAction: { alignSelf: "flex-start", marginTop: 10 }
 });

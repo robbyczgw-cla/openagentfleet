@@ -28,6 +28,7 @@ const (
 	LinuxDockerInstallFedora = "sudo dnf install -y docker && sudo usermod -aG docker $USER && sudo systemctl enable --now docker"
 	LinuxDockerInstallArch   = "sudo pacman -S --needed docker && sudo usermod -aG docker $USER && sudo systemctl enable --now docker"
 	LinuxDockerInstallSuse   = "sudo zypper install -y docker && sudo usermod -aG docker $USER && sudo systemctl enable --now docker"
+	DockerDesktopWindowsInstall = "https://docs.docker.com/desktop/setup/install/windows-install/"
 )
 
 var ErrRuntimeUnavailable = errors.New("requested runtime is not available")
@@ -203,14 +204,24 @@ func DiscoverRuntimes(ctx context.Context, selectedID string) []RuntimeInfo {
 			dockerEngine.Detail = detail
 		}
 	}
-	if runtime.GOOS == "linux" {
-		result = append(result, dockerEngine)
+	if runtime.GOOS == "windows" {
+		desktop := discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeDockerDesktop)
+		if !dockerAvailable {
+			desktop.InstallCommand = DockerDesktopWindowsInstall
+			desktop.Installable = true
+			desktop.Detail = "Install Docker Desktop and use Linux containers for the Agent Computer"
+		}
+		result = append(result, desktop, dockerEngine)
+	} else {
+		if runtime.GOOS == "linux" {
+			result = append(result, dockerEngine)
+		}
+		result = append(result, discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeDockerDesktop), discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeColima), discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeOrbStack))
+		if runtime.GOOS != "linux" {
+			result = append(result, dockerEngine)
+		}
+		result = append(result, discoverAppleContainer(probeContext, selectedID == RuntimeAppleContainer))
 	}
-	result = append(result, discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeDockerDesktop), discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeColima), discoverDockerRuntime(probeContext, dockerAvailable, contexts, activeContext, RuntimeOrbStack))
-	if runtime.GOOS != "linux" {
-		result = append(result, dockerEngine)
-	}
-	result = append(result, discoverAppleContainer(probeContext, selectedID == RuntimeAppleContainer))
 
 	for index := range result {
 		if result[index].ID == selectedID {
@@ -270,6 +281,10 @@ func discoverDockerRuntime(ctx context.Context, dockerAvailable bool, contexts [
 		if err != nil {
 			info.Healthy = false
 			info.Detail = "Docker context unavailable: " + compact(err.Error())
+		} else if dockerInfoLooksLikeWindowsContainers(detail) {
+			info.Healthy = false
+			info.Version = version
+			info.Detail = "Docker Desktop is in Windows-container mode; switch to Linux containers for the Agent Computer"
 		} else {
 			info.Healthy = true
 			info.Version = version
@@ -326,16 +341,40 @@ func colimaContextName(profile string) string {
 }
 
 func findExecutable(name string) (string, error) {
-	if path, err := exec.LookPath(name); err == nil {
-		return path, nil
+	candidates := []string{name}
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		candidates = append(candidates, name+".exe")
 	}
-	for _, directory := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin"} {
-		candidate := filepath.Join(directory, name)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
+	for _, candidate := range candidates {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path, nil
+		}
+	}
+	directories := []string{"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin"}
+	if runtime.GOOS == "windows" {
+		directories = []string{
+			`C:\Program Files\Docker\Docker\resources\bin`,
+			`C:\Program Files\Git\cmd`,
+			`C:\Windows\System32`,
+		}
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			directories = append(directories, filepath.Join(local, `Programs\DockerDesktop\resources\bin`))
+		}
+	}
+	for _, directory := range directories {
+		for _, candidate := range candidates {
+			path := filepath.Join(directory, candidate)
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				return path, nil
+			}
 		}
 	}
 	return "", exec.ErrNotFound
+}
+
+func dockerInfoLooksLikeWindowsContainers(osAndArch string) bool {
+	lower := strings.ToLower(osAndArch)
+	return strings.Contains(lower, "windows") && !strings.Contains(lower, "linux")
 }
 
 // ReconcilePreferredRuntime keeps a stored computer runtime that this host can
@@ -343,6 +382,14 @@ func findExecutable(name string) (string, error) {
 // migrated data directory becomes Docker Engine unless Colima is installed.
 func ReconcilePreferredRuntime(stored string) string {
 	stored = strings.ToLower(strings.TrimSpace(stored))
+	if runtime.GOOS == "windows" {
+		switch stored {
+		case "", RuntimeColima, RuntimeOrbStack, RuntimeAppleContainer:
+			return RuntimeDockerDesktop
+		default:
+			return stored
+		}
+	}
 	if runtime.GOOS != "linux" {
 		if stored == "" {
 			return RuntimeColima
@@ -485,6 +532,8 @@ func classifyDockerContext(candidate dockerContext) string {
 	endpoint := strings.ToLower(candidate.Endpoint)
 	switch {
 	case name == "desktop-linux" || strings.Contains(name, "docker desktop"):
+		return RuntimeDockerDesktop
+	case strings.Contains(endpoint, "npipe:") || strings.Contains(endpoint, `//./pipe/docker_engine`) || strings.Contains(endpoint, `pipe\docker_engine`):
 		return RuntimeDockerDesktop
 	case strings.HasPrefix(name, "colima") || strings.Contains(endpoint, "/.colima/"):
 		return RuntimeColima

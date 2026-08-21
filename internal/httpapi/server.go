@@ -97,6 +97,13 @@ type Server struct {
 	integrationsMu          sync.Mutex
 	integrationsCachedAt    time.Time
 	integrationsCache       []integrations.Record
+	now                     func() time.Time
+	routineRunner           func(context.Context, domain.Routine, domain.RoutineRun) error
+	routineTickMu           sync.Mutex
+	routineLeaseOwner       string
+	routineLease            time.Duration
+	routineLeaseRenewEvery  time.Duration
+	routineSchedCtx         context.Context
 }
 
 type messageRequest struct {
@@ -133,6 +140,9 @@ type bootstrapResponse struct {
 	STT              stt.Status                 `json:"stt"`
 	Preferences      preferences.Preferences    `json:"preferences"`
 	HostOS           string                     `json:"host_os"`
+	LatestRuns       []domain.Run               `json:"latest_runs,omitempty"`
+	ActiveHandoffs   []domain.Handoff           `json:"active_handoffs,omitempty"`
+	Routines         []domain.Routine           `json:"routines,omitempty"`
 }
 
 type approvalResolutionRequest struct {
@@ -243,6 +253,8 @@ func (s *Server) Handler() http.Handler {
 			s.listAgents(w, r)
 		case r.URL.Path == "/api/agents" && r.Method == http.MethodPost:
 			s.createAgent(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/agents/") && strings.HasSuffix(r.URL.Path, "/roster") && r.Method == http.MethodPatch:
+			s.patchAgentRoster(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/agents/") && r.Method == http.MethodPatch:
 			s.patchAgent(w, r)
 		case r.URL.Path == "/api/conversations" && r.Method == http.MethodGet:
@@ -279,6 +291,8 @@ func (s *Server) Handler() http.Handler {
 			s.events(w, r)
 		case r.URL.Path == "/api/approvals" && r.Method == http.MethodGet:
 			s.listApprovals(w, r)
+		case r.URL.Path == "/api/review" && r.Method == http.MethodGet:
+			s.listReview(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/approvals/") && r.Method == http.MethodPost:
 			s.resolveApproval(w, r)
 		case r.URL.Path == "/api/sessions" && r.Method == http.MethodGet:
@@ -287,12 +301,8 @@ func (s *Server) Handler() http.Handler {
 			s.handleGroupRoutes(w, r)
 		case r.URL.Path == "/api/host/status" && r.Method == http.MethodGet:
 			s.hostStatus(w, r)
-		case r.URL.Path == "/api/routines" && r.Method == http.MethodGet:
-			s.listRoutines(w, r)
-		case r.URL.Path == "/api/routines" && r.Method == http.MethodPost:
-			s.createRoutine(w, r)
-		case strings.HasPrefix(r.URL.Path, "/api/routines/") && strings.HasSuffix(r.URL.Path, "/enable") && r.Method == http.MethodPost:
-			s.enableRoutine(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/routines"):
+			s.handleRoutineRoutes(w, r)
 		case r.URL.Path == "/api/skills" && r.Method == http.MethodGet:
 			s.listSkills(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/skills/") && r.Method == http.MethodGet:
@@ -504,7 +514,13 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		runtimes = compute.DiscoverRuntimes(r.Context(), selectedRuntime)
 	}
-	s.writeJSON(w, http.StatusOK, bootstrapResponse{Bots: bots, Agents: agents, Memories: memories, Conversations: conversations, Conversation: conversation, Messages: messages, Capabilities: capabilities, ModelCatalog: buildModelCatalog(capabilities, auth), Computer: computer, Runtimes: runtimes, Runs: runs, Approvals: approvals, TranscriptBlocks: transcriptBlocks, Sessions: sessions, Skills: skillList, Auth: auth, Attachments: attachments, STT: sttStatus, Preferences: preferenceValues, HostOS: runtime.GOOS})
+	presenceSnapshot := s.loadAgentPresenceSnapshot(r.Context())
+	routines, err := s.Store.ListRoutines(r.Context(), domain.RoutineListFilter{})
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, bootstrapResponse{Bots: bots, Agents: applyAgentPresence(agents, presenceSnapshot), Memories: memories, Conversations: conversations, Conversation: conversation, Messages: messages, Capabilities: capabilities, ModelCatalog: buildModelCatalog(capabilities, auth), Computer: computer, Runtimes: runtimes, Runs: runs, Approvals: approvals, TranscriptBlocks: transcriptBlocks, Sessions: sessions, Skills: skillList, Auth: auth, Attachments: attachments, STT: sttStatus, Preferences: preferenceValues, HostOS: runtime.GOOS, LatestRuns: presenceSnapshot.runs, ActiveHandoffs: presenceSnapshot.handoffs, Routines: routines})
 }
 
 func (s *Server) runtimes(w http.ResponseWriter, r *http.Request) {
@@ -2895,6 +2911,7 @@ func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	s.finishRoutineApproval(r.Context(), approval, request.Status)
 	s.writeJSON(w, http.StatusOK, approval)
 }
 
@@ -2911,7 +2928,18 @@ func (s *Server) commitRunLifecycleEvent(ctx context.Context, run domain.Run, st
 	if err != nil {
 		return domain.StreamEvent{}, err
 	}
+	s.markAgentUnreadForRunStatus(ctx, run.BotID, status)
 	return s.publishStoredRunEvent(run, item), nil
+}
+
+func (s *Server) markAgentUnreadForRunStatus(ctx context.Context, botID, status string) {
+	if s.Store == nil || botID == "" {
+		return
+	}
+	switch status {
+	case "waiting_for_approval", "failed", "blocked":
+		_ = s.Store.MarkAgentUnread(ctx, botID)
+	}
 }
 
 // commitTerminalRunLifecycleEvent keeps terminal state transitions durable
@@ -2955,7 +2983,7 @@ func terminalRunStatus(status string) bool {
 }
 
 func (s *Server) publishStoredRunEvent(run domain.Run, item domain.RunEvent) domain.StreamEvent {
-	event := domain.StreamEvent{ID: item.ID, RunID: run.ID, ConversationID: run.ConversationID, Type: item.Type, Data: item.Data, CreatedAt: item.CreatedAt}
+	event := domain.StreamEvent{ID: item.ID, RunID: run.ID, BotID: run.BotID, ConversationID: run.ConversationID, Type: item.Type, Data: item.Data, CreatedAt: item.CreatedAt}
 	if s.Broker != nil {
 		s.Broker.Publish(event)
 	}
@@ -2966,7 +2994,7 @@ func (s *Server) publishRunEvent(run domain.Run, eventType, data string) {
 	if s.Broker == nil {
 		return
 	}
-	s.Broker.Publish(domain.StreamEvent{ID: id.New("evt"), RunID: run.ID, ConversationID: run.ConversationID, Type: eventType, Data: data, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
+	s.Broker.Publish(domain.StreamEvent{ID: id.New("evt"), RunID: run.ID, BotID: run.BotID, ConversationID: run.ConversationID, Type: eventType, Data: data, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -3020,7 +3048,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
-			if conversationID != "" && event.ConversationID != conversationID {
+			if conversationID != "" && event.ConversationID != "" && event.ConversationID != conversationID {
 				continue
 			}
 			payload, err := json.Marshal(event)

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -273,6 +274,9 @@ func TestPiRPCLeadConfirmDenyStillSettles(t *testing.T) {
 
 func writePiRPCHelper(t *testing.T, hold bool) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Pi RPC helpers are POSIX scripts")
+	}
 	path := filepath.Join(t.TempDir(), "pi")
 	script := `#!/bin/sh
 printf '%s\n' "$*" > "$0.args"
@@ -301,6 +305,9 @@ printf '%s\n' '{"type":"agent_settled"}'
 
 func writePiRPCHelperWithConfirm(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Pi RPC helpers are POSIX scripts")
+	}
 	path := filepath.Join(t.TempDir(), "pi")
 	script := `#!/usr/bin/env python3
 import json

@@ -158,10 +158,14 @@ func (d *Docker) currentRuntimeID() string {
 	d.runtimeMu.RLock()
 	defer d.runtimeMu.RUnlock()
 	if strings.TrimSpace(d.RuntimeID) == "" {
-		if runtime.GOOS == "linux" {
+		switch runtime.GOOS {
+		case "linux":
 			return RuntimeDocker
+		case "windows":
+			return RuntimeDockerDesktop
+		default:
+			return RuntimeColima
 		}
-		return RuntimeColima
 	}
 	return d.RuntimeID
 }

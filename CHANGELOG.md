@@ -9,6 +9,55 @@ and stapled from this version. Linux `.deb` / `.rpm` / `.AppImage` can be
 built from the same commit. The current public download remains
 [`v0.2.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.2.0-alpha).
 
+### Living teammates
+
+- Sidebar Agents now show live presence: idle, working, using computer, needs
+  approval, needs takeover, collaborating, or failed.
+- Optional per-Agent engine override in Agent Builder. Workspace default still
+  applies unless you opt in; a missing engine fails closed.
+- Desktop notifications fire when an Agent finishes, fails, or needs
+  approval, with in-app Approve / Deny / Stop / Open Agent actions.
+  Linux uses notify-send. macOS uses Notification Center
+  (UNUserNotificationCenter, osascript fallback).
+- Review panel lists pending approvals and recent Agent runs.
+- Sidebar Agents can be pinned, marked unread, or hidden.
+- Mobile pairing in Settings shows a QR code of the same Tailnet bundle
+  JSON as the copyable text.
+
+### Mobile control surface
+
+- Paired controller/owner phones can list and resolve pending approvals, stop
+  an active run, and pause or enable routines. Observer devices stay
+  read-only. Bootstrap includes pending approvals so the phone sees gates
+  without a second round trip.
+
+### Routines scheduler
+
+- botd claims due Routines, starts a visible Agent turn, then advances the
+  next run. The same occurrence is claimed once. Heartbeats stay off until
+  Routines and Heartbeat are enabled and the schedule is opted in.
+- Always-approval occurrences wait for an in-app Approve before the claim.
+  Deny skips that occurrence and schedules the next one. Enable/Resolve
+  ignore a past next-run time instead of firing immediately.
+- Leases last 15 minutes and renew while the Agent turn is running, so a
+  long job is not marked unknown mid-run.
+- The workspace Routines panel lists next run, pause/enable, and history.
+- Routines can be test-run without enabling or consuming the next scheduled
+  occurrence.
+- Enabled routines can expose a signed loopback webhook (`127.0.0.1:4319`).
+  The secret is hashed at rest and shown once. Delivery does not inject the
+  request body into the Agent prompt and does not consume next-run.
+
+### Windows host
+
+- Guest Agent Computer paths stay POSIX (`/workspace`, `/tmp`) when botd runs
+  on Windows; native harness workdirs may be `C:\...`.
+- NTFS file modes are not fail-closed as if they were POSIX 0600/0700.
+- Connector state replace retries NTFS sharing violations.
+- Default Computer runtime on Windows is Docker Desktop. Dictation and the
+  native secure prompt stay macOS-only. Computer View against Docker Desktop
+  is not claimed by this change.
+
 ## 0.3.0-alpha
 
 Coworkers first: Agents can share a group chat, opt into agent-to-agent work,
@@ -36,8 +85,8 @@ and is not on by default.
 Inspect an enabled Skill, create a Routine from it, and enable the Routine
 explicitly. Create always starts disabled. A Skill that is not enabled cannot
 become a Routine. Heartbeat Routines still require the heartbeat opt-in.
-Skills never auto-enable. This ships the inspect/create/enable contract; a
-full scheduler is remaining work.
+Skills never auto-enable. This ships the inspect/create/enable contract. The
+Unreleased scheduler loop, test-run, and Routines panel sit on top of it.
 
 ### Fleet Host MVP
 

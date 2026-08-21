@@ -10,6 +10,7 @@ func TestResolveLoopbackTCPAddressRejectsNonPrivateMobileListeners(t *testing.T)
 	valid := []string{
 		"127.0.0.1:4318",
 		"[::1]:4318",
+		"127.0.0.1:4319",
 	}
 	for _, value := range valid {
 		resolved, err := resolveLoopbackTCPAddress(value)

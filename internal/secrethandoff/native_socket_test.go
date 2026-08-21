@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -464,6 +465,9 @@ func readNativeTestResponse(t *testing.T, reader io.Reader) (byte, string) {
 
 func nativeTestSocketPath(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("native secret-handoff socket is unix-only")
+	}
 	directory, err := os.MkdirTemp("/tmp", "ofb-handoff-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)

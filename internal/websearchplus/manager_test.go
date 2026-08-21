@@ -10,11 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/ospath"
 )
 
 func TestValidateHoundEndpoint(t *testing.T) {
@@ -145,8 +148,10 @@ func TestIndependentSpecsUseExactPinsAndDefaultConfigDoesNotForceHound(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("config mode = %#o, want 0600", got)
+	if ospath.POSIXModeEnforced() {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("config mode = %#o, want 0600", got)
+		}
 	}
 
 	// Returned specs are defensive copies.
@@ -435,6 +440,9 @@ func TestBridgeProbeDoesNotFollowRedirects(t *testing.T) {
 }
 
 func TestManagedChildExactArgsOwnershipAndStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("managed child process groups are unix-only")
+	}
 	if testing.Short() {
 		t.Skip("spawns the test helper process")
 	}

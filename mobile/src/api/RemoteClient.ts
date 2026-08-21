@@ -1,6 +1,6 @@
 import EventSource, { type CustomEvent, type MessageEvent } from "react-native-sse";
 
-import type { Bootstrap, ComputerStatus, Conversation, DeviceMetadata, PairingBundle, PairingResponse, RemoteEvent, RemoteMeta, RemoteProfile, StreamEvent } from "./types";
+import type { Bootstrap, ComputerStatus, Conversation, DeviceMetadata, MobileApproval, MobileRoutine, PairingBundle, PairingResponse, RemoteEvent, RemoteMeta, RemoteProfile, StreamEvent } from "./types";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const FRAME_MAX_BYTES = 5 * 1024 * 1024;
@@ -96,7 +96,8 @@ function normalizeDevice(value: unknown, fallbackName: string, fallbackPlatform:
       : typeof candidate.display_name === "string" && candidate.display_name.trim()
         ? candidate.display_name.trim().slice(0, 96)
         : fallbackName,
-    platform: typeof candidate.platform === "string" && candidate.platform.trim() ? candidate.platform.trim().slice(0, 32) : fallbackPlatform
+    platform: typeof candidate.platform === "string" && candidate.platform.trim() ? candidate.platform.trim().slice(0, 32) : fallbackPlatform,
+    scope_profile: typeof candidate.scope_profile === "string" && candidate.scope_profile.trim() ? candidate.scope_profile.trim().slice(0, 32) : undefined
   };
 }
 
@@ -191,6 +192,49 @@ export class RemoteClient {
       headers: { "Content-Type": "application/json", "Idempotency-Key": createIdempotencyKey() },
       body: JSON.stringify({ conversation_id: conversationID, content })
     });
+  }
+
+  async approvals(): Promise<MobileApproval[]> {
+    const payload = await this.request<{ approvals: MobileApproval[] }>("/api/v1/approvals");
+    return payload.approvals || [];
+  }
+
+  resolveApproval(approvalID: string, status: "approved" | "denied", optionID = ""): Promise<MobileApproval> {
+    return this.request<MobileApproval>(`/api/v1/approvals/${encodeURIComponent(approvalID)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": createIdempotencyKey() },
+      body: JSON.stringify({ status, option_id: optionID })
+    });
+  }
+
+  stopRun(runID: string): Promise<{ run_id: string; status: string }> {
+    return this.request(`/api/v1/runs/${encodeURIComponent(runID)}/stop`, {
+      method: "POST",
+      headers: { "Idempotency-Key": createIdempotencyKey() }
+    });
+  }
+
+  async routines(botID?: string): Promise<MobileRoutine[]> {
+    const suffix = botID ? `?bot_id=${encodeURIComponent(botID)}` : "";
+    const payload = await this.request<{ routines: MobileRoutine[] }>(`/api/v1/routines${suffix}`);
+    return payload.routines || [];
+  }
+
+  async pauseRoutine(routineID: string, reason?: string): Promise<MobileRoutine> {
+    const payload = await this.request<{ routine: MobileRoutine }>(`/api/v1/routines/${encodeURIComponent(routineID)}/pause`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": createIdempotencyKey() },
+      body: JSON.stringify(reason ? { reason } : {})
+    });
+    return payload.routine;
+  }
+
+  async enableRoutine(routineID: string): Promise<MobileRoutine> {
+    const payload = await this.request<{ routine: MobileRoutine }>(`/api/v1/routines/${encodeURIComponent(routineID)}/enable`, {
+      method: "POST",
+      headers: { "Idempotency-Key": createIdempotencyKey() }
+    });
+    return payload.routine;
   }
 
   computer(): Promise<ComputerStatus> {

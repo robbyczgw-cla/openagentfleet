@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robbyczgw-cla/openagentfleet/internal/testexe"
 )
 
 const grokWebSearchHelperEnv = "OPENAGENTFLEET_GROK_WEB_SEARCH_TEST_HELPER"
@@ -188,17 +190,12 @@ func TestRunOptionsControlGrokNativeWebSearchFlag(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			binary, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
 			directory := t.TempDir()
 			argumentsPath := filepath.Join(directory, "arguments")
-			wrapper := filepath.Join(directory, "grok")
-			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argumentsPath) + "\nexport " + grokWebSearchHelperEnv + "=1\nexec " + shellQuote(binary) + " -test.run " + shellQuote("^TestGrokWebSearchHelper$") + "\n"
-			if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			wrapper := testexe.WriteReexec(t, directory, "grok", "^TestGrokWebSearchHelper$", argumentsPath, map[string]string{
+				grokWebSearchHelperEnv: "1",
+			})
+			_ = wrapper
 			t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 			runner := &Runner{AllowExecution: true}
@@ -210,8 +207,8 @@ func TestRunOptionsControlGrokNativeWebSearchFlag(t *testing.T) {
 				t.Fatal(err)
 			}
 			hasDisable := false
-			for _, argument := range strings.Split(strings.TrimSpace(string(arguments)), "\n") {
-				if argument == "--disable-web-search" {
+			for _, argument := range strings.Split(strings.ReplaceAll(strings.TrimSpace(string(arguments)), "\r\n", "\n"), "\n") {
+				if strings.TrimSuffix(argument, "\r") == "--disable-web-search" {
 					hasDisable = true
 				}
 			}

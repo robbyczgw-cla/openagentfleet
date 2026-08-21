@@ -22,9 +22,15 @@ The terms **implemented**, **compiles**, and **contract** are deliberate:
 
 ## Current status
 
-- There is no Windows installer, no Windows CI job, and no Windows sidecar
-  target. `scripts/build-tauri-sidecar.sh` exits for any rustc triple other
-  than Apple Darwin and GNU/Linux.
+- Sidecar packaging accepts `x86_64-pc-windows-msvc` and writes `.exe` names.
+  The Tauri crate resolves `botd.exe` siblings and inherits a Windows env
+  allowlist. Default Computer runtime is Docker Desktop. Settings hide Colima.
+- `scripts/build-windows-release.sh` and `scripts/verify-windows-release.sh`
+  produce and check an unsigned NSIS current-user installer. See
+  [Windows release](windows-release.md). A `tauri dev` window has started on a
+  Win11 guest; that is not a published installer.
+- There is no Windows CI job, no Authenticode, and no proven Docker Desktop
+  Computer View session.
 - `docs/linux-desktop.md` still states the product fact: Windows remains a
   later target.
 - The Agent Computer image stays a Linux guest (Ubuntu 24.04 default,
