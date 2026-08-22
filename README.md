@@ -11,7 +11,7 @@ Sensitive steps wait for your approval.
 
 [Linux](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
 · [Windows](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
-· [macOS 0.2.0 (signed)](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg)
+· [macOS 0.3.0 (signed)](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.0-alpha/OpenAgentFleet_0.3.0_aarch64.dmg)
 · [Product site](https://openagentfleet.xyz)
 · [Security model](docs/architecture.md)
 
@@ -60,7 +60,7 @@ stand-ins for the workspace engine.
 | --- | --- |
 | Linux | Unsigned `.deb` / `.rpm` / `.AppImage` from [`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha). Docker Engine recommended for the Agent Computer; the installer does not start it. |
 | Windows | Unsigned NSIS installer on the same tag. Docker Desktop recommended; Computer View on WSL2 is not proven by that installer. |
-| macOS (Apple Silicon) | Signed [`v0.2.0-alpha` DMG](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.2.0-alpha/OpenAgentFleet_0.2.0_aarch64.dmg), SHA-256 `ed466a491051f4facd7696ee67ef2e98235750c5c31a79ff1ffe3060d2f80c06`. A signed `0.3.0` DMG follows once notarization is stapled. Intel Macs are not supported. |
+| macOS (Apple Silicon) | Signed [`v0.3.0-alpha` DMG](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.0-alpha/OpenAgentFleet_0.3.0_aarch64.dmg), SHA-256 `daeb286515efeff8d8f1f730c6cef50d121625971f0dd69d6041cdc81f8e19f7`. Intel Macs are not supported. |
 
 Checksums live on the [release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha).
 Release runbooks: [Linux](docs/linux-release.md) ·
