@@ -602,6 +602,15 @@ type ComputerFrameState = {
   error?: string;
 };
 type Theme = "light" | "dark" | "system";
+type Density = "comfortable" | "compact" | "roomy";
+type Accent = "paper" | "ink" | "forest" | "dusk";
+type CornerRadius = "soft" | "sharp";
+const APPEARANCE_ACCENTS: { value: Accent; label: string }[] = [
+  { value: "paper", label: "Paper" },
+  { value: "ink", label: "Ink" },
+  { value: "forest", label: "Forest" },
+  { value: "dusk", label: "Dusk" },
+];
 type OnboardingLead = "grok_build" | "codex_app_server" | "opencode" | "pi";
 type SearchConnectorState = {
   web_search_plus_enabled: boolean;
@@ -645,8 +654,11 @@ type Preferences = {
   workspace?: { engine?: string; model?: string };
   appearance?: {
     theme?: Theme;
-    density?: "comfortable" | "compact";
+    density?: Density;
     font_scale?: number;
+    accent?: Accent;
+    reduce_motion?: boolean;
+    radius?: CornerRadius;
   };
   usage?: {
     default_worker?: string;
@@ -2385,11 +2397,17 @@ function App() {
   }, [mobilePairingBundle, now]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme =
-      preferences.appearance?.theme ?? "system";
-    document.documentElement.dataset.density =
-      preferences.appearance?.density ?? "comfortable";
-    document.documentElement.style.setProperty(
+    const root = document.documentElement;
+    root.dataset.theme = preferences.appearance?.theme ?? "system";
+    root.dataset.density = preferences.appearance?.density ?? "comfortable";
+    root.dataset.accent = preferences.appearance?.accent ?? "paper";
+    root.dataset.radius = preferences.appearance?.radius ?? "soft";
+    if (preferences.appearance?.reduce_motion) {
+      root.dataset.reduceMotion = "true";
+    } else {
+      delete root.dataset.reduceMotion;
+    }
+    root.style.setProperty(
       "--font-scale",
       String(preferences.appearance?.font_scale ?? 1),
     );
@@ -9231,27 +9249,70 @@ function App() {
             </button>
             <div className="eyebrow">OpenAgentFleet</div>
             <h2 id="settings-title">Settings</h2>
-            <section>
-              <h3>Appearance</h3>
-              <div className="segmented">
-                {(["light", "dark", "system"] as Theme[]).map((theme) => (
-                  <button
-                    key={theme}
-                    aria-pressed={
-                      (preferences.appearance?.theme ?? "system") === theme
-                    }
-                    className={
-                      (preferences.appearance?.theme ?? "system") === theme
-                        ? "selected"
-                        : ""
-                    }
-                    onClick={() =>
-                      void patchPreferences({ appearance: { theme } })
-                    }
-                  >
-                    {theme}
-                  </button>
-                ))}
+            <section
+              className="appearance-settings"
+              aria-labelledby="settings-appearance-title"
+            >
+              <h3 id="settings-appearance-title">Appearance</h3>
+              <div className="settings-field">
+                Theme
+                <div className="segmented" role="group" aria-label="Theme">
+                  {(
+                    [
+                      ["light", "Light"],
+                      ["dark", "Dark"],
+                      ["system", "System"],
+                    ] as [Theme, string][]
+                  ).map(([theme, label]) => (
+                    <button
+                      key={theme}
+                      type="button"
+                      aria-pressed={
+                        (preferences.appearance?.theme ?? "system") === theme
+                      }
+                      className={
+                        (preferences.appearance?.theme ?? "system") === theme
+                          ? "selected"
+                          : ""
+                      }
+                      onClick={() =>
+                        void patchPreferences({ appearance: { theme } })
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="settings-field">
+                Accent
+                <div className="accent-swatches" role="group" aria-label="Accent">
+                  {APPEARANCE_ACCENTS.map((accent) => (
+                    <button
+                      key={accent.value}
+                      type="button"
+                      data-accent={accent.value}
+                      className={`accent-swatch-button${
+                        (preferences.appearance?.accent ?? "paper") ===
+                        accent.value
+                          ? " selected"
+                          : ""
+                      }`}
+                      aria-pressed={
+                        (preferences.appearance?.accent ?? "paper") ===
+                        accent.value
+                      }
+                      onClick={() =>
+                        void patchPreferences({
+                          appearance: { accent: accent.value },
+                        })
+                      }
+                    >
+                      <span className="accent-swatch" aria-hidden="true" />
+                      {accent.label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <label>
                 Density
@@ -9265,19 +9326,67 @@ function App() {
                 >
                   <option value="comfortable">Comfortable</option>
                   <option value="compact">Compact</option>
+                  <option value="roomy">Roomy</option>
                 </select>
               </label>
               <label>
                 Text size
+                <span className="font-scale-row">
+                  <input
+                    type="range"
+                    min="0.85"
+                    max="1.35"
+                    step="0.05"
+                    value={preferences.appearance?.font_scale ?? 1}
+                    aria-valuetext={`${Math.round((preferences.appearance?.font_scale ?? 1) * 100)}%`}
+                    onChange={(event) =>
+                      void patchPreferences({
+                        appearance: { font_scale: Number(event.target.value) },
+                      })
+                    }
+                  />
+                  <span className="font-scale-value">
+                    {Math.round((preferences.appearance?.font_scale ?? 1) * 100)}%
+                  </span>
+                </span>
+              </label>
+              <div className="settings-field">
+                Corners
+                <div className="segmented" role="group" aria-label="Corners">
+                  {(
+                    [
+                      ["soft", "Soft"],
+                      ["sharp", "Sharp"],
+                    ] as [CornerRadius, string][]
+                  ).map(([radius, label]) => (
+                    <button
+                      key={radius}
+                      type="button"
+                      aria-pressed={
+                        (preferences.appearance?.radius ?? "soft") === radius
+                      }
+                      className={
+                        (preferences.appearance?.radius ?? "soft") === radius
+                          ? "selected"
+                          : ""
+                      }
+                      onClick={() =>
+                        void patchPreferences({ appearance: { radius } })
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="toggle-row">
+                <span>Reduce motion</span>
                 <input
-                  type="range"
-                  min="0.9"
-                  max="1.2"
-                  step="0.05"
-                  value={preferences.appearance?.font_scale ?? 1}
+                  type="checkbox"
+                  checked={preferences.appearance?.reduce_motion ?? false}
                   onChange={(event) =>
                     void patchPreferences({
-                      appearance: { font_scale: Number(event.target.value) },
+                      appearance: { reduce_motion: event.target.checked },
                     })
                   }
                 />
@@ -9519,19 +9628,17 @@ function App() {
                   )}
                 </select>
               </label>
-              <details className="settings-advanced-section computer-resources-settings">
-                <summary>
-                  Computer resources
-                  <span className="settings-summary-value">
-                    {computerResources.cpus} CPU · {computerResources.ram_gib} GiB RAM · {computerResources.disk_gib} GiB disk
-                  </span>
-                </summary>
+              <div className="computer-resources-settings">
+                <h4>Computer resources</h4>
+                <p className="field-note">
+                  {computerResources.cpus} CPU · {computerResources.ram_gib} GiB RAM · {computerResources.disk_gib} GiB disk
+                </p>
                 <p className="field-note">
                   {isLinuxHost(data)
-                    ? "Optional. Docker Engine uses CPU, RAM and swap as container limits. Disk is managed by the Docker host."
+                    ? "Docker Engine uses CPU, RAM and swap as container limits. Disk is managed by the Docker host."
                     : isWindowsHost(data)
-                      ? "Optional. Docker Desktop uses CPU, RAM and swap as container limits. The Linux VM disk stays managed by Docker Desktop."
-                      : "Optional. Colima uses these values for the isolated Linux VM; Docker Desktop and OrbStack use CPU/RAM/swap as container limits while their VM disk stays managed by the runtime."}
+                      ? "Docker Desktop uses CPU, RAM and swap as container limits. The Linux VM disk stays managed by Docker Desktop."
+                      : "Colima uses these values for the isolated Linux VM; Docker Desktop and OrbStack use CPU/RAM/swap as container limits while their VM disk stays managed by the runtime."}
                 </p>
                 <label>
                   Resource preset
@@ -9649,7 +9756,7 @@ function App() {
                     Active computer: {data.computer.resources.cpus ?? computerResources.cpus} CPU · {data.computer.resources.memory_gib ?? computerResources.ram_gib} GiB RAM · {data.computer.resources.disk_gib ?? computerResources.disk_gib} GiB disk · {data.computer.resources.swap_gib ?? computerResources.swap_gib} GiB swap
                   </p>
                 )}
-              </details>
+              </div>
               <div className="runtime-status-card" aria-label="Runtime status">
                 <div>
                   <span className="eyebrow">Active now</span>

@@ -364,7 +364,12 @@ func TestMergePatchAcceptsOnlySupportedSafeFields(t *testing.T) {
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
 	want := Defaults()
-	want.Appearance = Appearance{Theme: ThemeDark, Density: DensityCompact, FontScale: 1.15}
+	want.Appearance.Theme = ThemeDark
+	want.Appearance.Density = DensityCompact
+	want.Appearance.FontScale = 1.15
+	want.Appearance.Accent = AccentInk
+	want.Appearance.ReduceMotion = true
+	want.Appearance.Radius = RadiusSharp
 	want.Usage = UsageDefaults{DefaultWorker: ProviderCodexAppServer, ReasoningEffort: ReasoningLow, PermissionMode: PermissionPlan}
 	want.Computer = ComputerDefaults{DefaultSurface: SurfaceBrowser, Runtime: RuntimeAuto, CPUs: 6, RAMGiB: 8, DiskGiB: 50, SwapGiB: 2, OSImage: OSImageDebian13}
 	want.Safety = SafetyRetention{RetainTranscripts: true, RetainActivity: true}
@@ -456,6 +461,107 @@ func TestDecodeInvalidDocumentReturnsSafeDefaults(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, Defaults()) {
 		t.Fatalf("invalid document should fail closed: %#v", got)
+	}
+}
+
+func TestAppearanceExtrasDefaultAndRejectUnknownValues(t *testing.T) {
+	defaults := Defaults()
+	if defaults.Appearance.Accent != AccentPaper || defaults.Appearance.Density != DensityComfortable || defaults.Appearance.FontScale != 1 || defaults.Appearance.Radius != RadiusSoft || defaults.Appearance.ReduceMotion {
+		t.Fatalf("appearance defaults = %#v", defaults.Appearance)
+	}
+
+	updated, err := MergePatch(defaults, []byte(`{"appearance":{"accent":"forest","density":"roomy","font_scale":1.35,"radius":"sharp","reduce_motion":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Appearance.Accent != AccentForest || updated.Appearance.Density != DensityRoomy || updated.Appearance.FontScale != 1.35 || updated.Appearance.Radius != RadiusSharp || !updated.Appearance.ReduceMotion {
+		t.Fatalf("appearance patch = %#v", updated.Appearance)
+	}
+
+	cleared, err := MergePatch(updated, []byte(`{"appearance":{"reduce_motion":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Appearance.ReduceMotion {
+		t.Fatalf("reduce_motion false did not persist: %#v", cleared.Appearance)
+	}
+
+	for _, body := range []string{
+		`{"appearance":{"accent":"neon"}}`,
+		`{"appearance":{"density":"dense"}}`,
+		`{"appearance":{"radius":"round"}}`,
+		`{"appearance":{"font_scale":1.5}}`,
+		`{"appearance":{"font_scale":0.8}}`,
+	} {
+		got, patchErr := MergePatch(updated, []byte(body))
+		if patchErr == nil {
+			t.Fatalf("expected reject for %s", body)
+		}
+		if !reflect.DeepEqual(got, updated) {
+			t.Fatalf("rejected appearance patch %s changed preferences: %#v", body, got)
+		}
+	}
+
+	for _, accent := range []string{AccentPaper, AccentInk, AccentForest, AccentDusk} {
+		got, patchErr := MergePatch(defaults, []byte(`{"appearance":{"accent":"`+accent+`"}}`))
+		if patchErr != nil {
+			t.Fatalf("accent %q: %v", accent, patchErr)
+		}
+		if got.Appearance.Accent != accent {
+			t.Fatalf("accent = %q, want %q", got.Appearance.Accent, accent)
+		}
+	}
+}
+
+func TestNormalizeCanonicalizesAppearanceExtrasAndClampsFontScale(t *testing.T) {
+	input := Defaults()
+	input.Appearance.Accent = " INK "
+	input.Appearance.Density = " ROOMY "
+	input.Appearance.Radius = " SHARP "
+	input.Appearance.FontScale = 0.5
+	input.Appearance.ReduceMotion = true
+	got := input.Normalize()
+	if got.Appearance.Accent != AccentInk || got.Appearance.Density != DensityRoomy || got.Appearance.Radius != RadiusSharp || got.Appearance.FontScale != MinFontScale || !got.Appearance.ReduceMotion {
+		t.Fatalf("normalized appearance = %#v", got.Appearance)
+	}
+
+	unknown := Defaults()
+	unknown.Appearance.Accent = "neon"
+	unknown.Appearance.Radius = "pill"
+	unknown.Appearance.Density = "dense"
+	fallback := unknown.Normalize()
+	if fallback.Appearance.Accent != AccentPaper || fallback.Appearance.Radius != RadiusSoft || fallback.Appearance.Density != DensityComfortable {
+		t.Fatalf("unknown appearance values were not fail-closed: %#v", fallback.Appearance)
+	}
+
+	invalid := Defaults()
+	invalid.Appearance.Accent = "neon"
+	if err := invalid.Validate(); err == nil || !strings.Contains(err.Error(), "appearance.accent") {
+		t.Fatalf("unknown accent error = %v", err)
+	}
+	invalid = Defaults()
+	invalid.Appearance.FontScale = 0.84
+	if err := invalid.Validate(); err == nil || !strings.Contains(err.Error(), "font_scale") {
+		t.Fatalf("font scale lower bound error = %v", err)
+	}
+	invalid = Defaults()
+	invalid.Appearance.FontScale = 1.36
+	if err := invalid.Validate(); err == nil || !strings.Contains(err.Error(), "font_scale") {
+		t.Fatalf("font scale upper bound error = %v", err)
+	}
+}
+
+func TestLegacyAppearanceReceivesAccentAndRadiusDefaults(t *testing.T) {
+	legacy := []byte(`{"version":1,"appearance":{"theme":"dark","density":"compact","font_scale":1.1},"usage":{"default_worker":"grok","reasoning_effort":"high","permission_mode":"default"},"computer":{"default_surface":"desktop","runtime":"colima","auto_takeover":false,"auto_agent_control":false},"safety":{"retain_transcripts":false,"retain_activity":false},"features":{}}`)
+	got, err := Decode(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Appearance.Theme != ThemeDark || got.Appearance.Density != DensityCompact || got.Appearance.FontScale != 1.1 {
+		t.Fatalf("legacy appearance core = %#v", got.Appearance)
+	}
+	if got.Appearance.Accent != AccentPaper || got.Appearance.Radius != RadiusSoft || got.Appearance.ReduceMotion {
+		t.Fatalf("legacy appearance extras = %#v", got.Appearance)
 	}
 }
 
