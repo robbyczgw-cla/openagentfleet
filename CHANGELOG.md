@@ -14,6 +14,7 @@ ship paragraph dumps.
 
 - README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac `0.3.0`, one Agent Computer per workspace.
 - Android companion: scan the pairing QR, keep the composer above the keyboard, hide the tab bar while typing.
+- Android companion: system light/dark theme, pull-to-refresh chat, reconnect banner, and a taller computer frame.
 
 ### Fixed
 
