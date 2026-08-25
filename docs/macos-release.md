@@ -7,17 +7,16 @@ Developer ID, notarization, stapling, Gatekeeper, and checksum checks below.
 
 ## Measured state of the current checkout
 
-- Product version: `0.3.0`.
+- Product version: `0.3.1`.
 - Target: Apple Silicon macOS.
 - The normal Tauri configuration uses `signingIdentity: "-"` for local
   development, which produces an ad-hoc signature.
-- A verified `Developer ID Application` identity and Team Identifier were used
-  for the public alpha.
-- A notarization submission was accepted by Apple, and the ticket was stapled
-  to both the app and DMG.
-- The public GitHub prerelease `v0.2.0-alpha` still contains the signed
-  Apple Silicon DMG and its matching SHA-256 checksum file. `v0.3.0-alpha`
-  is the next publish from this version.
+- GitHub prerelease `v0.3.1-alpha` has a Developer ID, notarized, stapled
+  Apple Silicon DMG (`OpenAgentFleet_0.3.1_aarch64.dmg`). Gatekeeper on a
+  second Mac was not checked; the README Mac download still points at
+  `v0.3.0-alpha`.
+- The public GitHub prerelease `v0.3.0-alpha` still contains its notarized
+  Apple Silicon DMG. Do not delete it.
 
 Do not change the default Tauri identity merely to make a local build look
 released. Use the release override below only after the correct distribution

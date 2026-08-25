@@ -8,10 +8,11 @@ ship paragraph dumps.
 
 ## 0.3.1-alpha - 2026-08-25
 
-Mini alpha. Unsigned Linux `.deb` / `.rpm` / AppImage and unsigned Windows
-NSIS. Mac download stays the notarized
-[`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
-DMG until a Developer ID `0.3.1` DMG is notarized.
+Mini alpha. Notarized Apple Silicon DMG is on GitHub prerelease
+[`v0.3.1-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.1-alpha).
+Linux and Windows packages are not on that tag yet. README Mac download stays
+the notarized [`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
+DMG until Gatekeeper is checked on a second Mac.
 
 ### Added
 
@@ -37,6 +38,8 @@ DMG until a Developer ID `0.3.1` DMG is notarized.
 - `ubuntu:24.04` Hub pull without login on the live Windows box
 - Authenticode / Microsoft Store
 - Agent runtime foundation (EngineAdapter / Tool Registry / ComputerBackend)
+- Gatekeeper on a second Mac (README Mac link stays `v0.3.0-alpha`)
+- Linux and Windows `0.3.1` packages on the GitHub tag
 
 ## 0.3.0-alpha - 2026-08-21
 
