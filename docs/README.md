@@ -26,8 +26,8 @@ not earned yet.
 | [Mac host install](mac-host-install.md) | LaunchAgent and local host operation | Setup guide |
 | [Fleet Host MVP](fleet-host.md) | Always-on Linux/Mac controller, pairing, and loopback Serve rules | Implemented host status + install script |
 | [OpenCode bundling](opencode-bundling.md) | Exact macOS sidecar pin, architecture checks, and upgrade procedure | Implemented packaging contract |
-| [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | Passed for public `v0.3.0-alpha` |
-| [v0.3.1-alpha notes](releases/v0.3.1-alpha.md) | GitHub prerelease copy for Linux/Windows (`0.3.1`); Mac stays `0.3.0` DMG until notarized | Current publish notes |
+| [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | `v0.3.1-alpha` DMG notarized; README still `v0.3.0-alpha` until second-Mac Gatekeeper |
+| [v0.3.1-alpha notes](releases/v0.3.1-alpha.md) | GitHub prerelease: notarized Mac DMG; Linux/Windows not attached yet | Current publish notes |
 | [v0.3.0-alpha notes](releases/v0.3.0-alpha.md) | Previous public alpha | Shipped |
 | [Search connectors](search-connectors.md) | Optional Web Search Plus, Hound, and Donsetch MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
 | [Fresh-user smoke checklist](fresh-user-smoke-test.md) | Short native-app checklist for the simple first-run flow and optional Advanced settings | Current QA runbook |
