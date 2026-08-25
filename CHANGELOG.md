@@ -6,6 +6,13 @@ ship paragraph dumps.
 
 ## Unreleased
 
+## 0.3.1-alpha - 2026-08-25
+
+Mini alpha. Unsigned Linux `.deb` / `.rpm` / AppImage and unsigned Windows
+NSIS. Mac download stays the notarized
+[`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
+DMG until a Developer ID `0.3.1` DMG is notarized.
+
 ### Added
 
 - Computer View Start when the isolated computer is stopped.
@@ -14,9 +21,8 @@ ship paragraph dumps.
 
 ### Changed
 
-- README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac `0.3.0`, one Agent Computer per workspace.
-- Android companion: scan the pairing QR, keep the composer above the keyboard, hide the tab bar while typing.
-- Android companion: system light/dark theme, pull-to-refresh chat, reconnect banner, and a taller computer frame.
+- Android companion: Chat / Computer / Routines / Settings screens, system light/dark, pull-to-refresh chat, reconnect banner.
+- Pairing still scans the QR first; JSON paste is secondary.
 
 ### Fixed
 
@@ -30,6 +36,7 @@ ship paragraph dumps.
 - Proven Agent Computer session on Windows Docker Desktop WSL2
 - `ubuntu:24.04` Hub pull without login on the live Windows box
 - Authenticode / Microsoft Store
+- Agent runtime foundation (EngineAdapter / Tool Registry / ComputerBackend)
 
 ## 0.3.0-alpha - 2026-08-21
 
