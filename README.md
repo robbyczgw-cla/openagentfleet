@@ -43,7 +43,9 @@ the opposite bet:
 - **One Agent Computer per workspace** — a Linux desktop (Ubuntu 24.04 by
   default) that starts only when browser or desktop work needs it. Agents
   take turns on that same PC; creating an Agent does not spawn a VM. Pi has
-  no Agent Computer.
+  no Agent Computer. Each Agent *references* that computer (default ID
+  `workspace`, backend `docker`) so a later per-agent computer would not
+  require a new Agent identity.
 - **Approvals with memory.** Sensitive commands and file changes route
   through `botd`. Rules you save (this principal, this resource, this
   operation) stop the app from asking twice.

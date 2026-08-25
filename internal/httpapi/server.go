@@ -23,7 +23,10 @@ import (
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/browsermcp"
 	"github.com/robbyczgw-cla/openagentfleet/internal/compute"
+	"github.com/robbyczgw-cla/openagentfleet/internal/computer"
+	"github.com/robbyczgw-cla/openagentfleet/internal/coordinator"
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
+	"github.com/robbyczgw-cla/openagentfleet/internal/engine"
 	"github.com/robbyczgw-cla/openagentfleet/internal/events"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 	"github.com/robbyczgw-cla/openagentfleet/internal/id"
@@ -37,6 +40,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
 	"github.com/robbyczgw-cla/openagentfleet/internal/stt"
 	"github.com/robbyczgw-cla/openagentfleet/internal/teach"
+	"github.com/robbyczgw-cla/openagentfleet/internal/tools"
 	"github.com/robbyczgw-cla/openagentfleet/internal/websearchplus"
 )
 
@@ -70,6 +74,15 @@ type Server struct {
 	NativeHandoffSocketPath string
 	SearchConnectors        *websearchplus.Controller
 	RunTimeout              time.Duration
+	// Coordinator, Turns, Engines, Tools, and Computers are the runtime
+	// foundation. Tests may leave them nil; launch then matches the previous
+	// per-run goroutine behavior.
+	Coordinator *coordinator.Coordinator
+	Turns       *coordinator.TurnQueue
+	Engines     *engine.Registry
+	Tools       *tools.Registry
+	Computers   *computer.Registry
+	Computer    computer.Backend
 	// AgentComputerMCPCommand and AgentComputerMCPAPIURL are host-side launch
 	// overrides for the controller-owned MCP bridge. Empty values use the
 	// bundled/installed command name and botd's loopback API respectively.
@@ -921,12 +934,12 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if len(boundedWorkers) == 0 {
 			capabilityTransferred = true
-			s.launchRun(run.ID, func(runContext context.Context) {
+			s.launchAgentTurn(run.BotID, run.ID, func(runContext context.Context) {
 				s.executeRunWithContext(runContext, run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch, timeoutSeconds, mcpServers)
 			})
 		} else {
 			capabilityTransferred = true
-			s.launchRun(run.ID, func(runContext context.Context) {
+			s.launchAgentTurn(run.BotID, run.ID, func(runContext context.Context) {
 				s.executeLeadWorkerRunWithContext(runContext, run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch, timeoutSeconds, mcpServers, workerTask, boundedWorkers)
 			})
 		}
@@ -1600,16 +1613,108 @@ func safeAttachmentName(value string) string {
 // cancellable immediately, even if the scheduler has not started executing
 // the provider call yet.
 func (s *Server) launchRun(runID string, execute func(context.Context)) {
+	s.launchAgentTurn("", runID, execute)
+}
+
+func (s *Server) launchAgentTurn(agentID, runID string, execute func(context.Context)) {
 	baseContext, cancel := context.WithCancel(context.Background())
 	s.registerRun(runID, cancel)
 	go func() {
 		defer s.unregisterRun(runID)
+		if queue := s.turnQueue(); queue != nil && agentID != "" {
+			_ = queue.Enqueue(baseContext, agentID, runID, func(ctx context.Context) error {
+				execute(ctx)
+				return nil
+			})
+			return
+		}
 		execute(baseContext)
 	}()
 }
 
+func (s *Server) turnQueue() *coordinator.TurnQueue {
+	if s.Turns != nil {
+		return s.Turns
+	}
+	if s.Coordinator != nil {
+		return s.Coordinator.Turns
+	}
+	return nil
+}
+
+func (s *Server) engineAdapter(provider string) engine.Adapter {
+	id := engine.ProviderID(provider)
+	if s.Engines != nil {
+		if adapter, ok := s.Engines.Get(id); ok {
+			return adapter
+		}
+	}
+	if s.Coordinator != nil {
+		if adapter, ok := s.Coordinator.Engine(id); ok {
+			return adapter
+		}
+	}
+	if executor := s.harnessRunExecutor(); executor != nil {
+		return engine.NewHarnessAdapter(id, executor)
+	}
+	return nil
+}
+
+func (s *Server) logicalComputerID() string {
+	if s.Computer != nil {
+		return s.Computer.ID()
+	}
+	return domain.DefaultAgentComputerID
+}
+
+func (s *Server) runEngineTurn(ctx context.Context, run domain.Run, options harness.RunOptions) (string, error) {
+	adapter := s.engineAdapter(run.Provider)
+	if adapter == nil {
+		executor := s.harnessRunExecutor()
+		if executor == nil {
+			return "", errors.New("harness runner unavailable")
+		}
+		return executor.RunWithOptions(ctx, run.Provider, run.Prompt, s.HarnessWorkdir, options)
+	}
+	return adapter.RunTurn(ctx, engine.TurnContext{
+		AgentID:        run.BotID,
+		TurnID:         run.ID,
+		ConversationID: run.ConversationID,
+		RunID:          run.ID,
+		ComputerID:     s.logicalComputerID(),
+		Prompt:         run.Prompt,
+		SystemPrompt:   options.SystemPrompt,
+		Model:          options.Model,
+		Reasoning:      options.ReasoningEffort,
+		ServiceTier:    options.ServiceTier,
+		Permission:     options.PermissionMode,
+		WebSearch:      options.WebSearch,
+		Workdir:        s.HarnessWorkdir,
+		SessionID:      options.SessionID,
+		Role:           options.Role,
+		MCPServers:     options.MCPServers,
+		OnSession:      options.OnSession,
+		OnPermission:   options.OnPermission,
+	}, func(event engine.Event) {
+		switch event.Type {
+		case domain.EventAgentTurnStarted, domain.EventAgentTurnCompleted, domain.EventAgentTurnFailed, domain.EventAgentTurnCancelled, domain.EventAgentMessageCompleted:
+			s.publishRunEvent(run, event.Type, string(event.Data))
+			return
+		}
+		payload := string(event.Data)
+		if event.Type == domain.EventAgentThinking || event.Type == domain.EventAgentMessageDelta {
+			s.publishRunEvent(run, domain.EventProviderOutput, payload)
+		} else {
+			_, _ = s.emitRunEvent(context.Background(), run, domain.EventProviderOutput, payload)
+		}
+		if event.Type != domain.EventProviderOutput {
+			s.publishRunEvent(run, event.Type, payload)
+		}
+	})
+}
+
 func (s *Server) executeRun(run domain.Run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch string, timeoutSeconds uint32, mcpServers []harness.MCPServerSpec) {
-	s.launchRun(run.ID, func(runContext context.Context) {
+	s.launchAgentTurn(run.BotID, run.ID, func(runContext context.Context) {
 		s.executeRunWithContext(runContext, run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch, timeoutSeconds, mcpServers)
 	})
 }
@@ -1674,7 +1779,7 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 		},
 	}
 	applyPiLeadRole(run.Provider, &leadOptions)
-	output, err := s.harnessRunExecutor().RunWithOptions(runContext, run.Provider, run.Prompt, s.HarnessWorkdir, leadOptions)
+	output, err := s.runEngineTurn(runContext, run, leadOptions)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			run.Status = "stopped"
@@ -1720,7 +1825,7 @@ func (s *Server) harnessRunExecutor() harnessRunExecutor {
 }
 
 func (s *Server) executeLeadWorkerRun(run domain.Run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch string, timeoutSeconds uint32, mcpServers []harness.MCPServerSpec, workerTask string, workers []orchestration.BoundedWorker) {
-	s.launchRun(run.ID, func(runContext context.Context) {
+	s.launchAgentTurn(run.BotID, run.ID, func(runContext context.Context) {
 		s.executeLeadWorkerRunWithContext(runContext, run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch, timeoutSeconds, mcpServers, workerTask, workers)
 	})
 }

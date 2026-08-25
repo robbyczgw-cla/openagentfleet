@@ -18,6 +18,10 @@ import (
 	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/compute"
+	"github.com/robbyczgw-cla/openagentfleet/internal/computer"
+	"github.com/robbyczgw-cla/openagentfleet/internal/coordinator"
+	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
+	"github.com/robbyczgw-cla/openagentfleet/internal/engine"
 	"github.com/robbyczgw-cla/openagentfleet/internal/events"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 	"github.com/robbyczgw-cla/openagentfleet/internal/httpapi"
@@ -27,6 +31,7 @@ import (
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
 	"github.com/robbyczgw-cla/openagentfleet/internal/stt"
 	"github.com/robbyczgw-cla/openagentfleet/internal/teach"
+	"github.com/robbyczgw-cla/openagentfleet/internal/tools"
 	"github.com/robbyczgw-cla/openagentfleet/internal/websearchplus"
 )
 
@@ -195,6 +200,15 @@ func main() {
 	defer codexAppServer.Close()
 	runner := harness.NewRunner(allowHarness)
 	runner.CodexAppServer = codexAppServer
+	engines := engine.DefaultRegistry(runner)
+	toolset := tools.NewDefaultRegistry()
+	computers := computer.NewRegistry()
+	dockerBackend := computer.NewDockerBackend(domain.DefaultAgentComputerID, docker)
+	if err := computers.Register(dockerBackend); err != nil {
+		log.Error("register computer backend", "error", err)
+		os.Exit(1)
+	}
+	fleet := coordinator.New(engines, toolset, computers)
 	transcriber := stt.New(stt.Config{Endpoint: os.Getenv("OPENAGENTFLEET_STT_URL"), APIKey: os.Getenv("OPENAGENTFLEET_STT_API_KEY"), Model: os.Getenv("OPENAGENTFLEET_STT_MODEL")})
 	teachRecorder, err := teach.New(teach.Config{Root: teachPath})
 	if err != nil {
@@ -234,6 +248,12 @@ func main() {
 		IntegrationRunner:     integrations.ExecRunner{},
 		SecretHandoffs:        secretHandoffs,
 		SearchConnectors:      searchConnectors,
+		Coordinator:           fleet,
+		Turns:                 fleet.Turns,
+		Engines:               engines,
+		Tools:                 toolset,
+		Computers:             computers,
+		Computer:              dockerBackend,
 	}
 	if cleaned, cleanupErr := api.CleanupStaleAttachments(ctx); cleanupErr != nil {
 		log.Warn("clean up stale attachment drafts", "error", cleanupErr, "database_rows", cleaned)

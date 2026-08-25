@@ -107,6 +107,10 @@ type AgentMetadata struct {
 	NotifyNeedsInput bool                 `json:"notify_needs_input"`
 	Avatar           *AgentAvatarMetadata `json:"avatar,omitempty"`
 	Collaboration    *AgentCollaboration  `json:"collaboration,omitempty"`
+	// Computer is the Agent-owned logical computer binding. It is independent
+	// of Lead/engine choice. A missing value means the shared workspace
+	// computer (DefaultAgentComputer).
+	Computer *AgentComputer `json:"computer,omitempty"`
 }
 
 type AgentCollaboration struct {
@@ -248,6 +252,13 @@ func NormalizeAgentMetadata(value AgentMetadata) (AgentMetadata, error) {
 			return AgentMetadata{}, err
 		}
 		value.Collaboration = &collaboration
+	}
+	if value.Computer != nil {
+		computer, err := NormalizeAgentComputer(*value.Computer)
+		if err != nil {
+			return AgentMetadata{}, err
+		}
+		value.Computer = &computer
 	}
 	return value, nil
 }

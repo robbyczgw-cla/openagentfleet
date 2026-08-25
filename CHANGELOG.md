@@ -6,14 +6,34 @@ ship paragraph dumps.
 
 ## Unreleased
 
+Not a user-facing product bump until this is merged, packaged, and tagged.
+Internals below are what `feat/agent-runtime-foundation` actually changed.
+
+### Added
+
+- Engine adapter contract: capabilities, auth metadata (no tokens), normalized `agent.*` turn events. Existing CLIs are wrapped, not replaced.
+- Canonical tool registry. Browser / computer / collaboration MCP tools keep their old names as aliases; MCP is a transport.
+- Computer backend interface. Production path still wraps the existing Docker Agent Computer. Native host exec exists for tests. Remote is a reserved kind, not a new stack.
+- Per-Agent turn queue: same Agent FIFO, different Agents concurrent. A failed turn does not poison later ones.
+- Coordinator-planned Agent-to-Agent delegate hops on the existing handoff row, with `agent.delegation.created|started|completed|failed` (no task text in those events).
+
 ### Changed
 
+- Agent identity is independent of engine and of computer backend. Switching Codex → Grok does not create a new Agent or rewrite the computer binding (default `workspace` / `docker`).
+- Agent Builder engine-override copy no longer uses person names.
 - README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac still `0.2.0`, one Agent Computer per workspace.
 - Android companion: scan the pairing QR, keep the composer above the keyboard, hide the tab bar while typing.
 
 ### Fixed
 
 - Claude Code `--print --output-format stream-json` now passes `--verbose`, which the CLI requires. Headless Claude runs no longer exit 1 on that flag pair.
+
+### Not in this tag
+
+- Per-Agent VM or a second live desktop
+- Remote Computer backend beyond the existing worker URL
+- A second orchestration system
+- Signed Mac `0.3.0` DMG, Authenticode, Play Store
 
 ## 0.3.0-alpha - 2026-08-21
 

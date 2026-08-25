@@ -7769,7 +7769,7 @@ function App() {
               <span>
                 <strong>This Agent uses a different engine</strong>
                 <small>
-                  Optional. Andy can stay on Grok while Cami uses Codex. Missing
+                  Optional. One Agent can stay on Grok while another uses Codex. Missing
                   engines fail closed — they are never silently substituted.
                 </small>
               </span>

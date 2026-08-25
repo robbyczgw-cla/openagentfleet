@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/collaborationmcp"
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
@@ -49,6 +50,8 @@ func TestCollaborationToolsRequireRunCapabilityAndStayOnTargetAgent(t *testing.T
 	}
 	server := &Server{Store: instance, Broker: events.New(), HarnessWorkdir: t.TempDir(), RemoteToken: "controller"}
 	handler := server.Handler()
+	eventCh, unsubscribe := server.Broker.Subscribe(t.Context())
+	t.Cleanup(unsubscribe)
 
 	unauth := performRequest(handler, http.MethodGet, "/api/collaboration/agents", "", "controller")
 	if unauth.Code != http.StatusUnauthorized {
@@ -82,6 +85,7 @@ func TestCollaborationToolsRequireRunCapabilityAndStayOnTargetAgent(t *testing.T
 	if payload.Handoff.Mode != domain.HandoffModeDelegate || payload.Handoff.Depth != 1 {
 		t.Fatalf("handoff bounds = %#v", payload.Handoff)
 	}
+	waitForBrokerType(t, eventCh, domain.EventAgentDelegationCreated)
 
 	ping := performCollabRequest(handler, http.MethodPost, "/api/collaboration/delegate", `{"agent_id":"`+sourceConv.BotID+`","task":"bounce back"}`, "controller", payload.Run.ID, "collab-token")
 	if ping.Code != http.StatusUnauthorized {
@@ -113,6 +117,7 @@ func TestCollaborationToolsRequireRunCapabilityAndStayOnTargetAgent(t *testing.T
 		t.Fatal(err)
 	}
 	server.finishCollaborationHandoff(reviewerRun, "completed", "")
+	waitForBrokerType(t, eventCh, domain.EventAgentDelegationCompleted)
 	sourceMessages, err := instance.ListMessages(t.Context(), sourceConv.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -199,4 +204,22 @@ func performCollabRequest(handler http.Handler, method, path, body, token, runID
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func waitForBrokerType(t *testing.T, events <-chan domain.StreamEvent, want string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if event.Type == want {
+				if strings.Contains(event.Data, `"task"`) || strings.Contains(event.Data, "inspect the API") {
+					t.Fatalf("delegation event leaked task text: %s", event.Data)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s", want)
+		}
+	}
 }
