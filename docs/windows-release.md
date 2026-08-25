@@ -45,4 +45,6 @@ first pass.
 - The window starts bundled `botd`.
 - Default Computer runtime is Docker Desktop, Linux engine.
 - Native dictation and the secure password prompt stay macOS-only.
-- Computer View against Docker Desktop WSL2 is not proven by this script.
+- Computer View on Docker Desktop WSL2 failed live QA 2026-08-25 (daemon not up, then image build). That was a live fail, not a README gap.
+- Starting the Docker Desktop *service* (Running) is not enough. `Docker Desktop.exe` must be open as the signed-in user; wait until the Linux engine is ready.
+- `ubuntu:24.04` Hub pull without login is unproven on this box. `wincred` / `Anmeldesitzung` session errors are a real live fail. Public images do not need a Docker Hub login, but that pull was not completed.

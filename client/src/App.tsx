@@ -32,6 +32,7 @@ import {
   reviewApprovalStub,
   type ReviewItem,
 } from "./reviewQueue";
+import { readSafeAreaBottomPx, workAreaBottomInsetPx } from "./workArea";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -2394,6 +2395,31 @@ function App() {
       String(preferences.appearance?.font_scale ?? 1),
     );
   }, [preferences]);
+
+  useEffect(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:absolute;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px)";
+    document.documentElement.appendChild(probe);
+    const apply = () => {
+      const inset = workAreaBottomInsetPx({
+        innerHeight: window.innerHeight,
+        screenHeight: window.screen.height,
+        availHeight: window.screen.availHeight,
+        safeAreaBottom: readSafeAreaBottomPx(getComputedStyle(probe)),
+      });
+      document.documentElement.style.setProperty(
+        "--app-work-area-bottom",
+        `${inset}px`,
+      );
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => {
+      window.removeEventListener("resize", apply);
+      probe.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -5932,11 +5958,11 @@ function App() {
       <button
         className="computer-preview"
         type="button"
-        onClick={() => void openComputerView()}
+        onClick={() => openComputerView(false)}
         aria-label={
           computerReady
             ? "Open live Agent Computer"
-            : "Start Agent Computer"
+            : "Open Agent Computer"
         }
       >
         <div className="preview-topbar">
@@ -7146,7 +7172,7 @@ function App() {
                             "Voice uses the configured remote STT fallback"
                           : browserSpeechAvailable
                             ? "Browser speech recognition; audio is handled by the browser provider"
-                          : "Voice input is unavailable here. Configure speech-to-text in Settings or use the Mac app."
+                          : "Voice input is unavailable here. Configure speech-to-text in Settings."
                     }
                   aria-label={
                     recording
@@ -7254,11 +7280,11 @@ function App() {
           </form>
           <p className="composer-note">
             Review external actions before they happen.{" "}
-            {NATIVE_RUNTIME_AVAILABLE
+            {nativeDictationAvailable
               ? "Voice uses on-device Mac dictation when available; remote transcription is only the fallback."
-              : browserSpeechAvailable
-                ? "Voice uses browser speech recognition when available; otherwise audio goes only to the configured transcription service and is not stored here."
-                : "Voice audio is sent to the configured transcription service only and is not stored here."}
+              : NATIVE_RUNTIME_AVAILABLE
+                ? "Voice uses the configured transcription fallback. Audio is not stored here."
+                : "Voice uses browser speech recognition when available, or the configured transcription fallback. Audio is not stored here."}
           </p>
         </div>
       </section>
@@ -7288,6 +7314,7 @@ function App() {
                 {onboardingCopy.skipSetup}
               </button>
             </header>
+            <div className="onboarding-body">
 
             {onboardingStep === 0 && (
               <div className="onboarding-page">
@@ -7467,7 +7494,9 @@ function App() {
                     <div>
                       <strong>{onboardingCopy.micCardTitle}</strong>
                       <small>
-                        {onboardingCopy.micCardDetailMac}
+                        {nativeDictationAvailable
+                          ? onboardingCopy.micCardDetailMac
+                          : onboardingCopy.micCardDetailDesktop}
                       </small>
                     </div>
                     <em>
@@ -7582,6 +7611,7 @@ function App() {
                 </span>
               </div>
             )}
+            </div>
 
             <footer className="onboarding-actions">
               <button
@@ -8193,6 +8223,9 @@ function App() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="computer-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeComputerView();
+          }}
         >
           <div className="computer-modal-card">
             <header className="computer-modal-header">
@@ -8241,8 +8274,9 @@ function App() {
                   </button>
                 )}
                 <button
+                  type="button"
                   ref={computerCloseRef}
-                  className="icon-button"
+                  className="icon-button computer-close"
                   onClick={() => closeComputerView()}
                   aria-label="Close computer view"
                 >
@@ -8282,6 +8316,25 @@ function App() {
                             "The local computer is running, but its live frame did not respond."
                           : "The local computer is running. The first frame can take a moment to arrive."}
                     </span>
+                    {data.computer.detail && (
+                      <pre className="computer-error-detail">{data.computer.detail}</pre>
+                    )}
+                    {(!data.computer.running ||
+                      ((computerState === "error" ||
+                        computerState === "unavailable") &&
+                        Boolean(data.computer.can_retry))) && (
+                      <button
+                        type="button"
+                        className="computer-start-button"
+                        onClick={() => void ensureComputer(false)}
+                        disabled={
+                          computerBusy ||
+                          (!data.computer.available && !data.computer.can_retry)
+                        }
+                      >
+                        {computerBusy ? "Starting…" : "Start Agent Computer"}
+                      </button>
+                    )}
                     {activeFrameError && (
                       <button
                         type="button"
@@ -8320,6 +8373,25 @@ function App() {
                           "The local computer is running, but its live frame did not respond."
                         : "Chromium is starting. The first frame can take a moment to arrive."}
                   </span>
+                  {data.computer.detail && (
+                    <pre className="computer-error-detail">{data.computer.detail}</pre>
+                  )}
+                  {(!data.computer.running ||
+                    ((computerState === "error" ||
+                      computerState === "unavailable") &&
+                      Boolean(data.computer.can_retry))) && (
+                    <button
+                      type="button"
+                      className="computer-start-button"
+                      onClick={() => void ensureComputer(false)}
+                      disabled={
+                        computerBusy ||
+                        (!data.computer.available && !data.computer.can_retry)
+                      }
+                    >
+                      {computerBusy ? "Starting…" : "Start Agent Computer"}
+                    </button>
+                  )}
                   {activeFrameError && (
                     <button
                       type="button"

@@ -56,6 +56,8 @@ export const controlCardDetail =
 export const micCardTitle = "Microphone & speech";
 export const micCardDetailMac =
   "On Mac, dictation stays on-device when Apple supports the current locale. Browser clients use browser speech recognition when available, or the configured fallback.";
+export const micCardDetailDesktop =
+  "On this desktop app, voice uses the configured transcription fallback. Browser speech recognition is used in the web client when available.";
 
 export const searchEyebrow = "Optional search";
 export const searchTitle = "Add search later if it helps.";
