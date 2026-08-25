@@ -6,14 +6,27 @@ ship paragraph dumps.
 
 ## Unreleased
 
+### Added
+
+- Computer View Start when the isolated computer is stopped.
+
 ### Changed
 
-- README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac still `0.2.0`, one Agent Computer per workspace.
+- README and GitHub description match the current product: Linux and Windows `0.3.0`, signed Mac `0.3.0`, one Agent Computer per workspace.
 - Android companion: scan the pairing QR, keep the composer above the keyboard, hide the tab bar while typing.
 
 ### Fixed
 
 - Claude Code `--print --output-format stream-json` now passes `--verbose`, which the CLI requires. Headless Claude runs no longer exit 1 on that flag pair.
+- Onboarding footer stays above the Windows taskbar on 1280x800 with a ~48px taskbar.
+- Windows and Linux voice copy no longer claims on-device Mac dictation.
+- Docker daemon and image-build errors keep the full output, including German wincred `Anmeldesitzung` failures. Windows public pulls skip wincred via an empty `DOCKER_CONFIG`.
+
+### Not in this tag
+
+- Proven Agent Computer session on Windows Docker Desktop WSL2
+- `ubuntu:24.04` Hub pull without login on the live Windows box
+- Authenticode / Microsoft Store
 
 ## 0.3.0-alpha - 2026-08-21
 

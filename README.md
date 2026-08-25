@@ -59,7 +59,7 @@ stand-ins for the workspace engine.
 | Host | What to install |
 | --- | --- |
 | Linux | Unsigned `.deb` / `.rpm` / `.AppImage` from [`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha). Docker Engine recommended for the Agent Computer; the installer does not start it. |
-| Windows | Unsigned NSIS installer on the same tag. Docker Desktop recommended; Computer View on WSL2 is not proven by that installer. |
+| Windows | Unsigned NSIS installer on the same tag. Docker Desktop recommended. Computer View on Docker Desktop WSL2 failed live QA 2026-08-25 (daemon/build). `Docker Desktop.exe` must be open as the signed-in user; a service in Running is not enough. |
 | macOS (Apple Silicon) | Signed [`v0.3.0-alpha` DMG](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.0-alpha/OpenAgentFleet_0.3.0_aarch64.dmg), SHA-256 `daeb286515efeff8d8f1f730c6cef50d121625971f0dd69d6041cdc81f8e19f7`. Intel Macs are not supported. |
 
 Checksums live on the [release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha).
@@ -100,8 +100,9 @@ optional — with Chromium, Xfce, Terminal and Files. Default budget: 4 CPU,
 4 GiB RAM, 25 GiB disk. It starts only when you open Computer View or an
 approved task needs it.
 
-Backends: Docker Engine (Linux), Docker Desktop (Windows), Colima
-recommended on macOS (Docker Desktop / OrbStack also work).
+Backends: Docker Engine (Linux), Docker Desktop (Windows; Computer View on
+WSL2 failed live QA 2026-08-25, not a working session), Colima recommended
+on macOS (Docker Desktop / OrbStack also work).
 
 No host root mount. No Docker socket in the guest. Details:
 [Agent Computer backends](docs/macos-agent-computer-backends.md) ·

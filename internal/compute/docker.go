@@ -366,7 +366,7 @@ func (d *Docker) probeStatus(ctx context.Context) Status {
 		result.Detail = "docker not found in PATH"
 		return result
 	}
-	if err := d.run(statusContext, "info", "--format", "{{.ServerVersion}}"); err != nil {
+	if _, err := d.runOutput(statusContext, "info", "--format", "{{.ServerVersion}}"); err != nil {
 		if result.RuntimeID == RuntimeColima {
 			result.State = ComputerStateStopped
 			result.CanRetry = true
@@ -399,7 +399,7 @@ func (d *Docker) probeStatus(ctx context.Context) Status {
 			result.ViewportWidth = view.ViewportWidth
 			result.ViewportHeight = view.ViewportHeight
 		} else {
-			result.Detail = "browser view unavailable: " + compact(err.Error())
+			result.Detail = "browser view unavailable: " + readableDockerOutput(err.Error())
 		}
 		result.DesktopReady = d.DesktopReady(statusContext)
 		if result.BrowserReady && result.DesktopReady {
@@ -536,7 +536,11 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 		if d.BuildContext == "" {
 			return status, fmt.Errorf("agent image %s is missing and no build context is configured", d.Image)
 		}
-		buildEnv := []string(nil)
+		// Windows Docker Desktop sets credsStore=wincred. A non-interactive
+		// session cannot open that vault, so public pulls fail. Merge an empty
+		// controller-owned DOCKER_CONFIG with the Linux DOCKER_BUILDKIT=0
+		// fallback when buildx is missing.
+		buildEnv := publicRegistryEnv()
 		buildxContext, buildxCancel := context.WithTimeout(ctx, 15*time.Second)
 		_, buildxErr := d.runOutputWithTimeout(buildxContext, 15*time.Second, "buildx", "version")
 		buildxCancel()
@@ -544,9 +548,12 @@ func (d *Docker) ensure(ctx context.Context) (Status, error) {
 			// Some Linux Docker packages ship without the buildx CLI plugin. Keep
 			// the local fallback usable there; Docker Desktop and Colima continue
 			// to use BuildKit when buildx is available.
-			buildEnv = []string{"DOCKER_BUILDKIT=0"}
+			buildEnv = append(buildEnv, "DOCKER_BUILDKIT=0")
 		}
 		if _, err := d.runOutputWithTimeoutEnv(ctx, 15*time.Minute, buildEnv, "build", "--build-arg", "COMPUTER_BASE_IMAGE="+resources.BaseImage(), "--tag", d.Image, d.BuildContext); err != nil {
+			if classifyDockerDaemonError(err) == dockerDaemonErrorWincredSession {
+				return status, errors.New(dockerDaemonUnavailableDetail(err))
+			}
 			return status, fmt.Errorf("build agent image: %w", err)
 		}
 	}
@@ -1568,7 +1575,7 @@ func runOutputWithTimeoutEnv(parent context.Context, timeout time.Duration, env 
 	output, err := command.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 	if err != nil && text != "" {
-		return "", fmt.Errorf("%w: %s", err, compact(text))
+		return "", fmt.Errorf("%w: %s", err, readableDockerOutput(text))
 	}
 	return text, err
 }
@@ -1581,22 +1588,107 @@ func compact(value string) string {
 	return value
 }
 
+const maxReadableDockerOutput = 8 << 10
+
+func readableDockerOutput(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if len(value) > maxReadableDockerOutput {
+		return value[:maxReadableDockerOutput] + "…"
+	}
+	return value
+}
+
+func publicRegistryEnv() []string {
+	return dockerPublicRegistryEnv(runtime.GOOS, os.TempDir())
+}
+
+// dockerPublicRegistryEnv writes config.json `{}` with no credsStore so public
+// image pulls do not invoke Docker Desktop's wincred helper.
+func dockerPublicRegistryEnv(goos, tempDir string) []string {
+	if goos != "windows" {
+		return nil
+	}
+	dir := filepath.Join(tempDir, "openagentfleet-docker-config")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil
+	}
+	_ = os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o600)
+	return []string{"DOCKER_CONFIG=" + dir}
+}
+
+type dockerDaemonErrorKind string
+
+const (
+	dockerDaemonErrorUnknown        dockerDaemonErrorKind = ""
+	dockerDaemonErrorWincredSession dockerDaemonErrorKind = "wincred_session"
+	dockerDaemonErrorPermission     dockerDaemonErrorKind = "permission"
+	dockerDaemonErrorEngineDown     dockerDaemonErrorKind = "engine_down"
+)
+
+func classifyDockerDaemonError(err error) dockerDaemonErrorKind {
+	if err == nil {
+		return dockerDaemonErrorUnknown
+	}
+	lower := strings.ToLower(err.Error())
+	switch {
+	case dockerWincredSessionError(lower):
+		return dockerDaemonErrorWincredSession
+	case strings.Contains(lower, "permission denied"):
+		return dockerDaemonErrorPermission
+	case dockerEngineDown(lower):
+		return dockerDaemonErrorEngineDown
+	default:
+		return dockerDaemonErrorUnknown
+	}
+}
+
 func dockerDaemonUnavailableDetail(err error) string {
+	return formatDockerDaemonUnavailable(runtime.GOOS, err)
+}
+
+func formatDockerDaemonUnavailable(goos string, err error) string {
 	if err == nil {
 		return "Docker daemon unavailable"
 	}
-	detail := compact(err.Error())
-	lower := strings.ToLower(detail)
-	if strings.Contains(lower, "permission denied") {
-		if runtime.GOOS == "linux" {
+	full := readableDockerOutput(err.Error())
+	switch classifyDockerDaemonError(err) {
+	case dockerDaemonErrorWincredSession:
+		return "Docker asked Windows Credential Manager (wincred) from a session that cannot log in. Open Docker Desktop as your signed-in user. Public images such as ubuntu:24.04 do not need a Docker Hub login. Full error: " + full
+	case dockerDaemonErrorPermission:
+		if goos == "linux" {
 			return "Docker is installed but this user cannot talk to the daemon. Add your user to the docker group (`sudo usermod -aG docker $USER`) and start a new login session."
 		}
-		return "Docker daemon permission denied: " + detail
+		return "Docker daemon permission denied: " + full
+	case dockerDaemonErrorEngineDown:
+		if goos == "windows" {
+			return "Docker Desktop is not running. Open Docker Desktop and wait until the engine is ready, then Retry. A Windows service in Running is not enough. Full error: " + full
+		}
+		if goos == "linux" {
+			return "Docker daemon is not running. Start it with `sudo systemctl start docker`, or install it with: " + LinuxDockerInstallCommand()
+		}
 	}
-	if runtime.GOOS == "linux" && (strings.Contains(lower, "cannot connect") || strings.Contains(lower, "is the docker daemon running") || strings.Contains(lower, "no such file or directory")) {
+	if goos == "linux" && strings.Contains(strings.ToLower(full), "no such file or directory") {
 		return "Docker daemon is not running. Start it with `sudo systemctl start docker`, or install it with: " + LinuxDockerInstallCommand()
 	}
-	return "Docker daemon unavailable: " + detail
+	return "Docker daemon unavailable: " + full
+}
+
+func dockerWincredSessionError(lower string) bool {
+	return strings.Contains(lower, "wincred") ||
+		strings.Contains(lower, "anmeldesitzung") ||
+		strings.Contains(lower, "specified logon session") ||
+		strings.Contains(lower, "logon session does not exist")
+}
+
+func dockerEngineDown(lower string) bool {
+	return strings.Contains(lower, "cannot connect") ||
+		strings.Contains(lower, "is the docker daemon running") ||
+		strings.Contains(lower, "daemon not running") ||
+		strings.Contains(lower, "named pipe") ||
+		strings.Contains(lower, "npipe:") ||
+		strings.Contains(lower, "pipe/docker_engine") ||
+		strings.Contains(lower, `pipe\docker_engine`) ||
+		strings.Contains(lower, "error during connect")
 }
 
 func (s Status) MarshalJSON() ([]byte, error) {

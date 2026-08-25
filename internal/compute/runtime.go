@@ -280,7 +280,7 @@ func discoverDockerRuntime(ctx context.Context, dockerAvailable bool, contexts [
 		version, detail, err := dockerContextHealth(ctx, selected.Name)
 		if err != nil {
 			info.Healthy = false
-			info.Detail = "Docker context unavailable: " + compact(err.Error())
+			info.Detail = "Docker context unavailable: " + readableDockerOutput(err.Error())
 		} else if dockerInfoLooksLikeWindowsContainers(detail) {
 			info.Healthy = false
 			info.Version = version
