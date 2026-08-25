@@ -12,9 +12,7 @@ Developer ID, notarization, stapling, Gatekeeper, and checksum checks below.
 - The normal Tauri configuration uses `signingIdentity: "-"` for local
   development, which produces an ad-hoc signature.
 - GitHub prerelease `v0.3.1-alpha` has a Developer ID, notarized, stapled
-  Apple Silicon DMG (`OpenAgentFleet_0.3.1_aarch64.dmg`). Gatekeeper on a
-  second Mac was not checked; the README Mac download still points at
-  `v0.3.0-alpha`.
+  Apple Silicon DMG (`OpenAgentFleet_0.3.1_aarch64.dmg`).
 - The public GitHub prerelease `v0.3.0-alpha` still contains its notarized
   Apple Silicon DMG. Do not delete it.
 

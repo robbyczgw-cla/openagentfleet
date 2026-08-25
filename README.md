@@ -6,13 +6,12 @@ Create named Agents, chat with them one-on-one or in a group, and give them a
 Linux desktop you can watch. They use the AI subscriptions you already have.
 Sensitive steps wait for your approval.
 
-**Public alpha `v0.3.1`** — not production-ready. Mac installers stay the
-notarized `v0.3.0-alpha` DMG until `0.3.1` is notarized.
+**Public alpha `v0.3.1`** — not production-ready.
 [Apache-2.0](LICENSE).
 
-[Linux](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
+[Linux](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.1-alpha)
 · [Windows](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
-· [macOS 0.3.0 (signed)](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.0-alpha/OpenAgentFleet_0.3.0_aarch64.dmg)
+· [macOS 0.3.1 (signed)](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.1-alpha/OpenAgentFleet_0.3.1_aarch64.dmg)
 · [Product site](https://openagentfleet.xyz)
 · [Security model](docs/architecture.md)
 
@@ -59,11 +58,11 @@ stand-ins for the workspace engine.
 
 | Host | What to install |
 | --- | --- |
-| Linux | Unsigned `.deb` / `.rpm` / `.AppImage` from [`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha). Docker Engine recommended for the Agent Computer; the installer does not start it. |
-| Windows | Unsigned NSIS installer on the same tag. Docker Desktop recommended. Computer View on Docker Desktop WSL2 failed live QA 2026-08-25 (daemon/build). `Docker Desktop.exe` must be open as the signed-in user; a service in Running is not enough. |
-| macOS (Apple Silicon) | Signed [`v0.3.0-alpha` DMG](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.0-alpha/OpenAgentFleet_0.3.0_aarch64.dmg), SHA-256 `daeb286515efeff8d8f1f730c6cef50d121625971f0dd69d6041cdc81f8e19f7`. Intel Macs are not supported. |
+| Linux | Unsigned `.deb` / `.rpm` / `.AppImage` from [`v0.3.1-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.1-alpha). Docker Engine recommended for the Agent Computer; the installer does not start it. |
+| Windows | Unsigned NSIS is still [`v0.3.0-alpha`](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha). `0.3.1` Windows is not on the tag yet. Docker Desktop recommended. Computer View on Docker Desktop WSL2 failed live QA 2026-08-25 (daemon/build). `Docker Desktop.exe` must be open as the signed-in user; a service in Running is not enough. |
+| macOS (Apple Silicon) | Signed [`v0.3.1-alpha` DMG](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.1-alpha/OpenAgentFleet_0.3.1_aarch64.dmg), SHA-256 `570731b921b64da9ee2d94d35467b6388372b48146e8270eb1642c9309209f02`. Intel Macs are not supported. |
 
-Checksums live on the [release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha).
+Checksums live on the [release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.1-alpha).
 Release runbooks: [Linux](docs/linux-release.md) ·
 [Windows](docs/windows-release.md) ·
 [macOS](docs/macos-release.md).
