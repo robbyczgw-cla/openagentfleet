@@ -66,7 +66,7 @@ stand-ins for the workspace engine.
 Checksums live on the [release page](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha).
 Release runbooks: [Linux](docs/linux-release.md) ·
 [Windows](docs/windows-release.md) ·
-[macOS notarization](docs/macos-release-handoff.md).
+[macOS](docs/macos-release.md).
 
 ## First five minutes
 
