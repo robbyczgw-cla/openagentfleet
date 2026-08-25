@@ -6,7 +6,8 @@ Create named Agents, chat with them one-on-one or in a group, and give them a
 Linux desktop you can watch. They use the AI subscriptions you already have.
 Sensitive steps wait for your approval.
 
-**Public alpha `v0.3.0`** — not production-ready.
+**Public alpha `v0.3.1`** — not production-ready. Mac installers stay the
+notarized `v0.3.0-alpha` DMG until `0.3.1` is notarized.
 [Apache-2.0](LICENSE).
 
 [Linux](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
