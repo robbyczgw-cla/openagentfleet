@@ -6,6 +6,10 @@ ship paragraph dumps.
 
 ## Unreleased
 
+### Added
+
+- README 19-second first-run storyboard with voiceover, plus roster / gated-routine / Routines screenshots.
+
 ## 0.3.1-alpha - 2026-08-25
 
 Mini alpha. Notarized Apple Silicon DMG and unsigned Linux packages are on

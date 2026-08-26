@@ -6,21 +6,47 @@ Create named Agents, chat with them one-on-one or in a group, and give them a
 Linux desktop you can watch. They use the AI subscriptions you already have.
 Sensitive steps wait for your approval.
 
-**Public alpha `v0.3.1`** — not production-ready.
+**Public alpha `v0.3.1`.** Not production-ready.
 [Apache-2.0](LICENSE).
 
-[Linux](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.1-alpha)
-· [Windows](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
+[Linux 0.3.1](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.1-alpha)
+· [Windows 0.3.0](https://github.com/robbyczgw-cla/openagentfleet/releases/tag/v0.3.0-alpha)
 · [macOS 0.3.1 (signed)](https://github.com/robbyczgw-cla/openagentfleet/releases/download/v0.3.1-alpha/OpenAgentFleet_0.3.1_aarch64.dmg)
 · [Product site](https://openagentfleet.xyz)
 · [Security model](docs/architecture.md)
 
-![OpenAgentFleet Computer View: live Linux desktop with Chromium, Terminal and Files](presentation/assets/openagentfleet-computer-view.png)
+![OpenAgentFleet Computer View: Linux desktop with Chromium, Terminal and Files, with Take control and Stop computer buttons](presentation/assets/openagentfleet-computer-view.png)
 
 That screenshot is the Agent Computer: a separate Linux guest with Chromium,
-Terminal and Files — never your host desktop. The app (Tauri) starts a local
-Go controller (`botd`) that owns every conversation, memory and run record.
-Nothing leaves your machine unless you wire it up to.
+Terminal and Files. It is never your host desktop. The app (Tauri) starts a
+local Go controller (`botd`) that owns every conversation, memory and run
+record. Nothing leaves your machine unless you wire it up to.
+
+<video controls width="100%" src="presentation/assets/openagentfleet-storyboard.mp4">
+<a href="presentation/assets/openagentfleet-storyboard.mp4">Storyboard, 19 seconds, MP4 with voiceover</a>
+</video>
+
+Nineteen seconds: the setup wizard where you pick a lead engine, a workspace
+chat, then a phone pairing with the desktop host. This is a storyboard with a
+voiceover, not a recording of a live session. It was cut before the rename,
+so the UI in it still reads OpenFleetBots.
+
+## Screenshots
+
+![Sidebar listing three Agents, each with an engine badge and a live state](presentation/assets/p0-living-teammates-roster.png)
+
+Every Agent in the sidebar carries its engine badge and its current state.
+Andy is working. Cami needs approval.
+
+![Chat showing a scheduled routine that waits on Allow this run or Deny this run](presentation/assets/p1-live-linux.png)
+
+A gated routine stops in the chat and waits for you. Allow or deny the run,
+or save an always-rule so the app stops asking. Denied runs stay in the
+thread with the decision recorded.
+
+![Routines panel listing a scheduled routine and the time of its next run](presentation/assets/p1-routines-workspace.png)
+
+The Routines panel lists each schedule and when it next fires.
 
 ## Why this exists
 
@@ -28,19 +54,19 @@ The commercial "AI teammate" products are cloud-hosted, bundle-priced, and
 opaque about what their bots do between your messages. OpenAgentFleet takes
 the opposite bet:
 
-- **Your machine.** The controller, the chats, the memory — all local.
+- **Your machine.** The controller, the chats and the memory all stay local.
 - **Your subscriptions.** It drives Grok Build (default), Codex App Server,
   bundled OpenCode, or optional Pi. It never silently swaps providers.
 - **Your eyes on everything.** Watch runs live, stop them, take over the
-  desktop, approve sensitive actions. Agent-to-agent collaboration is off
-  until you switch it on per Agent — and when it's on, handoffs happen in
-  the chat where you can see them.
+  desktop, approve sensitive actions. Agent-to-agent collaboration stays off
+  until you switch it on per Agent. When it is on, handoffs happen in the
+  chat where you can see them.
 
 ## What you get
 
 - **Named Agents** with their own chat and memory. Create as many as you
   want. Mention a teammate, or open a group chat.
-- **One Agent Computer per workspace** — a Linux desktop (Ubuntu 24.04 by
+- **One Agent Computer per workspace.** A Linux desktop (Ubuntu 24.04 by
   default) that starts only when browser or desktop work needs it. Agents
   take turns on that same PC; creating an Agent does not spawn a VM. Pi has
   no Agent Computer.
@@ -50,9 +76,9 @@ the opposite bet:
 - **Teach → Skill → Routine.** Show an Agent a task once and keep it.
 
 Extra search connectors (Web Search Plus, Hound, Donsetch), Workers, Fleet
-Host, and remote Computer workers live under **Advanced**. Claude Code, Codex
-CLI and Cursor are detected as future or bounded adapters — not silent
-stand-ins for the workspace engine.
+Host, and remote Computer workers live under **Advanced**. The app detects
+Claude Code, Codex CLI and Cursor as future or bounded adapters. None of
+them stands in for the workspace engine.
 
 ## Install
 
@@ -69,7 +95,7 @@ Release runbooks: [Linux](docs/linux-release.md) ·
 
 ## First five minutes
 
-1. Pick an engine — Grok Build is the default.
+1. Pick an engine. Grok Build is the default.
 2. Create an Agent and chat.
 3. When a task needs a browser or desktop, start the Agent Computer.
    Opening the app never starts Docker or a VM on its own.
@@ -77,10 +103,10 @@ Release runbooks: [Linux](docs/linux-release.md) ·
 
 ## Phone
 
-iOS and Android pair with the **desktop host** over private Tailscale — a
-remote control, not a second runtime. From the phone you can chat, approve,
-stop a run, and watch the computer. Typing passwords and driving the full
-desktop stay on the host. No store builds yet; see [`mobile/`](mobile/).
+iOS and Android pair with the **desktop host** over private Tailscale. The
+phone is a remote control, not a second runtime. From the phone you can chat,
+approve, stop a run, and watch the computer. Typing passwords and driving the
+full desktop stay on the host. No store builds yet; see [`mobile/`](mobile/).
 
 ## Engines
 
@@ -95,8 +121,8 @@ desktop work, not those processes.
 
 ## Agent Computer
 
-One Linux desktop — Ubuntu 24.04 default, Ubuntu 26.04 and Debian 13
-optional — with Chromium, Xfce, Terminal and Files. Default budget: 4 CPU,
+One Linux desktop with Chromium, Xfce, Terminal and Files. Ubuntu 24.04 is
+the default; Ubuntu 26.04 and Debian 13 are optional. Default budget: 4 CPU,
 4 GiB RAM, 25 GiB disk. It starts only when you open Computer View or an
 approved task needs it.
 
