@@ -38,6 +38,7 @@ type agentMetadataRequest struct {
 	NotifyNeedsInput *bool                          `json:"notify_needs_input"`
 	Avatar           *domain.AgentAvatarMetadata    `json:"avatar"`
 	Collaboration    *domain.AgentCollaboration     `json:"collaboration"`
+	Computer         *domain.AgentComputer          `json:"computer"`
 }
 
 type agentMetadataPatchRequest struct {
@@ -53,6 +54,7 @@ type agentMetadataPatchRequest struct {
 	NotifyNeedsInput *bool                           `json:"notify_needs_input"`
 	Avatar           *domain.AgentAvatarMetadata     `json:"avatar"`
 	Collaboration    *domain.AgentCollaboration      `json:"collaboration"`
+	Computer         *domain.AgentComputer           `json:"computer"`
 	ClearLead        *bool                           `json:"clear_lead"`
 }
 
@@ -290,6 +292,10 @@ func normalizeAgentMetadataPatch(existing *domain.AgentMetadata, patch *agentMet
 		metadata.Collaboration = patch.Collaboration
 		changed = true
 	}
+	if patch.Computer != nil {
+		metadata.Computer = patch.Computer
+		changed = true
+	}
 	if !changed {
 		return domain.AgentMetadata{}, errors.New("at least one agent metadata field is required")
 	}
@@ -327,6 +333,7 @@ func normalizeAgentMetadataRequest(request *agentMetadataRequest) (domain.AgentM
 	metadata.MCPIDs = request.MCPIDs
 	metadata.Avatar = request.Avatar
 	metadata.Collaboration = request.Collaboration
+	metadata.Computer = request.Computer
 	if request.NotifyFinished != nil {
 		metadata.NotifyFinished = *request.NotifyFinished
 	}

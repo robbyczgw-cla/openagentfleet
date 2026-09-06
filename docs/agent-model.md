@@ -25,7 +25,10 @@ One local Agent Computer, only when an Agent needs it
   The default remains Grok Build (`grok-4.6`); Pi is opt-in.
 - The **Agent Computer** is the visible Chromium/Linux desktop with Files and
   Terminal. It is started only when it is needed, and only for engines that
-  actually receive Computer MCP. A Pi engine does not.
+  actually receive Computer MCP. A Pi engine does not. Agents *reference* that
+  computer as a logical binding (default ID `workspace`, backend `docker`) so
+  a later per-agent computer would not require a new Agent identity. The
+  product is still one workspace computer.
 - A **worker** is an optional, hidden advanced helper. It is not another Bot,
   another chat, or another computer the user must configure.
 
@@ -132,7 +135,9 @@ On first use, the app:
 
 The visible Agent owns that computer during a run. The user can take control
 for passwords, OTPs, CAPTCHA, payment, or any other sensitive step. A worker
-never shares that live desktop by default.
+never shares that live desktop by default. The Agent binds to the logical
+computer ID `workspace` (backend `docker`); see
+[Agent runtime](architecture/agent-runtime.md).
 
 ## Optional advanced worker pool
 

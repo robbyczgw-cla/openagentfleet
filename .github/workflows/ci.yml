@@ -32,8 +32,8 @@ jobs:
 
       # These packages own the Agent Computer boundary and contain no tests
       # that require Docker, Colima, a provider login, or network credentials.
-      - name: Race test Agent Computer and API boundary
-        run: go test -race ./internal/compute ./internal/httpapi ./internal/browsermcp
+      - name: Race test runtime queues, Agent Computer, and API boundary
+        run: go test -race ./internal/coordinator ./internal/engine ./internal/tools ./internal/computer ./internal/compute ./internal/httpapi ./internal/browsermcp
 
       # Keep the small, no-runtime Computer contract visible in CI. The tests
       # use in-process HTTP servers and validate disabled-mode, port, action,

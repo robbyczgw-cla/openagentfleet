@@ -183,3 +183,37 @@ func TestNormalizeAgentExecutionProfileBoundsLegacyWorkers(t *testing.T) {
 		t.Fatalf("legacy worker was not bounded: %#v", profile)
 	}
 }
+
+func TestNormalizeAgentMetadataLeadChangeDoesNotChangeComputer(t *testing.T) {
+	binding := AgentComputer{ID: "desk-1", Backend: AgentComputerBackendRemote, Workspace: "/var/oaf/desk-1"}
+	metadata, err := NormalizeAgentMetadata(AgentMetadata{
+		Lead:     &AgentExecutionProfile{Harness: "grok_build"},
+		Computer: &binding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Computer == nil || *metadata.Computer != binding {
+		t.Fatalf("computer binding = %#v, want %#v", metadata.Computer, binding)
+	}
+	lead := *metadata.Lead
+	lead.Harness = "codex_app_server"
+	metadata.Lead = &lead
+	switched, err := NormalizeAgentMetadata(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switched.Lead == nil || switched.Lead.Harness != "codex_app_server" {
+		t.Fatalf("lead after engine switch = %#v", switched.Lead)
+	}
+	if switched.Computer == nil || *switched.Computer != binding {
+		t.Fatalf("computer changed after lead switch: %#v", switched.Computer)
+	}
+	withoutComputer, err := NormalizeAgentMetadata(AgentMetadata{Lead: &AgentExecutionProfile{Harness: "pi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutComputer.Computer != nil {
+		t.Fatalf("nil computer was materialized: %#v", withoutComputer.Computer)
+	}
+}

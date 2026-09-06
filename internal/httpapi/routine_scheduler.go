@@ -240,7 +240,22 @@ func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Rou
 		}
 		return errors.New("harness runner unavailable")
 	}
-	s.executeRunWithContext(ctx, run, systemPrompt, model, reasoning, tier, permission, webSearch, timeoutSeconds, mcpServers)
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.registerRun(run.ID, cancel)
+	defer s.unregisterRun(run.ID)
+	execute := func(turnContext context.Context) error {
+		s.executeRunWithContext(turnContext, run, systemPrompt, model, reasoning, tier, permission, webSearch, timeoutSeconds, mcpServers)
+		return nil
+	}
+	if queue := s.turnQueue(); queue != nil {
+		if err := queue.Enqueue(runContext, run.BotID, run.ID, execute); err != nil {
+			_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped"}`)
+			return err
+		}
+	} else {
+		_ = execute(runContext)
+	}
 	current, err := s.Store.GetRun(ctx, run.ID)
 	if err != nil {
 		return err

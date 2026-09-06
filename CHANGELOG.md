@@ -8,6 +8,11 @@ ship paragraph dumps.
 
 ### Added
 
+- Engine adapters wrap the existing provider runners and emit normalized `agent.*` events.
+- Tool registry with canonical names and existing MCP aliases.
+- Computer backend interface wrapping the existing Docker runtime, with native execution available for tests.
+- Per-Agent queue shared by chat, group, delegation, and routine turns.
+- Coordinator delegation events on the existing handoff records.
 - README 19-second first-run storyboard with voiceover, plus roster / gated-routine / Routines screenshots.
 
 ## 0.3.1-alpha - 2026-08-25

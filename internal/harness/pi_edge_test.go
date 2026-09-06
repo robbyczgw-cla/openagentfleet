@@ -262,6 +262,7 @@ func writePiRPCHelperExit(t *testing.T, code int) string {
 	path := filepath.Join(t.TempDir(), "pi")
 	script := `#!/bin/sh
 printf '%s\n' "$*" > "$0.args"
+IFS= read -r prompt || exit 1
 exit ` + strconv.Itoa(code) + `
 `
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {

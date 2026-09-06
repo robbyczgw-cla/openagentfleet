@@ -10,6 +10,7 @@ not earned yet.
 | Document | Use it for | Status |
 | --- | --- | --- |
 | [Architecture](architecture.md) | Why Go, TypeScript, and Rust are separate, and which layer owns what | Current architecture |
+| [Agent runtime](architecture/agent-runtime.md) | Agent vs engine vs computer, tool registry, turn queue, fleet events | Implemented foundation |
 | [Grok Build parity](grok-build-parity.md) | The feature-by-feature parity contract | Living backlog |
 | [Bot memory](bot-memory.md) | Explicit, reviewable memory semantics, API, and retrieval boundary | Implemented local MVP |
 | [Agent model](agent-model.md) | Adopted chat-first product contract: one workspace engine (Grok default, optional Pi), Agents, memory, Builder, and lazy Computer | Current product contract |

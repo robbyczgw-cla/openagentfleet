@@ -14,11 +14,11 @@ func TestListLatestRunsByBotKeepsNewestPerAgent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = instance.Close() })
 	ctx := t.Context()
-	first, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Andy", Title: "Builder", Description: ""})
+	first, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Builder", Title: "Builder", Description: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Cami", Title: "Reviewer", Description: ""})
+	second, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Reviewer", Title: "Reviewer", Description: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +32,11 @@ func TestListLatestRunsByBotKeepsNewestPerAgent(t *testing.T) {
 	if err := instance.UpdateRun(ctx, newer.ID, "running", ""); err != nil {
 		t.Fatal(err)
 	}
-	camiRun, err := instance.CreateRun(ctx, second.Conversation.ID, second.Bot.ID, "codex_app_server", "review")
+	reviewerRun, err := instance.CreateRun(ctx, second.Conversation.ID, second.Bot.ID, "codex_app_server", "review")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := instance.UpdateRun(ctx, camiRun.ID, "waiting_for_approval", ""); err != nil {
+	if err := instance.UpdateRun(ctx, reviewerRun.ID, "waiting_for_approval", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,10 +52,10 @@ func TestListLatestRunsByBotKeepsNewestPerAgent(t *testing.T) {
 		byBot[run.BotID] = run
 	}
 	if byBot[first.Bot.ID].ID != newer.ID || byBot[first.Bot.ID].Status != "running" {
-		t.Fatalf("andy run = %#v", byBot[first.Bot.ID])
+		t.Fatalf("builder run = %#v", byBot[first.Bot.ID])
 	}
 	if byBot[second.Bot.ID].Status != "waiting_for_approval" {
-		t.Fatalf("cami run = %#v", byBot[second.Bot.ID])
+		t.Fatalf("reviewer run = %#v", byBot[second.Bot.ID])
 	}
 }
 
@@ -66,7 +66,7 @@ func TestListLatestTerminalRunsByBotSkipsInFlightWork(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = instance.Close() })
 	ctx := t.Context()
-	agent, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Andy", Title: "Builder", Description: ""})
+	agent, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Builder", Title: "Builder", Description: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
