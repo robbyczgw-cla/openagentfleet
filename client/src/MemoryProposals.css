@@ -1,0 +1,29 @@
+.memory-proposals { margin: 12px 0 18px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.mp-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mp-head h3 { margin: 0; font-size: 14px; }
+.mp-count { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
+.mp-head label { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 11px; color: var(--ink-2); }
+.mp-head select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink-2); font: inherit; font-size: 11px; }
+.mp-intro { margin: 8px 0 0; color: var(--ink-2); font-size: 12px; line-height: 1.5; }
+.mp-notice { margin: 8px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); color: var(--ink-2); font-size: 12px; }
+.mp-error { margin: 8px 0 0; padding: 6px 10px; border-left: 3px solid #c23a2e; font-size: 12px; }
+.mp-empty { margin: 8px 0 0; color: var(--ink-2); font-size: 12px; }
+
+.mp-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.mp-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.mp-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+.mp-card-head strong { color: var(--ink); font-size: 13px; }
+.mp-card-head time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.mp-tag { padding: 1px 6px; border-radius: 5px; background: var(--surface-2); font-size: 11px; }
+.mp-content { margin: 8px 0 0; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.mp-source { margin: 8px 0 0; color: var(--ink-2); font-size: 11px; overflow-wrap: anywhere; }
+.mp-source code { font-size: 11px; }
+
+.mp-edit { display: grid; gap: 10px; margin-top: 10px; }
+.mp-field { display: grid; gap: 4px; min-width: 0; }
+.mp-field label { font-size: 11px; color: var(--ink-2); }
+.mp-field textarea, .mp-field select, .mp-field input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.mp-field textarea { resize: vertical; line-height: 1.5; }
+.mp-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.mp-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.memory-proposals .mp-accept { border-color: var(--accent); color: var(--ink); }

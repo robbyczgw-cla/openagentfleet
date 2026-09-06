@@ -29,3 +29,18 @@
 .task-artifact pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .task-error { border-left: 3px solid var(--accent); padding: 8px 12px; }
 @media (max-width: 720px) { .workspace-panel-dialog { padding: 18px; } .task-columns { grid-template-columns: 1fr; } .task-list { max-height: 35vh; } .task-detail { max-height: none; padding: 12px 0; } .task-heading { gap: 12px; } }
+.task-attempt { padding: 1px 6px; border-radius: 5px; background: var(--surface-2); }
+.task-attempt-line { font-size: 12px; color: var(--ink-2); margin: 6px 0; }
+.task-project { font-size: 13px; border-left: 3px solid var(--accent); padding: 8px 12px; }
+.task-notice { border-left: 3px solid var(--accent); padding: 8px 12px; }
+.tasks-workspace .task-help { font-size: 12px; color: var(--ink-2); margin: 6px 0; }
+.task-followup { display: grid; gap: 10px; margin: 16px 0; padding: 14px; border: 1px solid var(--accent); border-radius: var(--radius); }
+.task-followup h4 { margin: 0; }
+.task-followup-brief { display: grid; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.task-followup-brief textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; line-height: 1.5; }
+.task-followup-brief textarea[readonly] { color: var(--ink-2); }
+.task-followup-files { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 8px; min-width: 0; }
+.task-followup-files legend { font-size: 12px; color: var(--ink-2); padding: 0 4px; }
+.task-followup-files label { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.task-followup-files span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-input-files { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; color: var(--ink-2); }

@@ -122,3 +122,5 @@
 @media (prefers-reduced-motion: reduce) {
   .rw button { transition: none; }
 }
+.rw-project { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.rw-project .rw-help { margin-top: 6px; }

@@ -36,6 +36,9 @@ import { readSafeAreaBottomPx, workAreaBottomInsetPx } from "./workArea";
 import { TasksWorkspace } from "./TasksWorkspace";
 import { RoutinesWorkspace } from "./RoutinesWorkspace";
 import { ConnectedApps } from "./ConnectedApps";
+import { ProjectsWorkspace, ProjectSelector } from "./ProjectsWorkspace";
+import { MemoryProposals } from "./MemoryProposals";
+import { GitHubWorkflows } from "./GitHubWorkflows";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -1615,7 +1618,7 @@ function App() {
   );
   const [preferences, setPreferences] = useState<Preferences>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [workspacePanel, setWorkspacePanel] = useState<"tasks" | "routines" | "apps" | null>(null);
+  const [workspacePanel, setWorkspacePanel] = useState<"tasks" | "routines" | "apps" | "projects" | "github-workflows" | null>(null);
   const [workflowDraft, setWorkflowDraft] = useState<{ name?: string; instructions: string } | undefined>();
   const workspacePanelRef = useRef<HTMLDivElement>(null);
   const [routinesOpen, setRoutinesOpen] = useState(false);
@@ -6081,6 +6084,9 @@ function App() {
       <div className="workspace-action-row">
         <button type="button" className="quiet-button" onClick={() => { setWorkspaceOpen(false); setWorkspacePanel("tasks"); }}>Tasks & results</button>
         <button type="button" className="quiet-button" onClick={() => { setWorkspaceOpen(false); setWorkspacePanel("apps"); }}>Connected apps</button>
+        <button type="button" className="quiet-button" onClick={() => { setWorkspaceOpen(false); setWorkspacePanel("projects"); }}>Projects</button>
+        <button type="button" className="quiet-button" onClick={() => { setWorkspaceOpen(false); setWorkspacePanel("github-workflows"); }}>GitHub tasks</button>
+        <ProjectSelector apiFetch={apiFetch} subjectType="conversation" subjectID={data.conversation.id} agentID={data.conversation.bot_id} />
         <button
           type="button"
           className="quiet-button"
@@ -8835,8 +8841,10 @@ function App() {
         </div>
       )}
       {workspacePanel && (
-        <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-label={workspacePanel === "tasks" ? "Tasks and results" : workspacePanel === "apps" ? "Connected apps" : "Routines and workflows"}>
+        <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-label={workspacePanel === "tasks" ? "Tasks and results" : workspacePanel === "apps" ? "Connected apps" : workspacePanel === "projects" ? "Projects" : workspacePanel === "github-workflows" ? "GitHub tasks" : "Routines and workflows"}>
           <div className="workspace-panel-dialog" ref={workspacePanelRef}>
+            {workspacePanel === "projects" && <ProjectsWorkspace apiFetch={apiFetch} agents={data.bots} onClose={() => setWorkspacePanel(null)} />}
+            {workspacePanel === "github-workflows" && <GitHubWorkflows apiFetch={apiFetch} agents={data.bots} onClose={() => setWorkspacePanel(null)} onConversation={(id) => { setWorkspacePanel(null); void selectConversation(id); }} />}
             {workspacePanel === "tasks" && <TasksWorkspace
               apiFetch={apiFetch} agents={data.bots} onClose={() => setWorkspacePanel(null)}
               onConversation={(id) => { setWorkspacePanel(null); void selectConversation(id); }}
@@ -8873,6 +8881,7 @@ function App() {
             </button>
             <div className="eyebrow">Shows its work</div>
             <h2 id="review-title">Review</h2>
+            <MemoryProposals apiFetch={apiFetch} agents={data.bots} />
             <p>
               Pending approvals across Agents, then each Agent’s last finished
               run (completed, failed, blocked, or stopped).
@@ -10094,7 +10103,7 @@ function App() {
                   ["remote_control", "Remote control", "Experimental: grant short, revocable control leases after node routing is connected."],
                   ["extensions", "Plugins & connectors", "Experimental: lifecycle settings only; plugin installation/runtime is not wired yet."],
                   ["research_runs", "Research runs", "Run bounded, source-backed investigations."],
-                  ["memory_proposals", "Memory proposals", "Experimental: reviewable proposal storage is planned; automatic agent proposals are not wired yet."],
+                  ["memory_proposals", "Memory proposals", "Agents can suggest memories during a task. Review, edit, or reject them in Review. Accepted proposals become Agent memories."],
                   ["skill_learning", "Skill learning", "Enable Teach a task and keep generated workflow drafts behind review."],
                   ["native_mac_worker", "Native Mac worker", "Let selected work run outside a container."],
                   ["existing_browser_profile", "Existing browser profile", "Allow an explicitly selected signed-in profile."],
