@@ -20,7 +20,7 @@ import {
   startRequestBody,
   validateStartDraft,
   validateTestCommand,
-} from "./githubWorkflows.ts";
+} from "./githubWorkflowModel.ts";
 
 function workflow(overrides = {}) {
   return {

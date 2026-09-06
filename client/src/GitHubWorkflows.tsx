@@ -22,8 +22,8 @@ import {
   workflowStateKey,
   workflowStateLabel,
   workflowStatusLabel,
-} from "./githubWorkflows";
-import type { GitHubWorkflow, StartDraft } from "./githubWorkflows";
+} from "./githubWorkflowModel";
+import type { GitHubWorkflow, StartDraft } from "./githubWorkflowModel";
 
 // The parent renders the dialog: backdrop, role, focus trap and Escape all live
 // in App.tsx. This component is only the contents, so it adds no outer chrome
@@ -118,7 +118,9 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishError, setPublishError] = useState("");
 
-  const [notice, setNotice] = useState("");
+  // A notice belongs to one piece of work. Selecting the workflow it describes
+  // must not wipe it, which is what a plain string did.
+  const [notice, setNotice] = useState<{ workflowID: string; text: string } | null>(null);
   const detailGeneration = useRef(0);
   // The pull request wording and the check command are seeded once per piece of
   // work. A background refresh must never overwrite what is being typed.
@@ -165,7 +167,6 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
     setFailedOutput("");
     setPublishError("");
     setConfirmPublish(false);
-    setNotice("");
   }, [selectedID]);
 
   useEffect(() => {
@@ -275,7 +276,10 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
       if (match) {
         seededFor.current = "";
         select(match.id);
-        setNotice(`${agentNames.get(match.agent_id) ?? "The agent"} is working on ${match.repository}#${match.issue_number} in its own checkout.`);
+        setNotice({
+          workflowID: match.id,
+          text: `${agentNames.get(match.agent_id) ?? "The agent"} is working on ${match.repository}#${match.issue_number} in its own checkout.`,
+        });
       } else {
         setListRefresh((count) => count + 1);
       }
@@ -297,7 +301,7 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
     setReviewBusy(true);
     setReviewError("");
     setFailedOutput("");
-    setNotice("");
+    setNotice(null);
     try {
       const updated: GitHubWorkflow = await (
         await checked(
@@ -310,7 +314,7 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
       ).json();
       setWorkflow(updated);
       setListRefresh((count) => count + 1);
-      setNotice("Review ready. Read the changes and the check output before you publish anything.");
+      setNotice({ workflowID: workflow.id, text: "Review ready. Read the changes and the check output before you publish anything." });
     } catch (cause) {
       setReviewError(failureText(cause));
       const output = cause instanceof Error ? ((cause as ApiFailure).testOutput ?? "") : "";
@@ -324,7 +328,7 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
     if (!workflow || publishBusy || !workflow.review) return;
     setPublishBusy(true);
     setPublishError("");
-    setNotice("");
+    setNotice(null);
     try {
       const updated: GitHubWorkflow = await (
         await checked(
@@ -344,11 +348,12 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
       setWorkflow(updated);
       setConfirmPublish(false);
       setListRefresh((count) => count + 1);
-      setNotice(
-        updated.pull_request_url
+      setNotice({
+        workflowID: workflow.id,
+        text: updated.pull_request_url
           ? "Draft pull request opened. Nothing is merged, and it stays a draft until you say otherwise."
           : "The request finished, but no pull request came back. Refresh to see where it stopped.",
-      );
+      });
     } catch (cause) {
       // The wording stays exactly as typed so it can be sent again, and the
       // refresh below shows whether the branch or the pull request got through.
@@ -383,9 +388,9 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
         </button>
       </header>
 
-      {notice && (
+      {notice && (notice.workflowID === selectedID || !selectedID) && (
         <p className="gw-notice" role="status">
-          {notice}
+          {notice.text}
         </p>
       )}
       {listError && (
@@ -412,7 +417,7 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
                 setStartOpen(true);
                 setSelectedID("");
                 setStartError("");
-                setNotice("");
+                setNotice(null);
               }}
             >
               Start from an issue
@@ -438,7 +443,9 @@ export function GitHubWorkflows({ apiFetch, agents, onClose, onConversation }: G
                   <span className="gw-item-name">
                     {item.repository}#{item.issue_number}
                   </span>
-                  <span className={`gw-badge is-${item.status}`}>{workflowStatusLabel(item.status)}</span>
+                  <span className={`gw-badge is-${item.id === selectedID ? workflowStateKey(item, taskStatus) : item.status}`}>
+                    {item.id === selectedID ? workflowStateLabel(item, taskStatus) : workflowStatusLabel(item.status)}
+                  </span>
                   <span className="gw-item-meta">
                     {item.issue_title || "Untitled issue"}
                   </span>

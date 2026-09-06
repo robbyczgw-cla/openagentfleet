@@ -8,7 +8,7 @@ import {
   proposalDraftChanged,
   proposalPatch,
   validateProposalDraft,
-} from "./memoryProposals.ts";
+} from "./memoryProposalModel.ts";
 
 function proposal(overrides = {}) {
   return {

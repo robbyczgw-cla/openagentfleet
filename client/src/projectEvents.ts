@@ -22,9 +22,8 @@ export function subscribeProjects(listener: Listener): () => void {
   };
 }
 
-// Called after a project write lands. A listener that unsubscribes while the
-// others are being told still gets skipped cleanly, because the set is copied
-// before the walk.
+// Notify the current listeners after a project write. New subscriptions made
+// during notification receive the next change.
 export function notifyProjectsChanged(): void {
   revision += 1;
   for (const listener of [...listeners]) listener();

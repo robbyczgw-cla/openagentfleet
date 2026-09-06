@@ -207,8 +207,13 @@ What passed:
 
 Not covered by this check: a real engine run, a real GitHub account, any
 GitHub API call, push or pull request, and therefore the review and publish
-steps of GitHub tasks in the native app. Their server-side logic is covered by
-Go tests only.
+steps of GitHub tasks in the native app. Go tests cover their server-side logic.
+A separate Chromium check against a
+temporary database verified project conflict recovery, selector refresh without
+remounting, retry under a task filter, and memory acceptance with edits. With
+publication commands replaced by test doubles, confirmation sent no publish
+request until approval, then invoked one push and one draft pull request.
+That browser check reported no console errors or page exceptions.
 
 ## Scope of the first Linux alpha
 

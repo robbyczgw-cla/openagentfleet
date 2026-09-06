@@ -7098,6 +7098,7 @@ function App() {
               ref={fileInputRef}
               className="attachment-input"
               type="file"
+              aria-label="Attach files"
               multiple
               onChange={(event) => {
                 const files = event.currentTarget.files

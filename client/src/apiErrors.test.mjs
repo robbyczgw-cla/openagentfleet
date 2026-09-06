@@ -3,8 +3,8 @@ import test from "node:test";
 import { NETWORK_FAILURE_TEXT, fallbackErrorText, isNetworkFailure } from "./apiErrors.ts";
 import { describeFollowupError } from "./taskFollowups.ts";
 import { describeProjectError } from "./projects.ts";
-import { describeProposalError } from "./memoryProposals.ts";
-import { describeWorkflowError } from "./githubWorkflows.ts";
+import { describeProposalError } from "./memoryProposalModel.ts";
+import { describeWorkflowError } from "./githubWorkflowModel.ts";
 
 test("the browser's own wording for an unreachable service is replaced", () => {
   // WebKit says the first, Chromium the second, Firefox the third.

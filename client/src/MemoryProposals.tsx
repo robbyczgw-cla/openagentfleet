@@ -12,8 +12,8 @@ import {
   proposalDraftChanged,
   proposalPatch,
   validateProposalDraft,
-} from "./memoryProposals";
-import type { MemoryCategory, MemoryProposal, ProposalDraft } from "./memoryProposals";
+} from "./memoryProposalModel";
+import type { MemoryCategory, MemoryProposal, ProposalDraft } from "./memoryProposalModel";
 
 // Nothing here is saved to an agent's memory until a person accepts it. The
 // component is embedded in the Review dialog, so it renders no chrome of its
@@ -220,7 +220,9 @@ export function MemoryProposals({ apiFetch, agents }: MemoryProposalsProps) {
 
   const hasFilter = agentFilter !== "";
   if (unavailable || !loaded) return null;
-  if (proposals.length === 0 && !hasFilter && !listError) return null;
+  // Handling the last suggestion should still confirm what happened, so the
+  // section stays until the reviewer has read the result.
+  if (proposals.length === 0 && !hasFilter && !listError && !notice) return null;
 
   return (
     <section className="memory-proposals" aria-labelledby={`${fieldID}-title`}>
