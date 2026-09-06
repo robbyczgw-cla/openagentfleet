@@ -20,8 +20,8 @@ not earned yet.
 | [Remote Mac architecture](remote-mac-architecture.md) | Network boundary, Tailscale, and mobile safety rules | Current topology + target boundary |
 | [Mobile remote protocol](mobile-remote.md) | Pairing, device identity, API allowlist, and rollout phases | Implemented alpha + target contract |
 | [ADR 0001: mobile alpha boundary](decisions/0001-mobile-alpha-boundary.md) | What must ship before a remote alpha, and what is intentionally deferred | Accepted |
-| [Linux desktop](linux-desktop.md) | Native Tauri Linux shell, Docker Engine default, and current Linux alpha boundary | Implemented development path |
-| [Linux release](linux-release.md) | deb/rpm/AppImage packaging, Docker Recommends, and Linux Computer install | Implemented alpha packaging |
+| [Linux desktop](linux-desktop.md) | Native Tauri Linux shell, Docker Engine default, docker group troubleshooting, and the Ubuntu 26.04 native check | Implemented development path |
+| [Linux release](linux-release.md) | deb/rpm/AppImage packaging incl. the bundled `collaboration-mcp` bridge, Docker Recommends, and Linux Computer install | Implemented alpha packaging |
 | [Windows desktop](windows-desktop.md) | Tauri Windows shell, Docker Desktop default, NSIS alpha boundary | Implemented host + unsigned installer path |
 | [Windows release](windows-release.md) | NSIS current-user installer, sidecar pins, what the build does not prove | Implemented alpha packaging |
 | [Mac host install](mac-host-install.md) | LaunchAgent and local host operation | Setup guide |
@@ -30,7 +30,7 @@ not earned yet.
 | [macOS release runbook](macos-release.md) | Developer ID signing, notarization, stapling, checksums and public prereleases | `v0.3.1-alpha` DMG notarized |
 | [v0.3.1-alpha notes](releases/v0.3.1-alpha.md) | GitHub prerelease: notarized Mac DMG + Linux packages; Windows NSIS not attached yet | Current publish notes |
 | [v0.3.0-alpha notes](releases/v0.3.0-alpha.md) | Previous public alpha | Shipped |
-| [Tasks, apps and workflows](workspace-productivity.md) | Task results and files, GitHub grants, routine schedules and Markdown templates | Implemented |
+| [Tasks, apps and workflows](workspace-productivity.md) | Task results and files, GitHub grants and the read-only bridge behind them, routine schedules and Markdown templates | Implemented |
 | [Search connectors](search-connectors.md) | Optional Web Search Plus, Hound, and Donsetch MCPs, pins, per-Agent grants, and runtime boundaries | Implemented connector contract |
 | [Fresh-user smoke checklist](fresh-user-smoke-test.md) | Short native-app checklist for the simple first-run flow and optional Advanced settings | Current QA runbook |
 | [CI and QA gates](ci-qa.md) | Local and GitHub Actions checks, plus what each gate does not prove | Current release runbook |

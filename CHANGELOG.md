@@ -17,10 +17,12 @@ ship paragraph dumps.
 - Tasks & results panel: every Agent's runs in one filtered list, each with its brief, saved answer, and snapshotted output files.
 - Routines workspace: simple schedule picker with server-computed next runs, agenda and week calendar, safe edits on paused routines, and Markdown workflow templates.
 - Connected apps: read-only GitHub issues and pull requests for selected repositories and Agents, using the `gh` login on this computer.
-- [Workspace productivity](docs/workspace-productivity.md) guide for the three panels and their limits.
+- [Workspace productivity](docs/workspace-productivity.md) guide for the three panels and their limits, including how the GitHub-only bridge is scoped for chat runs and routines.
+- [Linux desktop](docs/linux-desktop.md) docker group troubleshooting and the Ubuntu 26.04 XFCE native check of the panels and the Agent Computer.
 
 ### Fixed
 
+- Packaged desktop apps bundle `collaboration-mcp` and hand its path to `botd`, so GitHub and collaboration tools work outside a source checkout. The Linux, macOS and Windows release verification scripts fail when it is missing.
 - Computer and collaboration capability leases start when a turn executes, so queue waits do not consume their lifetime. Routine turns now bind their configured Computer MCP capability at execution too.
 - Canceling a running routine waits for executor cleanup before completing its occurrence. Canceling a queued routine preserves the user's stop reason.
 - Delegations emit their started event after the target run starts, rather than when it joins the queue.

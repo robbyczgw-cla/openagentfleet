@@ -44,9 +44,10 @@ eligible linked files from `outputs/` into the database. Links outside that
 folder and symlinks are skipped. Each saved copy is immutable. A later run that
 rewrites the source file does not change what this task shows.
 
-Text files and PNG, JPEG, GIF and WebP images preview in place. Everything
-else downloads. A text preview stops at 100 KB and says so. Download always
-gives you the whole file.
+PNG, JPEG, GIF and WebP images preview in place, detected from their bytes.
+Files named `.txt`, `.md`, `.csv`, `.json`, `.log`, `.yaml`, `.yml` or `.xml`
+preview as text. Everything else downloads. A text preview stops at 100 KB and
+says so. Download always gives you the whole file.
 
 Per run: at most 20 files, 10 MiB each, and at most 100 links read out of the
 answer. A file over the size limit is skipped, not truncated.
@@ -171,9 +172,9 @@ Setup has two grants, and both are explicit:
 
 1. Repositories. The panel lists up to 100 of your most recently updated
    repositories. Tick the ones Agents may read. Anything missing can be typed
-   in as `owner/name`.
-2. Agents. Tick the Agents that receive the GitHub tools. An Agent led by Pi
-   cannot be selected, because Pi does not support MCP tools.
+   in as `owner/name`. A grant holds at most 100 repositories.
+2. Agents. Tick the Agents that receive the GitHub tools, up to 100. An Agent
+   led by Pi cannot be selected, because Pi does not support MCP tools.
 
 Enable connection pins the login you are signed in as. If the account later
 changes, the panel reports the connection as not authenticated and the tools
@@ -185,6 +186,51 @@ A granted Agent gets four tools: `github_list_issues`, `github_get_issue`,
 open items. Every call re-checks that the connection is still on, that this
 Agent is still granted, that the repository is still allowed, and that the
 login has not changed, so revoking access takes effect on the next call.
+
+### How the tools reach GitHub
+
+These tools do not pass a GitHub token to the engine. The engine talks to a
+stdio MCP process, `collaboration-mcp`, that OpenAgentFleet starts alongside
+each run of a granted Agent. That process forwards each tool call to `botd` on
+loopback, and `botd` runs `gh api` itself with the host fixed to `github.com`,
+prompts disabled and the pager off. The bridge is the same binary that carries
+Agent-to-Agent collaboration; GitHub is a second job it was given.
+
+Each run gets its own bridge token. `botd` issues it when the run is queued,
+binds it to that run id when the run starts, and drops it when the run ends or
+the lease expires. A request with the wrong run id, an expired token, or a
+finished run is refused. The bridge also refuses to start unless `botd` itself
+runs with a bearer token, which the native app always sets.
+
+The bridge runs in one of two shapes:
+
+- Collaboration and GitHub, when the Agent has Agent-to-Agent collaboration
+  turned on and holds a GitHub grant. `tools/list` returns the collaboration
+  tools plus the four `github_*` tools.
+- GitHub only, when the Agent holds a grant but collaboration is off. `botd`
+  starts the bridge with `OPENAGENTFLEET_GITHUB_ONLY=1`. `tools/list` returns
+  exactly the four `github_*` names, and a call to `list_agents`,
+  `message_agent`, `delegate_to_agent` or `get_agent_task_status` fails with
+  "Agent collaboration is disabled". The token behind that run is marked
+  GitHub-only on the server too, so the collaboration endpoints reject it
+  even if a tool call is forged.
+
+Routines always get the second shape. A scheduled run of a granted Agent can
+read issues and pull requests, but the scheduler strips collaboration before
+building the run, so this bridge gives routines no messaging or delegation
+tools, whatever the Agent's own settings say. The Pi check applies to routines
+as well: a routine whose lead is Pi gets no GitHub tools.
+
+The packaged desktop apps ship `collaboration-mcp` next to `botd`, and the
+native shell passes its path in `OPENAGENTFLEET_COLLABORATION_MCP_BINARY`. The
+release verification scripts fail if it is missing from the `.deb`, `.rpm`,
+macOS `.app` or Windows install directory. The AppImage check does not open
+the payload. A missing bundled bridge prevents the native app from starting
+its backend. When running `botd` directly, a missing bridge instead prevents
+the granted Agent's run from starting; the error names the command it looked
+for. For a source checkout without
+the native shell, see the
+[Linux development notes](linux-desktop.md#development-prerequisites).
 
 Limits worth knowing:
 
