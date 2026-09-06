@@ -18,9 +18,10 @@ Tauri; the Linux host supplies Docker directly instead of Colima.
 - Packaged Linux alpha artifacts are `.deb`, `.rpm` and `.AppImage`. See
   [Linux release](linux-release.md). There is no store signature.
 - The package bundles `collaboration-mcp` next to `botd` and `browser-mcp`.
-  That bridge carries the Agent collaboration tools and the read-only GitHub
-  tools. If it is missing, the native app reports "bundled collaboration-mcp
-  executable is unavailable" and cannot start its backend. See
+  That bridge carries the Agent collaboration tools, the read-only GitHub
+  tools and the opt-in `propose_memory` tool. If it is missing, the native app
+  reports "bundled collaboration-mcp executable is unavailable" and cannot
+  start its backend. See
   [how the bridge is wired](workspace-productivity.md#how-the-tools-reach-github).
 - Native macOS dictation and the macOS secure handoff prompt are intentionally
   unavailable on Linux; the web speech/transcription fallback and normal
@@ -65,12 +66,18 @@ pnpm run tauri dev
 `prepare:sidecar` also builds `collaboration-mcp`, so the native dev window
 gets GitHub and collaboration tools the same way the package does. The native
 shell also generates a local API token and passes it to `botd` as
-`OPENAGENTFLEET_REMOTE_TOKEN`; the bridge refuses to start without one.
+`OPENAGENTFLEET_REMOTE_TOKEN`. The bridge refuses to start without one, and
+the projects, memory proposal and GitHub tasks routes answer 503 until one is
+set. Task retry and revise follow the existing API authentication rules: they
+remain available in tokenless loopback mode, and once a token is set they need
+the normal bearer like every other task route.
 
 With plain `go run ./cmd/botd` there is no sidecar directory and no token, so
-the GitHub and collaboration tools are unavailable in that setup. To use them
-outside the native window, build the bridge, point `botd` at it, and run
-`botd` with a token that the browser client also sends:
+in that setup the GitHub and collaboration tools are unavailable and the
+Projects, GitHub tasks and Suggested memories features report that a
+controller token is needed. To use them outside the native window, build the
+bridge, point `botd` at it, and run `botd` with a token that the browser client
+also sends:
 
 ```sh
 go build -o /tmp/collaboration-mcp ./cmd/openagentfleet-collaboration-mcp
@@ -153,6 +160,55 @@ Not covered by this check: a paid engine run, a real GitHub login or a real
 GitHub read, the starter templates, a fresh OS install, and any distribution
 other than Ubuntu. The [fresh-user smoke checklist](fresh-user-smoke-test.md)
 still applies for first-run and engine sign-in evidence.
+
+The check predates Projects, task retries, Suggested memories and GitHub
+tasks. The bridge shape it verified, `tools/list` returning exactly four
+`github_*` names, is what a granted Agent gets with Memory proposals off. The
+newer features were checked separately, below.
+
+## Native check of the project and task continuity branch
+
+This is a check of an unreleased branch, not of a tagged build. A debug `.deb`
+built from it was unpacked with `dpkg-deb -x`, not installed system-wide, and
+the app was started from that payload on the same existing Ubuntu 26.04 XFCE
+desktop, driven through WebKitWebDriver against an isolated copy of a QA
+database. No
+paid engine was involved: the Grok executable on `PATH` was a stand-in that
+fails on purpose, so every Agent run below ends as Failed by design. Nothing
+from this check has been released or merged.
+
+What passed:
+
+- Startup. The app reached the workspace in about 6 seconds. The `/health`
+  reply that the fixed check now reads in full was 559 bytes with the JSON
+  body starting at byte 530, past the old 512-byte cut that caused the
+  earlier startup timeout.
+- Projects. Created a project, edited the brief to version 2, saw both
+  versions in Brief history, assigned a conversation to the project, then
+  archived the project and watched the conversation's picker flip to
+  "(unavailable)". Create and edit had already been exercised on an earlier
+  build of this branch.
+- Tasks. From a completed task with a CSV result: Change the request and run
+  produced attempt 2, Run this again on the failed attempt produced attempt 3.
+  The original task kept its status, answer and CSV throughout.
+- Suggested memories. Three seeded proposals: one accepted as is, one
+  dismissed, one accepted with edits typed but not saved first. The resulting
+  database rows matched in each case, including the approved memory written
+  for the two accepts.
+- GitHub tasks. With a stand-in `gh` answering a fixed identity and a fixed
+  issue, and a throwaway local Git repository whose origin named the granted
+  repository: the grant completed, Start from an issue created a real isolated
+  worktree on the dedicated branch and started a run. That run failed with the
+  stand-in provider, as expected. A rebuilt package showed "Task did not
+  finish" and explained that review requires a successful task, with a link
+  back to the conversation.
+- Quit. The app's own `botd` was gone and port 4317 free afterwards. Docker
+  containers already running on the host were unchanged.
+
+Not covered by this check: a real engine run, a real GitHub account, any
+GitHub API call, push or pull request, and therefore the review and publish
+steps of GitHub tasks in the native app. Their server-side logic is covered by
+Go tests only.
 
 ## Scope of the first Linux alpha
 
