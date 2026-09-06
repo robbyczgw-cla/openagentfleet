@@ -388,9 +388,13 @@ fn local_botd_is_healthy() -> bool {
     {
         return false;
     }
-    let mut response = [0_u8; 512];
-    match stream.read(&mut response) {
-        Ok(length) => botd_health_response(&response[..length]),
+    read_botd_health_response(stream)
+}
+
+fn read_botd_health_response(reader: impl Read) -> bool {
+    let mut response = Vec::new();
+    match reader.take(8192).read_to_end(&mut response) {
+        Ok(_) => botd_health_response(&response),
         Err(_) => false,
     }
 }
@@ -993,7 +997,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_bounded_stderr, botd_health_response, new_local_api_token,
+        append_bounded_stderr, botd_health_response, read_botd_health_response, new_local_api_token,
         sanitize_notification_text, sanitize_startup_diagnostic, startup_error_with_diagnostic,
         validate_prompt_request, STARTUP_DIAGNOSTIC_LIMIT, STDERR_CAPTURE_LIMIT,
     };
@@ -1029,6 +1033,26 @@ mod tests {
         assert!(!botd_health_response(
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n{\"service\":\"botd\"}\n"
         ));
+    }
+
+    #[test]
+    fn reads_health_body_after_large_headers_and_partial_reads() {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nX-Padding: {}\r\n\r\n{{\"ok\":true,\"service\":\"botd\"}}\n",
+            "x".repeat(700)
+        );
+        struct Fragmented<'a>(&'a [u8]);
+        impl std::io::Read for Fragmented<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let count = buf.len().min(self.0.len()).min(23);
+                buf[..count].copy_from_slice(&self.0[..count]);
+                self.0 = &self.0[count..];
+                Ok(count)
+            }
+        }
+        assert!(read_botd_health_response(Fragmented(response.as_bytes())));
+        let oversized = format!("{}{}", "x".repeat(8192), response);
+        assert!(!read_botd_health_response(oversized.as_bytes()));
     }
 
     #[test]
