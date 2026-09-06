@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -82,6 +83,15 @@ func TestConfiguredWorkersExecuteLeadWorkerLeadWhenFeatureEnabled(t *testing.T) 
 	if len(calls) != 3 || calls[0].Provider != "grok" || calls[1].Provider != "grok" || calls[2].Provider != "grok" {
 		t.Fatalf("harness calls = %#v, want grok lead -> grok worker -> grok lead", calls)
 	}
+	wantDeliverables := taskDeliverablesSystemPrompt(filepath.ToSlash(filepath.Join("outputs", run.ID)))
+	for _, index := range []int{0, 2} {
+		if !strings.Contains(calls[index].Options.SystemPrompt, wantDeliverables) {
+			t.Fatalf("lead call %d missing deliverable instruction: %q", index, calls[index].Options.SystemPrompt)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(calls[0].Workdir, "outputs", run.ID)); err != nil || !info.IsDir() {
+		t.Fatalf("run deliverable directory was not provisioned: %v", err)
+	}
 	worker := calls[1]
 	if worker.Options.Model != "grok-worker" || worker.Options.ReasoningEffort != "high" || worker.Options.ServiceTier != "default" || worker.Options.PermissionMode != "plan" {
 		t.Fatalf("worker profile was not forwarded exactly: %#v", worker.Options)
@@ -148,8 +158,14 @@ func TestDirectLeadPathRemainsSingleInvocation(t *testing.T) {
 			if run.Status != "completed" {
 				t.Fatalf("run = %#v", run)
 			}
-			if calls := executor.snapshot(); len(calls) != 1 || calls[0].Provider != "grok" {
+			calls := executor.snapshot()
+			if len(calls) != 1 || calls[0].Provider != "grok" {
 				t.Fatalf("direct calls = %#v", calls)
+			} else if !strings.Contains(calls[0].Options.SystemPrompt, taskDeliverablesSystemPrompt(filepath.ToSlash(filepath.Join("outputs", run.ID)))) {
+				t.Fatalf("direct call missing deliverable instruction: %q", calls[0].Options.SystemPrompt)
+			}
+			if info, err := os.Stat(filepath.Join(calls[0].Workdir, "outputs", run.ID)); err != nil || !info.IsDir() {
+				t.Fatalf("direct run deliverable directory was not provisioned: %v", err)
 			}
 		})
 	}

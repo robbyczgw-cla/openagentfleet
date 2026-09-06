@@ -76,6 +76,10 @@ the opposite bet:
   through `botd`. Rules you save (this principal, this resource, this
   operation) stop the app from asking twice.
 - **Teach → Skill → Routine.** Show an Agent a task once and keep it.
+- **Tasks, routines and connected apps.** One list of every Agent run with its
+  brief, its saved answer and its output files; a calendar for scheduled work;
+  and read-only GitHub through your local `gh` login. See
+  [Workspace productivity](docs/workspace-productivity.md).
 
 Extra search connectors (Web Search Plus, Hound, Donsetch), Workers, Fleet
 Host, and remote Computer workers live under **Advanced**. The app detects

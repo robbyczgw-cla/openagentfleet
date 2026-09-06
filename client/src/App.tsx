@@ -33,6 +33,9 @@ import {
   type ReviewItem,
 } from "./reviewQueue";
 import { readSafeAreaBottomPx, workAreaBottomInsetPx } from "./workArea";
+import { TasksWorkspace } from "./TasksWorkspace";
+import { RoutinesWorkspace } from "./RoutinesWorkspace";
+import { ConnectedApps } from "./ConnectedApps";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_BOTD_URL ?? "http://127.0.0.1:4317";
@@ -1612,6 +1615,9 @@ function App() {
   );
   const [preferences, setPreferences] = useState<Preferences>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspacePanel, setWorkspacePanel] = useState<"tasks" | "routines" | "apps" | null>(null);
+  const [workflowDraft, setWorkflowDraft] = useState<{ name?: string; instructions: string } | undefined>();
+  const workspacePanelRef = useRef<HTMLDivElement>(null);
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
@@ -2438,6 +2444,27 @@ function App() {
       probe.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!workspacePanel) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = workspacePanelRef.current;
+    const focusable = () => Array.from(panel?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setWorkspacePanel(null); }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) { event.preventDefault(); return; }
+      const first = elements[0], last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    panel?.addEventListener("keydown", onKeyDown);
+    return () => { panel?.removeEventListener("keydown", onKeyDown); previous?.focus(); };
+  }, [workspacePanel]);
 
   useEffect(() => {
     if (
@@ -6052,6 +6079,8 @@ function App() {
         </button>
       )}
       <div className="workspace-action-row">
+        <button type="button" className="quiet-button" onClick={() => { setWorkspaceOpen(false); setWorkspacePanel("tasks"); }}>Tasks & results</button>
+        <button type="button" className="quiet-button" onClick={() => { setWorkspaceOpen(false); setWorkspacePanel("apps"); }}>Connected apps</button>
         <button
           type="button"
           className="quiet-button"
@@ -6080,7 +6109,9 @@ function App() {
                     bot_id: data.conversation.bot_id,
                   },
             );
-            setRoutinesOpen(true);
+            setWorkflowDraft(undefined);
+            setWorkspaceOpen(false);
+            setWorkspacePanel("routines");
           }}
           disabled={!routinesEnabled}
           title={
@@ -8801,6 +8832,27 @@ function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {workspacePanel && (
+        <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-label={workspacePanel === "tasks" ? "Tasks and results" : workspacePanel === "apps" ? "Connected apps" : "Routines and workflows"}>
+          <div className="workspace-panel-dialog" ref={workspacePanelRef}>
+            {workspacePanel === "tasks" && <TasksWorkspace
+              apiFetch={apiFetch} agents={data.bots} onClose={() => setWorkspacePanel(null)}
+              onConversation={(id) => { setWorkspacePanel(null); void selectConversation(id); }}
+              onReview={() => { setWorkspacePanel(null); setReviewOpen(true); }}
+              onWorkflow={(draft) => {
+                if (!routinesEnabled) { setNotice("Enable Routines in Settings to save a workflow."); setWorkspacePanel(null); setSettingsOpen(true); return; }
+                setWorkflowDraft(draft); setWorkspacePanel("routines");
+              }}
+            />}
+            {workspacePanel === "routines" && <RoutinesWorkspace
+              fetch={apiFetch} agents={data.bots} initialDraft={workflowDraft}
+              onClose={() => setWorkspacePanel(null)}
+              onAdvanced={() => { setWorkspacePanel(null); setRoutinesOpen(true); }}
+            />}
+            {workspacePanel === "apps" && <ConnectedApps apiFetch={apiFetch} agents={data.bots.map((item) => ({ ...item, harness: data.agents?.find((agent) => agent.bot.id === item.id)?.metadata?.lead?.harness }))} onClose={() => setWorkspacePanel(null)} />}
+          </div>
         </div>
       )}
       {reviewOpen && (

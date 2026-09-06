@@ -501,6 +501,7 @@ fn configure_sidecar_environment(
     let uvx = bundled_executable_path("uvx")?;
     let opencode = bundled_executable_path("opencode")?;
     let browser_mcp = bundled_executable_path("browser-mcp")?;
+    let collaboration_mcp = bundled_executable_path("collaboration-mcp")?;
     let tool_dir = uv
         .parent()
         .ok_or_else(|| "resolve bundled WebSearchPlus launcher directory".to_string())?;
@@ -514,6 +515,7 @@ fn configure_sidecar_environment(
     command.env("OPENAGENTFLEET_UVX_BINARY", uvx);
     command.env("OPENAGENTFLEET_OPENCODE_BINARY", opencode);
     command.env("OPENAGENTFLEET_BROWSER_MCP_BINARY", browser_mcp);
+    command.env("OPENAGENTFLEET_COLLABORATION_MCP_BINARY", collaboration_mcp);
     command.env(
         "OPENAGENTFLEET_WEBSEARCH_DATA_DIR",
         data_dir.join("web-search"),

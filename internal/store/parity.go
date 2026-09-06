@@ -283,6 +283,9 @@ func (s *Store) CreateAgentHandoff(ctx context.Context, input CreateAgentHandoff
 		run.ID, run.ConversationID, run.BotID, run.Provider, run.Status, run.Prompt, "", run.CreatedAt, run.UpdatedAt); err != nil {
 		return empty, err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_results(run_id,title) VALUES(?,?)`, run.ID, input.Content); err != nil {
+		return empty, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO run_events (id, run_id, type, data, created_at) VALUES (?, ?, ?, ?, ?)`,
 		event.ID, event.RunID, event.Type, event.Data, event.CreatedAt); err != nil {
 		return empty, err

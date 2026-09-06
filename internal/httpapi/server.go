@@ -53,6 +53,7 @@ type Server struct {
 	Docker                  *compute.Docker
 	Runtimes                []compute.RuntimeInfo
 	RuntimeInstaller        func(context.Context) error
+	GitHubRunner            func(context.Context, ...string) ([]byte, error)
 	RuntimeResolver         func(context.Context, string) (compute.RuntimeSelection, error)
 	Capabilities            []domain.Capability
 	AllowHarnessExecution   bool
@@ -360,6 +361,16 @@ func (s *Server) Handler() http.Handler {
 			s.grokInfo(w, r)
 		case r.URL.Path == "/api/grok/native" && r.Method == http.MethodPost:
 			s.launchNativeGrok(w, r)
+		case r.URL.Path == "/api/connections/github" && r.Method == http.MethodGet:
+			s.githubConnection(w, r)
+		case r.URL.Path == "/api/connections/github" && r.Method == http.MethodPut:
+			s.saveGitHubConnection(w, r)
+		case r.URL.Path == "/api/connections/github/repositories" && r.Method == http.MethodGet:
+			s.githubRepositories(w, r)
+		case r.URL.Path == "/api/connections/github/read" && r.Method == http.MethodPost:
+			s.githubRead(w, r)
+		case (r.URL.Path == "/api/tasks" || strings.HasPrefix(r.URL.Path, "/api/tasks/")) && r.Method == http.MethodGet:
+			s.handleTasks(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/runs/") && strings.HasSuffix(r.URL.Path, "/stop") && r.Method == http.MethodPost:
 			s.stopRun(w, r)
 		case r.URL.Path == "/api/computer" && r.Method == http.MethodGet:
@@ -803,7 +814,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusConflict, err)
 		return
 	}
-	collabCapability, mcpServers, err := s.appendCollaborationMCP(r.Context(), mcpServers, agent, hasAgent)
+	collabCapability, mcpServers, err := s.appendCollaborationMCP(r.Context(), mcpServers, agent, hasAgent, provider)
 	if err != nil {
 		s.writeErrorStatus(w, http.StatusConflict, err)
 		return
@@ -1727,6 +1738,7 @@ func (s *Server) executeRun(run domain.Run, systemPrompt, model, reasoningEffort
 }
 
 func (s *Server) executeRunWithContext(baseContext context.Context, run domain.Run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch string, timeoutSeconds uint32, mcpServers []harness.MCPServerSpec) {
+	systemPrompt = appendSystemPrompt(systemPrompt, s.prepareTaskDeliverables(run.ID))
 	timeout := s.RunTimeout
 	if timeoutSeconds != 0 {
 		timeout = time.Duration(timeoutSeconds) * time.Second
@@ -1822,6 +1834,7 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 			return
 		}
 	}
+	s.captureTaskArtifacts(run, answer)
 	run.Status = "completed"
 	_ = s.commitTerminalRunLifecycleEvent(run, run.Status, "", "run.completed", `{"status":"completed","output_available":true}`)
 }
@@ -1843,6 +1856,7 @@ func (s *Server) executeLeadWorkerRun(run domain.Run, systemPrompt, model, reaso
 }
 
 func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, run domain.Run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch string, timeoutSeconds uint32, mcpServers []harness.MCPServerSpec, workerTask string, workers []orchestration.BoundedWorker) {
+	systemPrompt = appendSystemPrompt(systemPrompt, s.prepareTaskDeliverables(run.ID))
 	timeout := s.RunTimeout
 	if timeoutSeconds != 0 {
 		timeout = time.Duration(timeoutSeconds) * time.Second
@@ -1983,6 +1997,7 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 		}
 	}
 	_, _ = s.emitRunEvent(context.Background(), run, "lead.synthesis.completed", `{"phase":"synthesis"}`)
+	s.captureTaskArtifacts(run, answer)
 	run.Status = "completed"
 	_ = s.commitTerminalRunLifecycleEvent(run, run.Status, "", "run.completed", `{"status":"completed","output_available":true,"orchestration":"one_hop"}`)
 }
@@ -3725,7 +3740,7 @@ func setHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Origin")
 	}
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID, X-OpenAgentFleet-Computer-Use, X-OpenAgentFleet-Computer-Run-ID, X-OpenAgentFleet-Computer-Run-Token, X-OpenAgentFleet-Collab-Run-ID, X-OpenAgentFleet-Collab-Run-Token")
-	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 }
 
 func isUnsafeMethod(method string) bool {

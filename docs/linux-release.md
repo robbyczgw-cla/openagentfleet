@@ -18,9 +18,12 @@ On GNU/Linux, `scripts/build-linux-release.sh` produces:
 | `.rpm` | Fedora, RHEL-compatible and openSUSE |
 | `.AppImage` | Portable install without a package manager |
 
-Each artifact includes the native window, bundled `botd`, Agent Computer MCP,
-`uv`/`uvx`, the pinned OpenCode sidecar, and the Agent Computer Docker build
-context. The installer does **not** start Docker, Chromium, or a container.
+Each artifact includes the native window, bundled `botd`, the `browser-mcp`
+and `collaboration-mcp` bridges, `uv`/`uvx`, the pinned OpenCode sidecar, and
+the Agent Computer Docker build context. `collaboration-mcp` is what gives a
+granted Agent its GitHub and collaboration tools; `verify-linux-release.sh`
+fails if the `.deb` or `.rpm` does not contain it. The installer does **not**
+start Docker, Chromium, or a container.
 
 Docker is a **Recommends**, not a hard Depends, because users may already have
 `docker-ce`, a vendor engine, or rootless Docker. After install:
@@ -37,9 +40,13 @@ sudo usermod -aG docker "$USER"
 sudo systemctl enable --now docker
 ```
 
-Log out and back in so the docker group applies. Opening the app still does
-not start the Agent Computer. Computer View, or an approved desktop/browser
-task, builds and starts the isolated container on demand.
+Log out and back in so the docker group applies to the desktop session, then
+start the app from the new session. Restarting the Docker daemon is not part
+of this step and may interrupt containers already running on the host. See
+[Docker group troubleshooting](linux-desktop.md#docker-group-troubleshooting)
+if the app still reports permission denied. Opening the app still does not
+start the Agent Computer. Computer View, or an approved desktop/browser task,
+builds and starts the isolated container on demand.
 
 ## Required gates
 
@@ -58,10 +65,13 @@ task, builds and starts the isolated container on demand.
 ```sh
 export OPENAGENTFLEET_OPENCODE_BINARY=/path/to/opencode-1.18.10
 ./scripts/build-linux-release.sh
-./scripts/verify-linux-release.sh dist/linux/OpenAgentFleet_0.3.0_amd64.deb \
-  dist/linux/OpenAgentFleet-0.3.0-1.x86_64.rpm \
-  dist/linux/OpenAgentFleet_0.3.0_amd64.AppImage
+./scripts/verify-linux-release.sh dist/linux/OpenAgentFleet_0.3.1_amd64.deb \
+  dist/linux/OpenAgentFleet-0.3.1-1.x86_64.rpm \
+  dist/linux/OpenAgentFleet_0.3.1_amd64.AppImage
 ```
+
+The version in those file names is read from
+`client/src-tauri/tauri.conf.json`; `0.3.1` is the current one.
 
 `scripts/build-linux-release.sh` uses Tauri only for the `.deb`. The `.rpm`
 and `.AppImage` are built from that same payload with `rpmbuild` and
@@ -74,14 +84,14 @@ optional.
 
 ```sh
 # Debian / Ubuntu
-sudo apt install ./OpenAgentFleet_0.3.0_amd64.deb
+sudo apt install ./OpenAgentFleet_0.3.1_amd64.deb
 
 # Fedora
-sudo dnf install ./OpenAgentFleet-0.3.0-1.x86_64.rpm
+sudo dnf install ./OpenAgentFleet-0.3.1-1.x86_64.rpm
 
 # Portable
-chmod +x OpenAgentFleet_0.3.0_amd64.AppImage
-./OpenAgentFleet_0.3.0_amd64.AppImage
+chmod +x OpenAgentFleet_0.3.1_amd64.AppImage
+./OpenAgentFleet_0.3.1_amd64.AppImage
 ```
 
 Then install/start Docker if Computer View is needed. The first Computer start

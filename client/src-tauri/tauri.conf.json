@@ -32,7 +32,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Local-first AI agents with an isolated Linux computer",
     "longDescription": "OpenAgentFleet runs Grok Build, Codex App Server, or OpenCode in a local workspace and gives approved runs an isolated Linux desktop with Chromium, Terminal and Files. The Linux package starts the local Go controller automatically. Docker Engine is recommended for the Agent Computer and is not started until Computer View or an approved desktop task needs it.",
-    "externalBin": ["binaries/botd", "binaries/browser-mcp", "binaries/uv", "binaries/uvx", "binaries/opencode"],
+    "externalBin": ["binaries/botd", "binaries/browser-mcp", "binaries/collaboration-mcp", "binaries/uv", "binaries/uvx", "binaries/opencode"],
     "resources": {
       "../../runtime/agent-computer/": "agent-computer/"
     },

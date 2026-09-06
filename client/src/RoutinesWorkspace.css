@@ -1,0 +1,124 @@
+/* Contents only. The dialog frame, backdrop and padding belong to App.tsx, so
+   nothing here positions or sizes the panel itself. */
+
+.rw { display: flex; flex-direction: column; gap: 16px; color: var(--ink); }
+
+.rw-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.rw-eyebrow { margin: 0; color: var(--ink-3); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.rw-title { margin: 2px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.rw-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.rw button { padding: 7px 12px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--ink); background: var(--surface); font-size: 12px; font-weight: 550; transition: background .16s ease, border-color .16s ease; }
+.rw button:hover:not(:disabled) { background: var(--surface-2); }
+.rw button:disabled { color: var(--ink-3); cursor: not-allowed; }
+.rw .rw-primary { border-color: var(--accent); color: #FFF; background: var(--accent); }
+.rw .rw-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.rw-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); }
+.rw .rw-tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--ink-2); background: transparent; }
+.rw .rw-tab.is-on { border-bottom-color: var(--accent); color: var(--ink); }
+
+.rw-alert { margin: 0; padding: 9px 12px; border: 1px solid #E4C7BF; border-radius: var(--radius); color: #87534B; background: #F8EDEA; font-size: 12px; }
+.rw-status { min-height: 16px; margin: 0; color: var(--ink-2); font-size: 12px; }
+.rw-status:empty { min-height: 0; }
+
+.rw-panel { display: flex; flex-direction: column; gap: 16px; }
+.rw-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+.rw-subtitle { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 650; }
+.rw-count { padding: 1px 6px; border-radius: 5px; color: var(--ink-2); background: var(--surface-2); font-size: 11px; font-weight: 600; }
+.rw-help { margin: 0; color: var(--ink-3); font-size: 11px; line-height: 1.5; }
+.rw-bad { color: #87534B; }
+.rw-empty { margin: 0; color: var(--ink-3); font-size: 12px; }
+.rw-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.rw-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* No flex-basis by default. These fields sit in column containers, where a
+   basis of 160px would set every field's height rather than its width. */
+.rw-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.rw-field-row > .rw-field { flex: 1 1 160px; }
+.rw-field label { color: var(--ink-2); font-size: 11px; font-weight: 600; }
+.rw-field input, .rw-field select, .rw-field textarea, .rw textarea { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--ink); background: var(--surface); font-family: inherit; font-size: 13px; }
+.rw-field textarea, .rw textarea { resize: vertical; line-height: 1.5; }
+.rw-field [aria-invalid="true"] { border-color: #C58B7F; }
+.rw-field-row { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.rw-mode { display: flex; gap: 6px; }
+.rw .rw-chip { padding: 5px 10px; border-radius: 999px; font-size: 11px; }
+.rw .rw-chip.is-on { border-color: var(--accent); color: var(--accent-hover); background: var(--accent-soft); }
+
+.rw-schedule { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.rw-summary { margin: 0; font-size: 13px; font-weight: 600; }
+
+.rw-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.rw-filters .rw-field { flex: 0 1 200px; }
+
+.rw-columns { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.rw-list-column, .rw-detail-column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+.rw-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.rw .rw-item { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; width: 100%; padding: 9px 11px; text-align: left; }
+.rw .rw-item.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.rw-item-name { font-size: 13px; font-weight: 600; }
+.rw-item-meta { grid-column: 1 / -1; color: var(--ink-3); font-size: 11px; font-weight: 400; }
+
+.rw-badge { padding: 2px 7px; border-radius: 5px; color: var(--ink-2); background: var(--surface-2); font-size: 10px; font-weight: 650; }
+.rw-badge.is-enabled { color: var(--accent-hover); background: var(--accent-soft); }
+.rw-badge.is-needs_attention { color: #87534B; background: #F8EDEA; }
+
+.rw-detail { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); }
+.rw-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; }
+.rw-facts dt { color: var(--ink-3); font-size: 11px; font-weight: 600; }
+.rw-facts dd { margin: 2px 0 0; font-size: 13px; }
+.rw-instructions { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.rw-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-edit { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+.rw-history { padding-top: 12px; border-top: 1px solid var(--border); }
+.rw-events { display: flex; flex-direction: column; gap: 7px; max-height: 220px; margin: 8px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.rw-events li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; }
+.rw-event-type { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.rw-event-time { color: var(--ink-3); font-size: 11px; text-align: right; }
+.rw-event-text { grid-column: 1 / -1; color: var(--ink-2); }
+
+.rw-calendar { display: flex; flex-direction: column; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border); }
+.rw-calendar-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+
+.rw-agenda { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.rw-day { margin: 0 0 6px; color: var(--ink-2); font-size: 12px; font-weight: 650; }
+.rw-day-items { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.rw-day-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 12px; }
+.rw-when { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.rw-what { font-weight: 550; }
+
+.rw-week { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.rw-week th { padding: 7px 6px; border-bottom: 1px solid var(--border); color: var(--ink-2); font-size: 11px; font-weight: 650; text-align: left; }
+.rw-week td { padding: 8px 6px; border-bottom: 1px solid var(--border); font-size: 12px; vertical-align: top; }
+
+.rw-form { display: flex; flex-direction: column; gap: 14px; }
+.rw-preview { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+
+.rw-templates { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.rw-templates li { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.rw-templates strong { display: block; font-size: 13px; }
+.rw-templates .rw-item-meta { display: block; margin-top: 2px; }
+.rw-templates .rw-instructions { margin-top: 6px; font-size: 12px; }
+.rw-import-result { display: flex; flex-direction: column; gap: 10px; }
+
+@media (max-width: 900px) {
+  .rw-columns { grid-template-columns: minmax(0, 1fr); }
+  .rw-list { max-height: 240px; }
+  .rw-week, .rw-week thead, .rw-week tbody, .rw-week tr { display: block; }
+  .rw-week th { display: none; }
+  .rw-week td { display: block; width: 100%; }
+  .rw-week td::before { display: block; margin-bottom: 4px; color: var(--ink-3); font-size: 11px; font-weight: 650; content: attr(data-day); }
+}
+
+@media (max-width: 600px) {
+  .rw-header { flex-direction: column; }
+  .rw-templates li { flex-direction: column; align-items: stretch; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rw button { transition: none; }
+}

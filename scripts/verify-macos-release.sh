@@ -13,6 +13,11 @@ dmg_path="$2"
 [[ -d "$app_path" ]] || { printf 'missing app: %s\n' "$app_path" >&2; exit 1; }
 [[ -f "$dmg_path" ]] || { printf 'missing dmg: %s\n' "$dmg_path" >&2; exit 1; }
 
+[[ -x "$app_path/Contents/MacOS/collaboration-mcp" ]] || {
+  printf 'release verification failed: collaboration-mcp is missing or not executable\n' >&2
+  exit 1
+}
+
 codesign --verify --deep --strict --verbose=2 "$app_path"
 
 signature_details="$(codesign -dvv --verbose=4 "$app_path" 2>&1 || true)"

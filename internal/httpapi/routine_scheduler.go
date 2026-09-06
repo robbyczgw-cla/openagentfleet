@@ -219,6 +219,17 @@ func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Rou
 	if err != nil {
 		return err
 	}
+	routineAgent := agent
+	if routineAgent.Metadata != nil {
+		metadata := *routineAgent.Metadata
+		metadata.Collaboration = nil
+		routineAgent.Metadata = &metadata
+	}
+	githubCapability, mcpServers, err := s.appendCollaborationMCP(ctx, mcpServers, routineAgent, hasAgent, provider)
+	if err != nil {
+		return err
+	}
+	defer s.revokeCollabCapability(githubCapability)
 	if err := rejectPiLeadMCP(provider, mcpServers); err != nil {
 		return err
 	}
@@ -227,6 +238,9 @@ func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Rou
 		return err
 	}
 	_ = message
+	if githubCapability != "" {
+		setCollabRunID(mcpServers, run.ID)
+	}
 	s.publishStoredRunEvent(run, queuedEvent)
 	if !s.AllowHarnessExecution {
 		if _, blockErr := s.commitRunLifecycleEvent(ctx, run, "blocked", "harness execution is disabled", "run.blocked", `{"reason":"execution_disabled"}`); blockErr != nil {
@@ -416,6 +430,9 @@ func (s *Server) requestRoutineApproval(ctx context.Context, routine domain.Rout
 	}
 	run, queued, err := s.Store.CreateRunWithQueuedEvent(ctx, conversation.ID, conversation.BotID, "openagentfleet", prompt)
 	if err != nil {
+		return err
+	}
+	if err := s.Store.SetTaskTitle(ctx, run.ID, title); err != nil {
 		return err
 	}
 	s.publishStoredRunEvent(run, queued)
