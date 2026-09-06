@@ -47,10 +47,11 @@ func TestRunCanBeStoppedImmediatelyAfterAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := &cancellationAwareExecutor{}
-	server := (&Server{
+	api := &Server{
 		Store: instance, Broker: events.New(), AllowHarnessExecution: true,
 		runExecutorOverride: executor,
-	}).Handler()
+	}
+	server := api.Handler()
 
 	response := performRequest(server, "POST", "/api/messages", `{"conversation_id":"`+conversation.ID+`","content":"stop me","provider":"grok"}`, "")
 	if response.Code != 202 {
@@ -76,6 +77,7 @@ func TestRunCanBeStoppedImmediatelyAfterAccepted(t *testing.T) {
 	if run.Status != "stopped" {
 		t.Fatalf("stopped run = %#v", run)
 	}
+	waitForInactiveRuntimeTurn(t, api, created.Run.ID)
 }
 
 func TestStoppedRunDoesNotPersistLateProviderAnswer(t *testing.T) {
@@ -92,10 +94,11 @@ func TestStoppedRunDoesNotPersistLateProviderAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := &lateOutputExecutor{started: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
-	server := (&Server{
+	api := &Server{
 		Store: instance, Broker: events.New(), AllowHarnessExecution: true,
 		runExecutorOverride: executor,
-	}).Handler()
+	}
+	server := api.Handler()
 
 	response := performRequest(server, "POST", "/api/messages", `{"conversation_id":"`+conversation.ID+`","content":"stop before answer","provider":"grok"}`, "")
 	if response.Code != 202 {
@@ -127,6 +130,7 @@ func TestStoppedRunDoesNotPersistLateProviderAnswer(t *testing.T) {
 	if run := waitForTerminalRun(t, instance, conversation.ID); run.Status != "stopped" {
 		t.Fatalf("run after late provider answer = %#v", run)
 	}
+	waitForInactiveRuntimeTurn(t, api, created.Run.ID)
 	messages, err := instance.ListMessages(t.Context(), conversation.ID)
 	if err != nil {
 		t.Fatal(err)
