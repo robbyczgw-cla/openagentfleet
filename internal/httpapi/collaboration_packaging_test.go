@@ -24,6 +24,9 @@ func TestCollaborationMCPUsesBundledCommandOutsidePATH(t *testing.T) {
 	if spec.Env[collaborationmcp.RunTokenEnv] != capability {
 		t.Fatal("bridge capability missing from environment")
 	}
+	if spec.Env[collaborationmcp.APITokenEnv] != capability || spec.Env[collaborationmcp.APITokenEnv] == server.RemoteToken {
+		t.Fatal("bridge received the controller bearer instead of its scoped capability")
+	}
 }
 
 func TestCollaborationMCPRejectsMissingBundledCommand(t *testing.T) {
@@ -32,6 +35,14 @@ func TestCollaborationMCPRejectsMissingBundledCommand(t *testing.T) {
 	server := &Server{RemoteToken: "controller"}
 	if _, _, err := server.collaborationMCPServerSpec(); err == nil || !strings.Contains(err.Error(), command) {
 		t.Fatalf("missing bundled command error = %v", err)
+	}
+}
+
+func TestCollaborationMCPRejectsTokenlessController(t *testing.T) {
+	command := testexe.WriteEcho(t, t.TempDir(), "collaboration-mcp", "ok")
+	server := &Server{CollaborationMCPCommand: command}
+	if _, capability, err := server.collaborationMCPServerSpec(); err == nil || capability != "" || !strings.Contains(err.Error(), "controller bearer authentication") {
+		t.Fatalf("tokenless bridge spec = capability %q, error %v", capability, err)
 	}
 }
 

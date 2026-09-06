@@ -238,6 +238,10 @@ func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Rou
 		return err
 	}
 	_ = message
+	if _, err := s.Store.SnapshotProjectForRun(ctx, run.ID, domain.ProjectSubjectRoutine, routine.ID, run.BotID); err != nil {
+		s.failRunPreparation(run, err)
+		return err
+	}
 	if githubCapability != "" {
 		setCollabRunID(mcpServers, run.ID)
 	}

@@ -17,11 +17,24 @@ ship paragraph dumps.
 - Tasks & results panel: every Agent's runs in one filtered list, each with its brief, saved answer, and snapshotted output files.
 - Routines workspace: simple schedule picker with server-computed next runs, agenda and week calendar, safe edits on paused routines, and Markdown workflow templates.
 - Connected apps: read-only GitHub issues and pull requests for selected repositories and Agents, using the `gh` login on this computer.
-- [Workspace productivity](docs/workspace-productivity.md) guide for the three panels and their limits, including how the GitHub-only bridge is scoped for chat runs and routines.
-- [Linux desktop](docs/linux-desktop.md) docker group troubleshooting and the Ubuntu 26.04 XFCE native check of the panels and the Agent Computer.
+- [Workspace productivity](docs/workspace-productivity.md) guide for the workspace panels and their limits, including how the bridge is scoped for chat runs and routines.
+- [Linux desktop](docs/linux-desktop.md) docker group troubleshooting, the Ubuntu 26.04 XFCE native check of the panels and the Agent Computer, and a debug-build check of projects, task attempts, memory proposals and GitHub task start with stand-in `gh` and engine (no real GitHub, no review or publish).
+- Task retry and revise: `POST /api/tasks/{id}/retry` on a failed or stopped task, `POST /api/tasks/{id}/revise` on a completed one. Same Agent only, at most 10 linked attempts, `Idempotency-Key` required, original input files copied on request, new provider session. The earlier task keeps its result and files. Task detail now returns the original `input`.
+- Projects: named brief shared with chosen Agents, append-only brief versions, optimistic `expected_version` on edit and archive, explicit assignment to one conversation or routine. Each run snapshots the brief version at queue time; membership and archive state are re-checked before the engine starts and revoke the run as Blocked with `project_access_revoked`. Provider sessions are bound to conversation, project, brief version and working directory, so a changed brief starts a fresh session.
+- Memory proposals behind the existing `memory_proposals` feature flag: a `propose_memory` bridge tool (not offered to Pi leads), pending review in the Review dialog with edit, accept and reject, provenance to the source run and message, 5 per run and 25 pending per Agent. Accepting writes one approved memory with source `agent_proposal`; deleting that memory later does not let a second accept recreate it.
+- GitHub tasks: hand a granted issue to a granted Agent in a `git worktree` next to the local checkout on branch `oaf/issue-<n>-<id>`. Review requires a completed task, a clean committed branch on the recorded base, and an explicit argv test command (no shell, 10 minute and 2 MiB limits). Publish re-verifies the review digest, pinned login, grant and tree, then pushes the branch and opens a draft pull request. Nothing writes to GitHub before that button.
+
+### Changed
+
+- The collaboration bridge no longer receives the controller bearer. Each run's bridge token is its only credential, accepted solely on the collaboration, GitHub read and memory-proposal routes its scope covers, and refused after the run ends.
+- Runs execute in a per-run working directory when one is bound (GitHub task worktrees, retries of such tasks); otherwise the shared workspace as before. Task deliverables and artifact capture follow that directory.
+- The projects, memory-proposal and GitHub task routes require a configured controller token and answer 503 without one. The native app already sets that token at startup.
 
 ### Fixed
 
+- Project snapshots no longer fail with a SQLite lock error when another Agent turn writes at the same time. Snapshot transactions reserve the writer before reading the project, and unassigned routine runs retain their origin for later retries.
+
+- Desktop startup no longer times out while `botd` is already healthy. The native shell's health check read only the first 512 bytes of the `/health` reply, so once response headers grew past that the JSON body never arrived and the app reported a startup timeout. It now reads the whole reply up to 8192 bytes, and a regression test covers a fragmented reply with large headers. Found during the native Linux test of this branch.
 - Packaged desktop apps bundle `collaboration-mcp` and hand its path to `botd`, so GitHub and collaboration tools work outside a source checkout. The Linux, macOS and Windows release verification scripts fail when it is missing.
 - Computer and collaboration capability leases start when a turn executes, so queue waits do not consume their lifetime. Routine turns now bind their configured Computer MCP capability at execution too.
 - Canceling a running routine waits for executor cleanup before completing its occurrence. Canceling a queued routine preserves the user's stop reason.

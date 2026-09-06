@@ -80,6 +80,12 @@ the opposite bet:
   brief, its saved answer and its output files; a calendar for scheduled work;
   and read-only GitHub through your local `gh` login. See
   [Workspace productivity](docs/workspace-productivity.md).
+- **Projects, retries, suggested memories, GitHub tasks.** A shared brief with
+  versions that each task snapshots when queued; run a task again or reword it
+  without losing the earlier answer; Agents propose memories you accept, edit
+  or dismiss before anything is stored; hand a GitHub issue to an Agent in a
+  separate checkout, run your own check, then push and open a draft PR with one
+  explicit click. Same guide.
 
 Extra search connectors (Web Search Plus, Hound, Donsetch), Workers, Fleet
 Host, and remote Computer workers live under **Advanced**. The app detects

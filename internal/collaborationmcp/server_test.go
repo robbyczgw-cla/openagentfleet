@@ -151,6 +151,56 @@ func TestDelegateToAgentPostsAndFormatsHumanText(t *testing.T) {
 	}
 }
 
+func TestMemoryOnlyBridgeExposesBoundedProposalTool(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/collaboration/memory-proposals" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get(RunIDHeader) != "run-1" || request.Header.Get(RunTokenHeader) != "memory-cap" {
+			t.Fatalf("missing memory capability headers")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["category"] != "preference" || body["content"] != "Prefer concise output." || body["priority"] != float64(4) {
+			t.Fatalf("proposal body = %#v", body)
+		}
+		return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"memprop-1","status":"pending","content":"must not echo"}`))}, nil
+	})}
+	server, err := New(Config{
+		APIURL: DefaultAPIURL, APIToken: "controller", RunID: "run-1", RunToken: "memory-cap",
+		GitHubOnly: true, MemoryEnabled: true, HTTPClient: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := call(t, server, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	var payload struct {
+		Tools []toolDefinition `json:"tools"`
+	}
+	if err := json.Unmarshal(listed.Result, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Tools) != 1 || payload.Tools[0].Name != "propose_memory" {
+		t.Fatalf("memory-only tools = %#v", payload.Tools)
+	}
+	called := call(t, server, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"propose_memory","arguments":{"category":"preference","content":"Prefer concise output.","priority":4}}}`)
+	var result toolResult
+	if err := json.Unmarshal(called.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || len(result.Content) != 1 || !strings.Contains(result.Content[0].Text, "memprop-1") || strings.Contains(result.Content[0].Text, "must not echo") {
+		t.Fatalf("proposal result = %#v", result)
+	}
+	if blocked := server.callTool(t.Context(), "list_agents", json.RawMessage(`{}`)); !blocked.IsError {
+		t.Fatal("memory-only token exposed collaboration")
+	}
+	if blocked := server.callTool(t.Context(), "github_list_issues", json.RawMessage(`{"repository":"a/b"}`)); !blocked.IsError {
+		t.Fatal("memory-only token exposed GitHub")
+	}
+}
+
 func TestNewRejectsMissingTokenOrRun(t *testing.T) {
 	if _, err := New(Config{APIURL: DefaultAPIURL, RunID: "run", RunToken: "cap"}); err == nil || !strings.Contains(err.Error(), APITokenEnv) {
 		t.Fatalf("missing token error = %v", err)

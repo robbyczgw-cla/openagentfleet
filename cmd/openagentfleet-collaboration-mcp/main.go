@@ -31,6 +31,7 @@ func main() {
 		APIURL:        os.Getenv(collaborationmcp.APIURLEnv),
 		GitHubEnabled: os.Getenv(collaborationmcp.GitHubEnabledEnv) == "1",
 		GitHubOnly:    os.Getenv(collaborationmcp.GitHubOnlyEnv) == "1",
+		MemoryEnabled: os.Getenv(collaborationmcp.MemoryEnabledEnv) == "1",
 		APIToken:      apiToken,
 		RunID:         runID,
 		RunToken:      runToken,

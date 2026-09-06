@@ -21,7 +21,10 @@ func (s *Store) MigrateTasks(ctx context.Context) error {
  name TEXT NOT NULL, media_type TEXT NOT NULL, size INTEGER NOT NULL,
  created_at TEXT NOT NULL, preview_kind TEXT NOT NULL, content BLOB NOT NULL,
  UNIQUE(run_id,name)); CREATE INDEX IF NOT EXISTS task_artifacts_run ON task_artifacts(run_id);`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.MigrateTaskFollowups(ctx)
 }
 
 type TaskFilter struct {
@@ -34,8 +37,8 @@ const taskStatus = `CASE
  WHEN r.status NOT IN ('completed','failed','stopped','blocked') AND EXISTS (SELECT 1 FROM approval_requests p WHERE p.run_id=r.id AND p.status='pending') THEN 'waiting_approval'
  WHEN r.status='waiting_for_approval' THEN 'waiting_approval'
  ELSE r.status END`
-const taskColumns = `r.id,r.bot_id,b.name,r.conversation_id,COALESCE(NULLIF(t.title,''),c.title),` + taskStatus + `,r.error,r.provider,r.created_at,r.updated_at,substr(COALESCE(t.result,''),1,280),(SELECT COUNT(*) FROM task_artifacts a WHERE a.run_id=r.id)`
-const taskJoins = ` FROM runs r JOIN bots b ON b.id=r.bot_id JOIN conversations c ON c.id=r.conversation_id LEFT JOIN task_results t ON t.run_id=r.id `
+const taskColumns = `r.id,r.bot_id,b.name,r.conversation_id,COALESCE(NULLIF(t.title,''),c.title),` + taskStatus + `,r.error,r.provider,r.created_at,r.updated_at,substr(COALESCE(t.result,''),1,280),(SELECT COUNT(*) FROM task_artifacts a WHERE a.run_id=r.id),COALESCE(a.parent_task_id,''),COALESCE(a.root_task_id,r.id),COALESCE(a.attempt,1),COALESCE(a.kind,''),CASE WHEN ` + taskStatus + ` IN ('failed','stopped') AND COALESCE(a.attempt,1) < 10 THEN 1 ELSE 0 END,CASE WHEN ` + taskStatus + `='completed' AND COALESCE(a.attempt,1) < 10 THEN 1 ELSE 0 END`
+const taskJoins = ` FROM runs r JOIN bots b ON b.id=r.bot_id JOIN conversations c ON c.id=r.conversation_id LEFT JOIN task_results t ON t.run_id=r.id LEFT JOIN task_attempts a ON a.run_id=r.id `
 
 const (
 	maxTaskArtifacts    = 20
@@ -46,7 +49,7 @@ var ErrTaskArtifactLimit = errors.New("task artifact limit reached")
 
 func scanTask(row interface{ Scan(...any) error }) (domain.TaskSummary, error) {
 	var t domain.TaskSummary
-	err := row.Scan(&t.ID, &t.BotID, &t.BotName, &t.ConversationID, &t.Title, &t.Status, &t.Error, &t.Provider, &t.CreatedAt, &t.UpdatedAt, &t.ResultPreview, &t.ArtifactCount)
+	err := row.Scan(&t.ID, &t.BotID, &t.BotName, &t.ConversationID, &t.Title, &t.Status, &t.Error, &t.Provider, &t.CreatedAt, &t.UpdatedAt, &t.ResultPreview, &t.ArtifactCount, &t.ParentTaskID, &t.RootTaskID, &t.Attempt, &t.FollowupKind, &t.CanRetry, &t.CanRevise)
 	return t, err
 }
 

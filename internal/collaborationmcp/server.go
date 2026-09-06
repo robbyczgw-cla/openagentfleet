@@ -39,6 +39,7 @@ const (
 	DefaultAPIURL       = defaultAPIURL
 	GitHubEnabledEnv    = "OPENAGENTFLEET_GITHUB_ENABLED"
 	GitHubOnlyEnv       = "OPENAGENTFLEET_GITHUB_ONLY"
+	MemoryEnabledEnv    = "OPENAGENTFLEET_MEMORY_PROPOSALS_ENABLED"
 )
 
 // Config controls how the MCP server reaches botd. APIURL must be loopback
@@ -47,6 +48,7 @@ const (
 type Config struct {
 	GitHubEnabled bool
 	GitHubOnly    bool
+	MemoryEnabled bool
 	APIURL        string
 	APIToken      string
 	RunID         string
@@ -59,6 +61,7 @@ type Config struct {
 type Server struct {
 	githubEnabled bool
 	githubOnly    bool
+	memoryEnabled bool
 	apiURL        string
 	token         string
 	runID         string
@@ -91,6 +94,7 @@ func New(config Config) (*Server, error) {
 	return &Server{
 		githubEnabled: config.GitHubEnabled,
 		githubOnly:    config.GitHubOnly,
+		memoryEnabled: config.MemoryEnabled,
 		apiURL:        apiURL,
 		token:         token,
 		runID:         runID,
@@ -213,6 +217,9 @@ func (s *Server) dispatch(ctx context.Context, request rpcRequest) (any, *rpcErr
 		}
 		if s.githubEnabled {
 			available = append(available, githubTools()...)
+		}
+		if s.memoryEnabled {
+			available = append(available, memoryTool())
 		}
 		return map[string]any{"tools": available}, nil
 	case "tools/call":
@@ -353,7 +360,49 @@ type taskStatusArguments struct {
 	TaskID *string `json:"task_id"`
 }
 
+type memoryProposalArguments struct {
+	Category  *string `json:"category"`
+	Content   *string `json:"content"`
+	Priority  *int    `json:"priority"`
+	ExpiresAt *string `json:"expires_at"`
+}
+
+func memoryTool() toolDefinition {
+	return toolDefinition{
+		Name:        "propose_memory",
+		Description: "Propose a memory for local user review. The proposal does not enter Agent context unless the user accepts it.",
+		InputSchema: objectSchema(map[string]any{
+			"category":   map[string]any{"type": "string", "enum": []string{"fact", "preference", "instruction", "project"}},
+			"content":    map[string]any{"type": "string", "maxLength": 4096},
+			"priority":   map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
+			"expires_at": map[string]any{"type": "string", "description": "Optional RFC3339 expiry timestamp."},
+		}, "category", "content"),
+	}
+}
+
 func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMessage) toolResult {
+	if name == "propose_memory" {
+		if !s.memoryEnabled {
+			return toolFailure(fmt.Errorf("memory proposals are disabled"))
+		}
+		var input memoryProposalArguments
+		if err := decodeToolArguments(arguments, &input); err != nil {
+			return toolFailure(err)
+		}
+		category, content := requiredString(input.Category), requiredString(input.Content)
+		if category == "" || content == "" {
+			return toolFailure(fmt.Errorf("category and content are required"))
+		}
+		priority := 3
+		if input.Priority != nil {
+			priority = *input.Priority
+		}
+		expiresAt := ""
+		if input.ExpiresAt != nil {
+			expiresAt = strings.TrimSpace(*input.ExpiresAt)
+		}
+		return s.proposeMemory(ctx, category, content, priority, expiresAt)
+	}
 	if strings.HasPrefix(name, "github_") {
 		if !s.githubEnabled {
 			return toolFailure(fmt.Errorf("GitHub connection is disabled"))
@@ -407,6 +456,26 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 	default:
 		return toolFailure(fmt.Errorf("unknown OpenAgentFleet tool %q", name))
 	}
+}
+
+func (s *Server) proposeMemory(ctx context.Context, category, content string, priority int, expiresAt string) toolResult {
+	body, err := s.jsonRequest(ctx, http.MethodPost, "/api/collaboration/memory-proposals", map[string]any{
+		"category": category, "content": content, "priority": priority, "expires_at": expiresAt,
+	})
+	if err != nil {
+		return toolFailure(err)
+	}
+	var proposal struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &proposal); err != nil {
+		return toolFailure(fmt.Errorf("decode OpenAgentFleet response: %w", err))
+	}
+	if proposal.ID == "" {
+		return toolFailure(fmt.Errorf("OpenAgentFleet returned a proposal without an id"))
+	}
+	return toolText(fmt.Sprintf("Memory proposal %s is pending local user review.", proposal.ID))
 }
 
 func requiredString(value *string) string {

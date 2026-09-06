@@ -13,6 +13,18 @@ type TaskSummary struct {
 	UpdatedAt      string `json:"updated_at"`
 	ResultPreview  string `json:"result_preview"`
 	ArtifactCount  int    `json:"artifact_count"`
+	ParentTaskID   string `json:"parent_task_id,omitempty"`
+	RootTaskID     string `json:"root_task_id"`
+	Attempt        int    `json:"attempt"`
+	FollowupKind   string `json:"followup_kind,omitempty"`
+	CanRetry       bool   `json:"can_retry"`
+	CanRevise      bool   `json:"can_revise"`
+}
+
+type TaskInput struct {
+	Brief       string       `json:"brief"`
+	AgentID     string       `json:"agent_id"`
+	Attachments []Attachment `json:"attachments"`
 }
 
 type Artifact struct {

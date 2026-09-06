@@ -15,6 +15,7 @@ import {
   validateTemplate,
 } from "./workflowTemplates";
 import type { SimpleSchedule, WorkflowTemplate } from "./workflowTemplates";
+import { ProjectSelector } from "./ProjectsWorkspace";
 
 // The parent renders the dialog: backdrop, role, focus trap and Escape all live
 // in App.tsx. This component is only the contents, so it adds no outer chrome
@@ -1064,6 +1065,19 @@ export function RoutinesWorkspace(props: RoutinesWorkspaceProps): React.ReactEle
                     <button type="button" onClick={() => void showHistory(selected.id)}>
                       {historyFor === selected.id ? "Hide history" : "History"}
                     </button>
+                  </div>
+
+                  <div className="rw-project">
+                    <ProjectSelector
+                      apiFetch={apiFetch}
+                      subjectType="routine"
+                      subjectID={selected.id}
+                      agentID={selected.bot_id}
+                    />
+                    <p className="rw-help">
+                      Each run works from the project brief as it stands when that run is queued. A routine
+                      can only join a project its agent belongs to.
+                    </p>
                   </div>
 
                   {editDraft && (

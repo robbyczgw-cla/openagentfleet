@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,6 +10,112 @@ import (
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 )
+
+func TestTaskFollowupLineageStateAndIdempotency(t *testing.T) {
+	instance, conversation := openTaskStore(t)
+	parent := createTaskRun(t, instance, conversation, "Original brief", "wrapped original prompt")
+	if err := instance.UpdateRun(t.Context(), parent.ID, "failed", "provider failed"); err != nil {
+		t.Fatal(err)
+	}
+	request := CreateTaskFollowupInput{
+		ParentTaskID: parent.ID, Kind: "retry", IdempotencyKey: "double-click",
+		BotID: parent.BotID, Provider: "grok", Content: "Original brief", Prompt: "new bounded prompt",
+	}
+	first, err := instance.CreateTaskFollowup(t.Context(), request)
+	if err != nil || !first.Created {
+		t.Fatalf("first followup = %#v, %v", first, err)
+	}
+	second, err := instance.CreateTaskFollowup(t.Context(), request)
+	if err != nil || second.Created || second.Run.ID != first.Run.ID || second.Message.ID != first.Message.ID {
+		t.Fatalf("idempotent followup = %#v, %v", second, err)
+	}
+	conflict := request
+	conflict.Content = "different request"
+	if _, err := instance.CreateTaskFollowup(t.Context(), conflict); !errors.Is(err, ErrTaskFollowupConflict) {
+		t.Fatalf("idempotency conflict = %v", err)
+	}
+	child, _, err := instance.GetTask(t.Context(), first.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentTaskID != parent.ID || child.RootTaskID != parent.ID || child.Attempt != 2 || child.FollowupKind != "retry" {
+		t.Fatalf("child lineage = %#v", child)
+	}
+	if err := instance.UpdateRun(t.Context(), first.Run.ID, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := instance.CreateTaskFollowup(t.Context(), CreateTaskFollowupInput{
+		ParentTaskID: first.Run.ID, Kind: "revise", IdempotencyKey: "revision",
+		BotID: parent.BotID, Provider: "grok", Content: "Edited brief", Prompt: "edited wrapped prompt",
+	})
+	if err != nil || !revision.Created {
+		t.Fatalf("revision = %#v, %v", revision, err)
+	}
+	revised, _, err := instance.GetTask(t.Context(), revision.Run.ID)
+	if err != nil || revised.ParentTaskID != first.Run.ID || revised.RootTaskID != parent.ID || revised.Attempt != 3 || revised.Title != "Edited brief" {
+		t.Fatalf("revised lineage = %#v, %v", revised, err)
+	}
+	if _, err := instance.CreateTaskFollowup(t.Context(), CreateTaskFollowupInput{
+		ParentTaskID: parent.ID, Kind: "revise", IdempotencyKey: "wrong-state",
+		BotID: parent.BotID, Provider: "grok", Content: "Edit", Prompt: "edit",
+	}); !errors.Is(err, ErrTaskFollowupState) {
+		t.Fatalf("wrong state = %v", err)
+	}
+	latest := revision.Run
+	for attempt := 4; attempt <= MaxTaskAttempts; attempt++ {
+		if err := instance.UpdateRun(t.Context(), latest.ID, "completed", ""); err != nil {
+			t.Fatal(err)
+		}
+		next, err := instance.CreateTaskFollowup(t.Context(), CreateTaskFollowupInput{
+			ParentTaskID: latest.ID, Kind: "revise", IdempotencyKey: fmt.Sprintf("revision-%d", attempt),
+			BotID: parent.BotID, Provider: "grok", Content: "Edited brief", Prompt: "edited wrapped prompt",
+		})
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		latest = next.Run
+	}
+	if err := instance.UpdateRun(t.Context(), latest.ID, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.CreateTaskFollowup(t.Context(), CreateTaskFollowupInput{
+		ParentTaskID: latest.ID, Kind: "revise", IdempotencyKey: "over-limit",
+		BotID: parent.BotID, Provider: "grok", Content: "One more", Prompt: "one more",
+	}); !errors.Is(err, ErrTaskAttemptLimit) {
+		t.Fatalf("attempt limit = %v", err)
+	}
+}
+
+func TestTaskFollowupConcurrentDoubleClickCreatesOneRun(t *testing.T) {
+	instance, conversation := openTaskStore(t)
+	parent := createTaskRun(t, instance, conversation, "Retry me", "private")
+	if err := instance.UpdateRun(t.Context(), parent.ID, "stopped", ""); err != nil {
+		t.Fatal(err)
+	}
+	request := CreateTaskFollowupInput{ParentTaskID: parent.ID, Kind: "retry", IdempotencyKey: "same", BotID: parent.BotID, Provider: "grok", Content: "Retry me", Prompt: "fresh"}
+	type answer struct {
+		result CreateTaskFollowupResult
+		err    error
+	}
+	start := make(chan struct{})
+	answers := make(chan answer, 2)
+	for range 2 {
+		go func() {
+			<-start
+			result, err := instance.CreateTaskFollowup(context.Background(), request)
+			answers <- answer{result, err}
+		}()
+	}
+	close(start)
+	first, second := <-answers, <-answers
+	if first.err != nil || second.err != nil || first.result.Run.ID != second.result.Run.ID || first.result.Created == second.result.Created {
+		t.Fatalf("concurrent answers = %#v %#v", first, second)
+	}
+	tasks, _, err := instance.ListTasks(t.Context(), TaskFilter{})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("task count = %d, %v", len(tasks), err)
+	}
+}
 
 func openTaskStore(t *testing.T) (*Store, domain.Conversation) {
 	t.Helper()

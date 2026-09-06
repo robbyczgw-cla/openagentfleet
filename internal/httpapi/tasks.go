@@ -17,9 +17,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
+	"github.com/robbyczgw-cla/openagentfleet/internal/id"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
 )
 
@@ -33,8 +35,12 @@ func (s *Server) prepareTaskDeliverables(runID string) string {
 	if validTaskRunID.MatchString(runID) {
 		relative = filepath.ToSlash(filepath.Join("outputs", runID))
 	}
-	if s.HarnessWorkdir != "" && relative != "outputs" {
-		if workspace, err := os.OpenRoot(s.HarnessWorkdir); err == nil {
+	workdir, err := s.runWorkdir(context.Background(), runID)
+	if err != nil {
+		return taskDeliverablesSystemPrompt(relative)
+	}
+	if workdir != "" && relative != "outputs" {
+		if workspace, err := os.OpenRoot(workdir); err == nil {
 			defer workspace.Close()
 			if err := workspace.MkdirAll("outputs", 0o700); err == nil {
 				if info, err := workspace.Lstat("outputs"); err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
@@ -56,7 +62,19 @@ func taskDeliverablesSystemPrompt(relative string) string {
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/tasks"), "/")
+	if len(parts) == 3 && parts[1] != "" && (parts[2] == "retry" || parts[2] == "revise") {
+		if r.Method != http.MethodPost {
+			s.writeErrorStatus(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+			return
+		}
+		s.createTaskFollowup(w, r, parts[1], parts[2])
+		return
+	}
 	if len(parts) == 1 && parts[0] == "" {
+		if r.Method != http.MethodGet {
+			s.writeErrorStatus(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+			return
+		}
 		f := store.TaskFilter{BotID: r.URL.Query().Get("bot_id"), Status: r.URL.Query().Get("status"), Query: r.URL.Query().Get("q")}
 		if raw := r.URL.Query().Get("limit"); raw != "" {
 			n, err := strconv.Atoi(raw)
@@ -97,6 +115,10 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] != "" {
+		if r.Method != http.MethodGet {
+			s.writeErrorStatus(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+			return
+		}
 		task, result, err := s.Store.GetTask(r.Context(), parts[1])
 		if errors.Is(err, sql.ErrNoRows) {
 			s.writeErrorStatus(w, 404, errors.New("task not found"))
@@ -111,10 +133,19 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]any{"task": task, "result": result, "artifacts": artifacts})
+		input, err := s.Store.GetTaskInput(r.Context(), parts[1])
+		if err != nil {
+			s.writeError(w, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]any{"task": task, "input": input, "result": result, "artifacts": artifacts})
 		return
 	}
 	if len(parts) == 5 && parts[2] == "artifacts" && (parts[4] == "content" || parts[4] == "download") {
+		if r.Method != http.MethodGet {
+			s.writeErrorStatus(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+			return
+		}
 		a, data, err := s.Store.GetTaskArtifact(r.Context(), parts[1], parts[3])
 		if errors.Is(err, sql.ErrNoRows) {
 			s.writeErrorStatus(w, 404, errors.New("artifact not found"))
@@ -144,6 +175,231 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeErrorStatus(w, 404, errors.New("task route not found"))
+}
+
+type taskFollowupRequest struct {
+	Brief         string   `json:"brief"`
+	AgentID       string   `json:"agent_id"`
+	AttachmentIDs []string `json:"attachment_ids"`
+}
+
+var taskFollowupRequestMu sync.Mutex
+
+func (s *Server) createTaskFollowup(w http.ResponseWriter, r *http.Request, parentTaskID, kind string) {
+	taskFollowupRequestMu.Lock()
+	defer taskFollowupRequestMu.Unlock()
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("Idempotency-Key is required"))
+		return
+	}
+	var request taskFollowupRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("request body must contain one JSON object"))
+		return
+	}
+	task, _, err := s.Store.GetTask(r.Context(), parentTaskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		s.writeErrorStatus(w, http.StatusNotFound, errors.New("task not found"))
+		return
+	}
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	input, err := s.Store.GetTaskInput(r.Context(), parentTaskID)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	parentWorkdir, err := s.Store.GetRunWorkdir(r.Context(), parentTaskID)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+	request.AgentID = strings.TrimSpace(request.AgentID)
+	if request.AgentID == "" {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("agent_id is required"))
+		return
+	}
+	if request.AgentID != task.BotID {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("agent_id must match the original task for this release"))
+		return
+	}
+	brief := input.Brief
+	if kind == "revise" {
+		brief = strings.TrimSpace(request.Brief)
+		if brief == "" {
+			s.writeErrorStatus(w, http.StatusBadRequest, errors.New("brief is required"))
+			return
+		}
+	} else if strings.TrimSpace(request.Brief) != "" && strings.TrimSpace(request.Brief) != input.Brief {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("retry uses the original brief"))
+		return
+	}
+	if len(request.AttachmentIDs) > 10 {
+		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("at most 10 attachments are allowed"))
+		return
+	}
+	existing, found, err := s.Store.FindTaskFollowup(r.Context(), store.CreateTaskFollowupInput{
+		ParentTaskID: parentTaskID, Kind: kind, IdempotencyKey: idempotencyKey,
+		BotID: request.AgentID, Content: brief, SourceAttachmentIDs: request.AttachmentIDs,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrTaskFollowupConflict) {
+			s.writeErrorStatus(w, http.StatusConflict, err)
+		} else {
+			s.writeError(w, err)
+		}
+		return
+	}
+	if found {
+		s.writeJSON(w, http.StatusAccepted, map[string]any{"message": existing.Message, "run": existing.Run})
+		return
+	}
+	copies, err := s.copyTaskInputAttachments(r.Context(), task.ConversationID, input.Attachments, request.AttachmentIDs)
+	if err != nil {
+		s.writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	defer s.cleanupPendingTaskAttachmentCopies(copies)
+	copyIDs := make([]string, len(copies))
+	for index := range copies {
+		copyIDs[index] = copies[index].ID
+	}
+	message := messageRequest{ConversationID: task.ConversationID, Content: brief, AttachmentIDs: copyIDs}
+	s.dispatchMessage(w, r, message, messageDispatchOptions{
+		FreshSession: true,
+		SnapshotProject: func(ctx context.Context, run domain.Run) error {
+			return s.Store.SnapshotTaskFollowupProject(ctx, parentTaskID, run.ID, run.BotID)
+		},
+		AfterRunCreated: func(ctx context.Context, run domain.Run) error {
+			if parentWorkdir == "" {
+				return nil
+			}
+			return s.Store.SetRunWorkdir(ctx, run.ID, parentWorkdir)
+		},
+		CreateErrorCode: func(err error) int {
+			switch {
+			case errors.Is(err, store.ErrTaskFollowupConflict), errors.Is(err, store.ErrTaskFollowupState), errors.Is(err, store.ErrTaskAttemptLimit):
+				return http.StatusConflict
+			default:
+				return http.StatusInternalServerError
+			}
+		},
+		CreateRun: func(ctx context.Context, resolved resolvedMessageRunInput) (messageRunResult, error) {
+			created, err := s.Store.CreateTaskFollowup(ctx, store.CreateTaskFollowupInput{
+				ParentTaskID:        parentTaskID,
+				Kind:                kind,
+				IdempotencyKey:      idempotencyKey,
+				BotID:               resolved.BotID,
+				Provider:            resolved.Provider,
+				Content:             resolved.Content,
+				Prompt:              resolved.Prompt,
+				AttachmentIDs:       resolved.AttachmentIDs,
+				SourceAttachmentIDs: request.AttachmentIDs,
+			})
+			return messageRunResult{Message: created.Message, Attachments: created.Attachments, Run: created.Run, QueuedEvent: created.QueuedEvent, Created: created.Created}, err
+		},
+	})
+}
+
+func (s *Server) copyTaskInputAttachments(ctx context.Context, conversationID string, offered []domain.Attachment, selectedIDs []string) ([]domain.Attachment, error) {
+	byID := make(map[string]domain.Attachment, len(offered))
+	for _, attachment := range offered {
+		byID[attachment.ID] = attachment
+	}
+	uploadDir := s.UploadDir
+	if uploadDir == "" {
+		uploadDir = filepath.Join(s.HarnessWorkdir, ".openagentfleet", "uploads")
+	}
+	if len(selectedIDs) > 0 {
+		if err := os.MkdirAll(uploadDir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	copies := make([]domain.Attachment, 0, len(selectedIDs))
+	seen := make(map[string]bool, len(selectedIDs))
+	for _, sourceID := range selectedIDs {
+		if seen[sourceID] {
+			s.cleanupPendingTaskAttachmentCopies(copies)
+			return nil, errors.New("attachment was supplied more than once")
+		}
+		seen[sourceID] = true
+		source, ok := byID[sourceID]
+		if !ok {
+			s.cleanupPendingTaskAttachmentCopies(copies)
+			return nil, errors.New("attachment does not belong to the original task")
+		}
+		copyID := id.New("file")
+		target := filepath.Join(uploadDir, copyID+"-"+safeAttachmentName(source.Name))
+		if err := copyTaskAttachmentFile(source.StoragePath, target); err != nil {
+			s.cleanupPendingTaskAttachmentCopies(copies)
+			return nil, err
+		}
+		copied, err := s.Store.CreateAttachment(ctx, domain.Attachment{ID: copyID, ConversationID: conversationID, Name: source.Name, MediaType: source.MediaType, Size: source.Size, StoragePath: target})
+		if err != nil {
+			_ = os.Remove(target)
+			s.cleanupPendingTaskAttachmentCopies(copies)
+			return nil, err
+		}
+		copies = append(copies, copied)
+	}
+	return copies, nil
+}
+
+func copyTaskAttachmentFile(sourcePath, targetPath string) error {
+	sourceRoot, err := os.OpenRoot(filepath.Dir(sourcePath))
+	if err != nil {
+		return fmt.Errorf("open original attachment directory: %w", err)
+	}
+	defer sourceRoot.Close()
+	name := filepath.Base(sourcePath)
+	info, err := sourceRoot.Lstat(name)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("original attachment content is unavailable")
+	}
+	source, err := openTaskArtifactFile(sourceRoot, name)
+	if err != nil {
+		return fmt.Errorf("open original attachment: %w", err)
+	}
+	defer source.Close()
+	openedInfo, err := source.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return errors.New("original attachment changed while opening")
+	}
+	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	written, copyErr := io.Copy(target, io.LimitReader(source, maxAttachmentBytes+1))
+	closeErr := target.Close()
+	if copyErr != nil || closeErr != nil || written > maxAttachmentBytes {
+		_ = os.Remove(targetPath)
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return errors.New("original attachment exceeds the attachment limit")
+	}
+	return nil
+}
+
+func (s *Server) cleanupPendingTaskAttachmentCopies(copies []domain.Attachment) {
+	for _, attachment := range copies {
+		deleted, err := s.Store.DeletePendingAttachment(context.Background(), attachment.ID)
+		if err == nil {
+			_ = os.Remove(deleted.StoragePath)
+		}
+	}
 }
 
 func encodeTaskCursor(cursor taskCursor) string {
@@ -178,10 +434,11 @@ var validTaskRunID = regexp.MustCompile(`^run-[A-Za-z0-9_-]{1,128}$`)
 // Legacy links directly under outputs/ remain supported, but their snapshot proves content at
 // capture time, not which concurrent run authored the shared path.
 func (s *Server) captureTaskArtifacts(run domain.Run, answer string) {
-	if s.HarnessWorkdir == "" {
+	workdir, err := s.runWorkdir(context.Background(), run.ID)
+	if err != nil || workdir == "" {
 		return
 	}
-	workspace, err := os.OpenRoot(s.HarnessWorkdir)
+	workspace, err := os.OpenRoot(workdir)
 	if err != nil {
 		return
 	}
@@ -215,7 +472,7 @@ func (s *Server) captureTaskArtifacts(run domain.Run, answer string) {
 		if strings.HasPrefix(path, "/workspace/") {
 			path = strings.TrimPrefix(path, "/workspace/")
 		} else if filepath.IsAbs(path) {
-			path, err = filepath.Rel(s.HarnessWorkdir, path)
+			path, err = filepath.Rel(workdir, path)
 			if err != nil {
 				continue
 			}

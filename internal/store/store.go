@@ -291,7 +291,22 @@ CREATE INDEX IF NOT EXISTS bot_memories_bot_order_idx
 	if err := s.migrateLegacyAttachmentSchema(); err != nil {
 		return err
 	}
-	return s.migrateBotParitySchema()
+	if err := s.migrateBotParitySchema(); err != nil {
+		return err
+	}
+	if err := s.migrateRunWorkspaces(); err != nil {
+		return err
+	}
+	if err := s.MigrateProjects(context.Background()); err != nil {
+		return err
+	}
+	if err := s.migrateSessionContexts(); err != nil {
+		return err
+	}
+	if err := s.EnsureMemoryProposalsSchema(context.Background()); err != nil {
+		return err
+	}
+	return s.MigrateGitHubWorkflows(context.Background())
 }
 
 func (s *Store) migrateRemoteAuthVersion() error {

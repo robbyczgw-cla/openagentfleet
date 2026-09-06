@@ -54,6 +54,7 @@ type Server struct {
 	Runtimes                []compute.RuntimeInfo
 	RuntimeInstaller        func(context.Context) error
 	GitHubRunner            func(context.Context, ...string) ([]byte, error)
+	GitWorkflowRunner       func(context.Context, string, ...string) ([]byte, error)
 	RuntimeResolver         func(context.Context, string) (compute.RuntimeSelection, error)
 	Capabilities            []domain.Capability
 	AllowHarnessExecution   bool
@@ -131,6 +132,31 @@ type messageRequest struct {
 	PermissionMode  string   `json:"permission_mode"`
 	AttachmentIDs   []string `json:"attachment_ids"`
 	MentionBotIDs   []string `json:"mention_bot_ids"`
+}
+
+type resolvedMessageRunInput struct {
+	ConversationID string
+	BotID          string
+	Provider       string
+	Content        string
+	Prompt         string
+	AttachmentIDs  []string
+}
+
+type messageRunResult struct {
+	Message     domain.Message
+	Attachments []domain.Attachment
+	Run         domain.Run
+	QueuedEvent domain.RunEvent
+	Created     bool
+}
+
+type messageDispatchOptions struct {
+	CreateRun       func(context.Context, resolvedMessageRunInput) (messageRunResult, error)
+	AfterRunCreated func(context.Context, domain.Run) error
+	SnapshotProject func(context.Context, domain.Run) error
+	CreateErrorCode func(error) int
+	FreshSession    bool
 }
 
 type bootstrapResponse struct {
@@ -232,7 +258,11 @@ func (s *Server) Handler() http.Handler {
 			s.writeErrorStatus(w, http.StatusForbidden, errors.New("origin is not allowed"))
 			return
 		}
-		if s.RemoteToken != "" && r.URL.Path != "/health" && !authorized(r, s.RemoteToken) {
+		if s.RemoteToken == "" && (strings.HasPrefix(r.URL.Path, "/api/projects") || strings.HasPrefix(r.URL.Path, "/api/project-associations") || strings.HasPrefix(r.URL.Path, "/api/memory-proposals") || strings.HasPrefix(r.URL.Path, "/api/github-workflows")) {
+			s.writeErrorStatus(w, http.StatusServiceUnavailable, errors.New("configure a controller token to use projects, proposals, and GitHub workflows"))
+			return
+		}
+		if s.RemoteToken != "" && r.URL.Path != "/health" && !s.authorizeAPIRequest(r) {
 			s.writeErrorStatus(w, http.StatusUnauthorized, errors.New("remote authorization required"))
 			return
 		}
@@ -279,6 +309,8 @@ func (s *Server) Handler() http.Handler {
 			s.renameConversation(w, r)
 		case r.URL.Path == "/api/search" && r.Method == http.MethodGet:
 			s.search(w, r)
+		case r.URL.Path == "/api/collaboration/memory-proposals" && r.Method == http.MethodPost:
+			s.createAgentMemoryProposal(w, r)
 		case r.URL.Path == "/api/collaboration/agents" && r.Method == http.MethodGet:
 			s.listCollaborationAgents(w, r)
 		case r.URL.Path == "/api/collaboration/message" && r.Method == http.MethodPost:
@@ -361,6 +393,18 @@ func (s *Server) Handler() http.Handler {
 			s.grokInfo(w, r)
 		case r.URL.Path == "/api/grok/native" && r.Method == http.MethodPost:
 			s.launchNativeGrok(w, r)
+		case r.URL.Path == "/api/github-workflows" || strings.HasPrefix(r.URL.Path, "/api/github-workflows/"):
+			s.handleGitHubWorkflowRoutes(w, r)
+		case r.URL.Path == "/api/projects" || strings.HasPrefix(r.URL.Path, "/api/projects/") || strings.HasPrefix(r.URL.Path, "/api/project-associations/"):
+			s.handleProjectRoutes(w, r)
+		case r.URL.Path == "/api/memory-proposals" && r.Method == http.MethodGet:
+			s.listMemoryProposals(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/memory-proposals/") && r.Method == http.MethodPatch:
+			s.patchMemoryProposal(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/memory-proposals/") && strings.HasSuffix(r.URL.Path, "/accept") && r.Method == http.MethodPost:
+			s.acceptMemoryProposal(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/memory-proposals/") && strings.HasSuffix(r.URL.Path, "/reject") && r.Method == http.MethodPost:
+			s.rejectMemoryProposal(w, r)
 		case r.URL.Path == "/api/connections/github" && r.Method == http.MethodGet:
 			s.githubConnection(w, r)
 		case r.URL.Path == "/api/connections/github" && r.Method == http.MethodPut:
@@ -369,7 +413,7 @@ func (s *Server) Handler() http.Handler {
 			s.githubRepositories(w, r)
 		case r.URL.Path == "/api/connections/github/read" && r.Method == http.MethodPost:
 			s.githubRead(w, r)
-		case (r.URL.Path == "/api/tasks" || strings.HasPrefix(r.URL.Path, "/api/tasks/")) && r.Method == http.MethodGet:
+		case r.URL.Path == "/api/tasks" || strings.HasPrefix(r.URL.Path, "/api/tasks/"):
 			s.handleTasks(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/runs/") && strings.HasSuffix(r.URL.Path, "/stop") && r.Method == http.MethodPost:
 			s.stopRun(w, r)
@@ -695,6 +739,10 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorStatus(w, http.StatusBadRequest, err)
 		return
 	}
+	s.dispatchMessage(w, r, request, messageDispatchOptions{})
+}
+
+func (s *Server) dispatchMessage(w http.ResponseWriter, r *http.Request, request messageRequest, options messageDispatchOptions) {
 	request.Content = strings.TrimSpace(request.Content)
 	if request.Content == "" && len(request.AttachmentIDs) == 0 {
 		s.writeErrorStatus(w, http.StatusBadRequest, errors.New("content is required"))
@@ -711,6 +759,27 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceConversation := conversation
+	workflow, workflowErr := s.Store.GetGitHubWorkflowForConversation(r.Context(), conversation.ID)
+	if workflowErr != nil && !errors.Is(workflowErr, store.ErrGitHubWorkflowNotFound) {
+		s.writeError(w, workflowErr)
+		return
+	}
+	if workflowErr == nil && mentionBotID != "" {
+		s.writeErrorStatus(w, http.StatusConflict, errors.New("GitHub workflow conversations keep their assigned Agent"))
+		return
+	}
+	if workflowErr == nil {
+		release, err := s.Store.AcquireGitHubWorkflowOperation(r.Context(), workflow.ID)
+		if err != nil {
+			s.writeErrorStatus(w, http.StatusConflict, err)
+			return
+		}
+		defer release()
+		if err := s.Store.AssertGitHubWorkflowRunCreationAllowed(r.Context(), workflow.ID); err != nil {
+			s.writeErrorStatus(w, http.StatusConflict, err)
+			return
+		}
+	}
 	if mentionBotID != "" {
 		if err := orchestration.ValidateAgentHandoff(sourceConversation.BotID, mentionBotID); err != nil {
 			s.writeErrorStatus(w, http.StatusBadRequest, err)
@@ -841,12 +910,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	sessionID := request.SessionID
-	if sessionID == "" {
-		if existing, sessionErr := s.Store.GetHarnessSession(r.Context(), conversation.ID, provider); sessionErr == nil {
-			sessionID = existing.NativeSessionID
-		}
-	}
+	sessionID := ""
 	workerTask := promptWithAttachments(request.Content, attachments, s.HarnessWorkdir)
 	prompt := workerTask
 	prompt = promptWithBotMemory(prompt, memories)
@@ -903,20 +967,73 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
+		created := true
 		var createErr error
-		message, attachments, run, queuedEvent, createErr = s.Store.CreateMessageWithAttachmentsAndRun(r.Context(), conversation.ID, conversation.BotID, provider, request.Content, prompt, request.AttachmentIDs)
+		if options.CreateRun == nil {
+			message, attachments, run, queuedEvent, createErr = s.Store.CreateMessageWithAttachmentsAndRun(r.Context(), conversation.ID, conversation.BotID, provider, request.Content, prompt, request.AttachmentIDs)
+		} else {
+			createdRun, err := options.CreateRun(r.Context(), resolvedMessageRunInput{
+				ConversationID: conversation.ID,
+				BotID:          conversation.BotID,
+				Provider:       provider,
+				Content:        request.Content,
+				Prompt:         prompt,
+				AttachmentIDs:  request.AttachmentIDs,
+			})
+			createErr = err
+			message, attachments, run, queuedEvent, created = createdRun.Message, createdRun.Attachments, createdRun.Run, createdRun.QueuedEvent, createdRun.Created
+		}
 		if createErr != nil {
-			s.writeError(w, createErr)
+			if options.CreateErrorCode != nil {
+				s.writeErrorStatus(w, options.CreateErrorCode(createErr), createErr)
+			} else {
+				s.writeError(w, createErr)
+			}
+			return
+		}
+		if !created {
+			s.writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "run": run})
 			return
 		}
 	}
 	run.SessionID = sessionID
+	if workflowErr == nil {
+		if err := s.Store.SetRunWorkdir(r.Context(), run.ID, workflow.WorktreePath); err != nil {
+			s.failRunPreparation(run, err)
+			s.writeErrorStatus(w, http.StatusConflict, err)
+			return
+		}
+	}
 	if computerCapability != "" {
 		setComputerRunID(mcpServers, run.ID)
 	}
 	if collabCapability != "" {
 		setCollabRunID(mcpServers, run.ID)
 	}
+	if options.AfterRunCreated != nil {
+		if err := options.AfterRunCreated(r.Context(), run); err != nil {
+			s.failRunPreparation(run, err)
+			s.writeErrorStatus(w, http.StatusConflict, err)
+			return
+		}
+	}
+	if options.SnapshotProject != nil {
+		err = options.SnapshotProject(r.Context(), run)
+	} else {
+		_, err = s.Store.SnapshotProjectForRun(r.Context(), run.ID, domain.ProjectSubjectConversation, conversation.ID, run.BotID)
+	}
+	if err != nil {
+		s.failRunPreparation(run, err)
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	sessionID, err = s.selectRunSession(r.Context(), run, request.SessionID, options.FreshSession)
+	if err != nil {
+		s.failRunPreparation(run, err)
+		s.writeErrorStatus(w, http.StatusConflict, err)
+		return
+	}
+	run.SessionID = sessionID
 	s.publishStoredRunEvent(run, queuedEvent)
 	if !s.AllowHarnessExecution {
 		if _, err := s.commitRunLifecycleEvent(r.Context(), run, "blocked", harness.ErrExecutionDisabled.Error(), "run.blocked", `{"reason":"execution_disabled"}`); err != nil {
@@ -1686,13 +1803,22 @@ func (s *Server) logicalComputerID() string {
 }
 
 func (s *Server) runEngineTurn(ctx context.Context, run domain.Run, options harness.RunOptions) (string, error) {
+	if s.Store != nil {
+		if _, err := s.Store.ProjectBriefPromptForRun(ctx, run.ID, run.BotID); err != nil {
+			return "", err
+		}
+	}
+	workdir, err := s.runWorkdir(ctx, run.ID)
+	if err != nil {
+		return "", err
+	}
 	adapter := s.engineAdapter(run.Provider)
 	if adapter == nil {
 		executor := s.harnessRunExecutor()
 		if executor == nil {
 			return "", errors.New("harness runner unavailable")
 		}
-		return executor.RunWithOptions(ctx, run.Provider, run.Prompt, s.HarnessWorkdir, options)
+		return executor.RunWithOptions(ctx, run.Provider, run.Prompt, workdir, options)
 	}
 	return adapter.RunTurn(ctx, engine.TurnContext{
 		AgentID:        run.BotID,
@@ -1707,7 +1833,7 @@ func (s *Server) runEngineTurn(ctx context.Context, run domain.Run, options harn
 		ServiceTier:    options.ServiceTier,
 		Permission:     options.PermissionMode,
 		WebSearch:      options.WebSearch,
-		Workdir:        s.HarnessWorkdir,
+		Workdir:        workdir,
 		SessionID:      options.SessionID,
 		Role:           options.Role,
 		MCPServers:     options.MCPServers,
@@ -1754,6 +1880,20 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 		return
 	}
 
+	workdir, err := s.runWorkdir(runContext, run.ID)
+	if err != nil {
+		payload, _ := json.Marshal(map[string]string{"error": err.Error()})
+		_ = s.commitTerminalRunLifecycleEvent(run, "failed", err.Error(), "run.failed", string(payload))
+		return
+	}
+
+	projectPrompt, err := s.Store.ProjectBriefPromptForRun(runContext, run.ID, run.BotID)
+	if err != nil {
+		s.failRunPreparation(run, err)
+		return
+	}
+	systemPrompt = appendSystemPrompt(systemPrompt, projectPrompt)
+
 	if _, err := s.commitRunLifecycleEvent(runContext, run, "running", "", "run.started", `{"status":"running"}`); err != nil {
 		if errors.Is(err, context.Canceled) {
 			_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped"}`)
@@ -1782,7 +1922,10 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 		WebSearch:       webSearch,
 		MCPServers:      mcpServers,
 		OnSession: func(nativeSessionID string) {
-			session, sessionErr := s.Store.UpsertHarnessSession(context.Background(), run.ConversationID, run.Provider, nativeSessionID, s.HarnessWorkdir, run.Provider+" session", "ready")
+			if err := s.Store.BindHarnessSessionContext(context.Background(), run.ID, run.Provider, nativeSessionID, workdir); err != nil {
+				return
+			}
+			session, sessionErr := s.Store.UpsertHarnessSession(context.Background(), run.ConversationID, run.Provider, nativeSessionID, workdir, run.Provider+" session", "ready")
 			if sessionErr == nil {
 				sessionPayload, _ := json.Marshal(session)
 				_, _ = s.emitRunEvent(context.Background(), run, "session.opened", string(sessionPayload))
@@ -1805,6 +1948,10 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 	applyPiLeadRole(run.Provider, &leadOptions)
 	output, err := s.runEngineTurn(runContext, run, leadOptions)
 	if err != nil {
+		if store.IsProjectAccessBlocked(err) {
+			s.failRunPreparation(run, err)
+			return
+		}
 		if errors.Is(err, context.Canceled) {
 			run.Status = "stopped"
 			run.Error = ""
@@ -1873,6 +2020,10 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 	}
 
 	fail := func(err error) {
+		if store.IsProjectAccessBlocked(err) {
+			s.failRunPreparation(run, err)
+			return
+		}
 		if errors.Is(err, context.Canceled) {
 			run.Status, run.Error = "stopped", ""
 			_ = s.commitTerminalRunLifecycleEvent(run, run.Status, run.Error, "run.stopped", `{"status":"stopped"}`)
@@ -1882,6 +2033,21 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 		payload, _ := json.Marshal(map[string]string{"error": run.Error})
 		_ = s.commitTerminalRunLifecycleEvent(run, run.Status, run.Error, "run.failed", string(payload))
 	}
+	workdir, err := s.runWorkdir(runContext, run.ID)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if err := orchestration.ValidateBoundedWorkers(workdir, workers); err != nil {
+		fail(err)
+		return
+	}
+	projectPrompt, err := s.Store.ProjectBriefPromptForRun(runContext, run.ID, run.BotID)
+	if err != nil {
+		fail(err)
+		return
+	}
+	systemPrompt = appendSystemPrompt(systemPrompt, projectPrompt)
 	if _, err := s.commitRunLifecycleEvent(runContext, run, "running", "", "run.started", `{"status":"running","orchestration":"one_hop"}`); err != nil {
 		fail(err)
 		return
@@ -1904,10 +2070,15 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 		return
 	}
 
+	executor = projectRunExecutor{server: s, run: run, next: executor}
+
 	leadSessionID := run.SessionID
 	onLeadSession := func(nativeSessionID string) {
+		if err := s.Store.BindHarnessSessionContext(context.Background(), run.ID, run.Provider, nativeSessionID, workdir); err != nil {
+			return
+		}
 		leadSessionID = nativeSessionID
-		session, sessionErr := s.Store.UpsertHarnessSession(context.Background(), run.ConversationID, run.Provider, nativeSessionID, s.HarnessWorkdir, run.Provider+" session", "ready")
+		session, sessionErr := s.Store.UpsertHarnessSession(context.Background(), run.ConversationID, run.Provider, nativeSessionID, workdir, run.Provider+" session", "ready")
 		if sessionErr == nil {
 			sessionPayload, _ := json.Marshal(session)
 			_, _ = s.emitRunEvent(context.Background(), run, "session.opened", string(sessionPayload))
@@ -1928,7 +2099,7 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 	}
 
 	_, _ = s.emitRunEvent(runContext, run, "lead.draft.started", `{"phase":"draft"}`)
-	draftOutput, err := executor.RunWithOptions(runContext, run.Provider, run.Prompt, s.HarnessWorkdir, leadOptions(leadSessionID, nil))
+	draftOutput, err := executor.RunWithOptions(runContext, run.Provider, run.Prompt, workdir, leadOptions(leadSessionID, nil))
 	if err != nil {
 		fail(err)
 		return
@@ -1937,7 +2108,7 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 	_, _ = s.emitRunEvent(runContext, run, "lead.draft.completed", `{"phase":"draft"}`)
 
 	workerResults, err := orchestration.ExecuteOneHop(runContext, orchestration.OneHopRequest{
-		RunID: run.ID, Lead: leadHarness, Workdir: s.HarnessWorkdir,
+		RunID: run.ID, Lead: leadHarness, Workdir: workdir,
 		UserTask: workerTask, LeadDraft: leadDraft, Workers: workers,
 	}, orchestration.OneHopWorkerExecutorFunc(func(workerContext context.Context, call orchestration.OneHopWorkerCall) (string, error) {
 		startedPayload, _ := json.Marshal(workerEventPayload(call.Profile, call.Index, "running"))
@@ -1972,7 +2143,7 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 		return
 	}
 	_, _ = s.emitRunEvent(runContext, run, "lead.synthesis.started", `{"phase":"synthesis"}`)
-	finalOutput, err := executor.RunWithOptions(runContext, run.Provider, synthesisPrompt, s.HarnessWorkdir, leadOptions(leadSessionID, func(line harness.OutputLine) {
+	finalOutput, err := executor.RunWithOptions(runContext, run.Provider, synthesisPrompt, workdir, leadOptions(leadSessionID, func(line harness.OutputLine) {
 		payload, marshalErr := json.Marshal(map[string]string{"stream": line.Stream, "text": line.Text, "type": line.Type})
 		if marshalErr == nil {
 			if line.Type != "" && line.Type != "text" && line.Type != "thought" {
@@ -3739,7 +3910,8 @@ func setHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Add("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID, X-OpenAgentFleet-Computer-Use, X-OpenAgentFleet-Computer-Run-ID, X-OpenAgentFleet-Computer-Run-Token, X-OpenAgentFleet-Collab-Run-ID, X-OpenAgentFleet-Collab-Run-Token")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Last-Event-ID, X-OpenAgentFleet-Computer-Use, X-OpenAgentFleet-Computer-Run-ID, X-OpenAgentFleet-Computer-Run-Token, X-OpenAgentFleet-Collab-Run-ID, X-OpenAgentFleet-Collab-Run-Token")
+	w.Header().Set("Access-Control-Expose-Headers", "Location, X-GitHub-Workflow-ID")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 }
 
