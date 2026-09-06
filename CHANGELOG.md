@@ -8,7 +8,19 @@ ship paragraph dumps.
 
 ### Added
 
+- Engine adapters wrap the existing provider runners and emit normalized `agent.*` events.
+- Tool registry with canonical names and existing MCP aliases.
+- Computer backend interface wrapping the existing Docker runtime, with native execution available for tests.
+- Per-Agent queue shared by chat, group, delegation, and routine turns.
+- Coordinator delegation events on the existing handoff records.
 - README 19-second first-run storyboard with voiceover, plus roster / gated-routine / Routines screenshots.
+
+### Fixed
+
+- Computer and collaboration capability leases start when a turn executes, so queue waits do not consume their lifetime. Routine turns now bind their configured Computer MCP capability at execution too.
+- Canceling a running routine waits for executor cleanup before completing its occurrence. Canceling a queued routine preserves the user's stop reason.
+- Delegations emit their started event after the target run starts, rather than when it joins the queue.
+- Queued Agents explain that tasks run one at a time and do not show another turn's active computer as their own work.
 
 ## 0.3.1-alpha - 2026-08-25
 

@@ -12,7 +12,7 @@ the trailing release comments are only human-readable version labels.
 | Check | What it proves | What it deliberately does not prove |
 | --- | --- | --- |
 | `go test ./...` | Go unit and package integration tests pass. | A real harness, Docker daemon, or graphical desktop works. |
-| `go test -race ./internal/compute ./internal/httpapi ./internal/browsermcp` | The Agent Computer, browser-MCP and HTTP API test suites have no race detected in their exercised paths. | Race freedom across every package or a live container session. |
+| `go test -race ./internal/coordinator ./internal/engine ./internal/tools ./internal/computer ./internal/compute ./internal/httpapi ./internal/browsermcp` | The runtime queue, engine, tools, computer backends, browser-MCP and HTTP API test suites have no race detected in their exercised paths. | Race freedom across every package or a live container session. |
 | HTTP/store lifecycle tests | Attachment upload/claim/run creation is atomic, stale pending uploads are bounded, immediate run cancellation is accepted, a late provider answer cannot be persisted after stop, and one-chat visibility remains per-Agent. | A provider completing a real task or recovery from every external process failure. |
 | Agent Computer contract smoke | Disabled mode, loopback-only published ports, bounded browser/desktop actions, redirect refusal, and local-only Colima installation remain enforced in fake/in-process tests. | Starting Colima, Docker, Chromium, a remote worker, or a real browser. |
 | `pnpm --dir client exec tsc --noEmit` | The TypeScript client typechecks. | Rendering, native Tauri APIs, microphone permission, or drag-and-drop on macOS. |

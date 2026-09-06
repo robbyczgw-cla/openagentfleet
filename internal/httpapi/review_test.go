@@ -49,7 +49,7 @@ func TestReviewQueuePendingApprovalAndCompletedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	reviewer, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Cami", Title: "Reviewer", Description: ""})
+	reviewer, err := instance.CreateAgent(ctx, domain.AgentDraft{Name: "Reviewer", Title: "Reviewer", Description: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestReviewQueuePendingApprovalAndCompletedRun(t *testing.T) {
 	if len(first.Options) != 1 || first.Options[0].OptionID != "allow_once" {
 		t.Fatalf("approval options = %#v", first.Options)
 	}
-	if second.Kind != "run" || second.Status != "completed" || second.RunID != finished.ID || second.BotName != "Cami" {
+	if second.Kind != "run" || second.Status != "completed" || second.RunID != finished.ID || second.BotName != "Reviewer" {
 		t.Fatalf("run item = %#v", second)
 	}
 	if second.Summary != "Edit src/main.go" {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/collaborationmcp"
+	"github.com/robbyczgw-cla/openagentfleet/internal/coordinator"
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 	"github.com/robbyczgw-cla/openagentfleet/internal/orchestration"
@@ -212,6 +213,15 @@ func (s *Server) startAgentCollaboration(ctx context.Context, sourceRun domain.R
 	if err != nil {
 		return domain.Handoff{}, domain.Run{}, err
 	}
+	if mode == domain.HandoffModeDelegate {
+		if s.Coordinator != nil {
+			if _, err := s.Coordinator.PlanDelegation(task); err != nil {
+				return domain.Handoff{}, domain.Run{}, err
+			}
+		} else if _, err := coordinator.PlanDelegation(task); err != nil {
+			return domain.Handoff{}, domain.Run{}, err
+		}
+	}
 	targetConversation, err := s.Store.CanonicalConversationForBot(ctx, targetBotID)
 	if err != nil {
 		return domain.Handoff{}, domain.Run{}, err
@@ -277,22 +287,15 @@ func (s *Server) startAgentCollaboration(ctx context.Context, sourceRun domain.R
 	}
 	run := result.Run
 	if computerCapability != "" {
-		leaseTTL := time.Duration(timeoutSeconds) * time.Second
-		if leaseTTL <= 0 {
-			leaseTTL = s.RunTimeout
-		}
-		s.bindComputerCapability(computerCapability, run.ID, leaseTTL)
 		setComputerRunID(mcpServers, run.ID)
 	}
 	if collabCapability != "" {
-		leaseTTL := time.Duration(timeoutSeconds) * time.Second
-		if leaseTTL <= 0 {
-			leaseTTL = s.RunTimeout
-		}
-		s.bindCollabCapability(collabCapability, run.ID, leaseTTL)
 		setCollabRunID(mcpServers, run.ID)
 	}
 	s.publishHandoff(result.Handoff, "handoff.created")
+	if mode == domain.HandoffModeDelegate {
+		s.publishDelegation(result.Handoff, domain.EventAgentDelegationCreated)
+	}
 	s.publishStoredRunEvent(run, result.QueuedEvent)
 	systemPrompt := ""
 	if hasTarget {
@@ -306,7 +309,7 @@ func (s *Server) startAgentCollaboration(ctx context.Context, sourceRun domain.R
 		s.revokeCollabCapability(collabCapability)
 		return result.Handoff, run, nil
 	}
-	s.launchRun(run.ID, func(runContext context.Context) {
+	s.launchAgentTurn(run.BotID, run.ID, func(runContext context.Context) {
 		s.executeRunWithContext(runContext, run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch, timeoutSeconds, mcpServers)
 	})
 	return result.Handoff, run, nil
@@ -509,6 +512,13 @@ func (s *Server) finishCollaborationHandoff(run domain.Run, status, runError str
 	if _, err := s.Store.AppendHandoffResultToSource(context.Background(), handoff.ID, summary); err == nil {
 		updated, _ := s.Store.GetHandoff(context.Background(), handoff.ID)
 		s.publishHandoff(updated, "handoff.completed")
+		if updated.Mode == domain.HandoffModeDelegate {
+			eventType := domain.EventAgentDelegationCompleted
+			if handoffStatus != domain.HandoffStatusCompleted {
+				eventType = domain.EventAgentDelegationFailed
+			}
+			s.publishDelegation(updated, eventType)
+		}
 	}
 }
 
@@ -519,6 +529,34 @@ func (s *Server) publishHandoff(handoff domain.Handoff, eventType string) {
 	payload, _ := json.Marshal(handoff)
 	for _, conversationID := range []string{handoff.SourceConversationID, handoff.TargetConversationID} {
 		s.Broker.Publish(domain.StreamEvent{
+			ConversationID: conversationID,
+			Type:           eventType,
+			Data:           string(payload),
+			CreatedAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}
+}
+
+func (s *Server) publishDelegation(handoff domain.Handoff, eventType string) {
+	if s.Broker == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{
+		"handoff_id":      handoff.ID,
+		"source_agent_id": handoff.SourceBotID,
+		"target_agent_id": handoff.TargetBotID,
+		"source_turn_id":  handoff.SourceRunID,
+		"target_turn_id":  handoff.TargetRunID,
+		"depth":           handoff.Depth,
+		"status":          handoff.Status,
+	})
+	if err != nil {
+		return
+	}
+	for _, conversationID := range []string{handoff.SourceConversationID, handoff.TargetConversationID} {
+		s.Broker.Publish(domain.StreamEvent{
+			RunID:          handoff.TargetRunID,
+			BotID:          handoff.TargetBotID,
 			ConversationID: conversationID,
 			Type:           eventType,
 			Data:           string(payload),

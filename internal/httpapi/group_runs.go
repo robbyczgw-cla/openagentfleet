@@ -19,7 +19,7 @@ func (s *Server) launchGroupRuns(runs []domain.GroupRun) {
 	}
 	for _, run := range runs {
 		groupRun := run
-		s.launchRun(groupRun.ID, func(runContext context.Context) {
+		s.launchAgentTurn(groupRun.BotID, groupRun.ID, func(runContext context.Context) {
 			s.executeGroupRun(runContext, groupRun)
 		})
 	}

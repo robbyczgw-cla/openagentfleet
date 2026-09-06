@@ -49,6 +49,51 @@ func TestAgentsAPICreatesAtomicAgentAndPersistsMetadata(t *testing.T) {
 	}
 }
 
+func TestAgentsAPIComputerBindingSurvivesEngineSwitch(t *testing.T) {
+	instance, handler := openAgentsAPIServer(t)
+	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{
+		"name":"Scout","title":"Research teammate","description":"Persistent identity.",
+		"metadata":{"lead":{"harness":"codex_app_server","model":"gpt-5"},"computer":{"id":"desk-1","backend":"docker"}}
+	}`)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
+	}
+	var created domain.Agent
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Bot.ID == "" || created.Metadata == nil || created.Metadata.Computer == nil || created.Metadata.Computer.ID != "desk-1" {
+		t.Fatalf("created computer binding = %#v", created)
+	}
+	botID := created.Bot.ID
+	patchedResponse := agentsAPIRequest(handler, http.MethodPatch, "/api/agents/"+botID, `{
+		"metadata":{"lead":{"harness":"grok_build","model":"grok-4.6"}}
+	}`)
+	if patchedResponse.Code != http.StatusOK {
+		t.Fatalf("patch engine = %d, body = %s", patchedResponse.Code, patchedResponse.Body.String())
+	}
+	var patched domain.Agent
+	if err := json.NewDecoder(patchedResponse.Body).Decode(&patched); err != nil {
+		t.Fatal(err)
+	}
+	if patched.Bot.ID != botID {
+		t.Fatalf("engine switch changed identity: %q -> %q", botID, patched.Bot.ID)
+	}
+	if patched.Metadata == nil || patched.Metadata.Lead == nil || patched.Metadata.Lead.Harness != "grok_build" {
+		t.Fatalf("engine did not switch: %#v", patched.Metadata)
+	}
+	if patched.Metadata.Computer == nil || patched.Metadata.Computer.ID != "desk-1" || patched.Metadata.Computer.Backend != "docker" {
+		t.Fatalf("computer binding lost: %#v", patched.Metadata.Computer)
+	}
+	listed, err := instance.ListAgents(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Bot.ID != botID || listed[0].Metadata == nil || listed[0].Metadata.Computer == nil || listed[0].Metadata.Computer.ID != "desk-1" {
+		t.Fatalf("stored computer = %#v", listed)
+	}
+}
+
 func TestAgentsAPIPatchesDurableProfileAndConfiguration(t *testing.T) {
 	instance, handler := openAgentsAPIServer(t)
 	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{"name":"Original","title":"Original teammate","description":"Before."}`)
@@ -573,7 +618,7 @@ func TestConcurrentAgentMetadataPatchesDoNotLoseIndependentUpdates(t *testing.T)
 func TestAgentsAPIPresenceAndClearLead(t *testing.T) {
 	instance, handler := openAgentsAPIServer(t)
 	createdResponse := agentsAPIRequest(handler, http.MethodPost, "/api/agents", `{
-		"name":"Andy","title":"Builder","description":"Builds.",
+		"name":"Builder","title":"Builder","description":"Builds.",
 		"metadata":{"lead":{"harness":"codex_app_server","model":"gpt-5.5","reasoning":"high","service_tier":"default","permission":"ask"}}
 	}`)
 	if createdResponse.Code != http.StatusCreated {

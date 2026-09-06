@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/browsermcp"
+	"github.com/robbyczgw-cla/openagentfleet/internal/collaborationmcp"
 	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 )
 
@@ -115,4 +116,25 @@ func (s *Server) releaseComputerCapability(servers []harness.MCPServerSpec) {
 	s.computerActionMu.Lock()
 	defer s.computerActionMu.Unlock()
 	s.revokeComputerCapability(computerCapabilityFromMCPServers(servers))
+}
+
+// Bind leases when the queued turn starts so waiting does not consume its TTL.
+func (s *Server) bindRunCapabilities(servers []harness.MCPServerSpec, runID string, ttl time.Duration) {
+	setComputerRunID(servers, runID)
+	setCollabRunID(servers, runID)
+	s.bindComputerCapability(computerCapabilityFromMCPServers(servers), runID, ttl)
+	for _, server := range servers {
+		if server.Name == collaborationmcp.MCPServerName {
+			s.bindCollabCapability(server.Env[collaborationmcp.RunTokenEnv], runID, ttl)
+		}
+	}
+}
+
+func (s *Server) releaseRunCapabilities(servers []harness.MCPServerSpec) {
+	s.releaseComputerCapability(servers)
+	for _, server := range servers {
+		if server.Name == collaborationmcp.MCPServerName {
+			s.revokeCollabCapability(server.Env[collaborationmcp.RunTokenEnv])
+		}
+	}
 }
