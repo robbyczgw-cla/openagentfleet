@@ -66,6 +66,17 @@ func TestCORSAllowsSSEResumeHeader(t *testing.T) {
 	}
 }
 
+func TestCORSAllowsTaskRetryIdempotencyHeader(t *testing.T) {
+	request := httptest.NewRequest(http.MethodOptions, "/api/tasks/run-1/retry", nil)
+	request.Header.Set("Origin", "http://tauri.localhost")
+	request.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type, Idempotency-Key")
+	response := httptest.NewRecorder()
+	(&Server{}).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || !strings.Contains(response.Header().Get("Access-Control-Allow-Headers"), "Idempotency-Key") {
+		t.Fatalf("retry preflight = %d, headers=%v", response.Code, response.Header())
+	}
+}
+
 func TestDesktopLifecycleEventsCommitAndPublishOnce(t *testing.T) {
 	instance, err := store.Open(filepath.Join(t.TempDir(), "botd.sqlite"))
 	if err != nil {

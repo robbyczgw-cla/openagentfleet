@@ -33,8 +33,12 @@ type collaborationTaskRequest struct {
 type collaborationCapabilityScope uint8
 
 const (
-	collaborationCapabilityScopeCollaboration collaborationCapabilityScope = iota + 1
-	collaborationCapabilityScopeGitHubOnly
+	collaborationCapabilityScopeCollaboration collaborationCapabilityScope = 1 << iota
+	collaborationCapabilityScopeGitHub
+	collaborationCapabilityScopeMemory
+	// Keep the old name for tests and integrations that inspect GitHub-only
+	// issuance while scopes move to independent bits.
+	collaborationCapabilityScopeGitHubOnly = collaborationCapabilityScopeGitHub
 )
 
 type collaborationCapabilityScopeKey struct {
@@ -309,6 +313,17 @@ func (s *Server) startAgentCollaboration(ctx context.Context, sourceRun domain.R
 	if collabCapability != "" {
 		setCollabRunID(mcpServers, run.ID)
 	}
+	if _, err := s.Store.SnapshotProjectForRun(ctx, run.ID, domain.ProjectSubjectConversation, targetConversation.ID, targetBotID); err != nil {
+		s.failRunPreparation(run, err)
+		_ = s.Store.UpdateHandoffStatus(ctx, result.Handoff.ID, domain.HandoffStatusFailed, err.Error())
+		run.Status = "failed"
+		if store.IsProjectAccessBlocked(err) {
+			run.Status = "blocked"
+		}
+		run.Error = err.Error()
+		s.releaseRunCapabilities(mcpServers)
+		return result.Handoff, run, err
+	}
 	s.publishHandoff(result.Handoff, "handoff.created")
 	if mode == domain.HandoffModeDelegate {
 		s.publishDelegation(result.Handoff, domain.EventAgentDelegationCreated)
@@ -368,17 +383,93 @@ func (s *Server) authorizedCollaborationRun(r *http.Request) (domain.Run, error)
 		return run, err
 	}
 	token := strings.TrimSpace(r.Header.Get(collaborationmcp.RunTokenHeader))
-	scope, ok := collaborationCapabilityScopes.Load(collaborationCapabilityScopeKey{server: s, token: token})
-	if !ok || scope != collaborationCapabilityScopeCollaboration {
+	value, ok := collaborationCapabilityScopes.Load(collaborationCapabilityScopeKey{server: s, token: token})
+	scope, validScope := value.(collaborationCapabilityScope)
+	if !ok || !validScope || scope&collaborationCapabilityScopeCollaboration == 0 {
 		return domain.Run{}, errors.New("collaboration run authorization required")
 	}
 	return run, nil
 }
 
+// authorizeAPIRequest separates the controller bearer used by the local UI
+// from short-lived bridge bearers. A bridge bearer is valid for one active run
+// and only for routes covered by its issued scope.
+func (s *Server) authorizeAPIRequest(r *http.Request) bool {
+	if strings.TrimSpace(s.RemoteToken) != "" && authorized(r, s.RemoteToken) {
+		return true
+	}
+	token := bridgeBearerToken(r)
+	runID := strings.TrimSpace(r.Header.Get(collaborationmcp.RunIDHeader))
+	headerToken := strings.TrimSpace(r.Header.Get(collaborationmcp.RunTokenHeader))
+	if token == "" || runID == "" || headerToken == "" || token != headerToken {
+		return false
+	}
+	required, ok := bridgeRouteScope(r.Method, r.URL.Path)
+	if !ok {
+		return false
+	}
+	value, ok := collaborationCapabilityScopes.Load(collaborationCapabilityScopeKey{server: s, token: token})
+	if !ok {
+		return false
+	}
+	scope, ok := value.(collaborationCapabilityScope)
+	if !ok || scope&required == 0 {
+		return false
+	}
+	s.collabCapabilityMu.RLock()
+	capability, leased := s.collabCapabilities[token]
+	s.collabCapabilityMu.RUnlock()
+	if !leased || capability.runID != runID || !time.Now().UTC().Before(capability.expiresAt) {
+		return false
+	}
+	if s.Store == nil {
+		return false
+	}
+	run, err := s.Store.GetRun(r.Context(), runID)
+	return err == nil && !terminalRunStatus(run.Status)
+}
+
+func bridgeBearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	value := r.Header.Get("Authorization")
+	if !strings.HasPrefix(value, prefix) {
+		return ""
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+	if token == "" || value != prefix+token {
+		return ""
+	}
+	return token
+}
+
+func bridgeRouteScope(method, path string) (collaborationCapabilityScope, bool) {
+	switch {
+	case method == http.MethodPost && path == "/api/collaboration/memory-proposals":
+		return collaborationCapabilityScopeMemory, true
+	case method == http.MethodGet && path == "/api/collaboration/agents":
+		return collaborationCapabilityScopeCollaboration, true
+	case method == http.MethodPost && (path == "/api/collaboration/message" || path == "/api/collaboration/delegate"):
+		return collaborationCapabilityScopeCollaboration, true
+	case method == http.MethodGet && strings.HasPrefix(path, "/api/collaboration/tasks/"):
+		return collaborationCapabilityScopeCollaboration, true
+	case method == http.MethodPost && strings.HasPrefix(path, "/api/collaboration/tasks/") && strings.HasSuffix(path, "/cancel"):
+		return collaborationCapabilityScopeCollaboration, true
+	case method == http.MethodPost && path == "/api/connections/github/read":
+		return collaborationCapabilityScopeGitHub, true
+	default:
+		return 0, false
+	}
+}
+
 func (s *Server) authorizedBridgeRun(r *http.Request) (domain.Run, error) {
 	runID := strings.TrimSpace(r.Header.Get(collaborationmcp.RunIDHeader))
 	token := strings.TrimSpace(r.Header.Get(collaborationmcp.RunTokenHeader))
-	if runID == "" || token == "" {
+	if runID == "" || token == "" || !s.bridgeCredentialMatches(r, token) {
+		return domain.Run{}, errors.New("collaboration run authorization required")
+	}
+	value, scoped := collaborationCapabilityScopes.Load(collaborationCapabilityScopeKey{server: s, token: token})
+	scope, validScope := value.(collaborationCapabilityScope)
+	if !scoped || !validScope || scope&(collaborationCapabilityScopeCollaboration|collaborationCapabilityScopeGitHub) == 0 {
 		return domain.Run{}, errors.New("collaboration run authorization required")
 	}
 	s.collabCapabilityMu.RLock()
@@ -395,6 +486,37 @@ func (s *Server) authorizedBridgeRun(r *http.Request) (domain.Run, error) {
 		return domain.Run{}, errors.New("collaboration run is no longer active")
 	}
 	return run, nil
+}
+
+func (s *Server) authorizedMemoryProposalRun(r *http.Request) (domain.Run, error) {
+	runID := strings.TrimSpace(r.Header.Get(collaborationmcp.RunIDHeader))
+	token := strings.TrimSpace(r.Header.Get(collaborationmcp.RunTokenHeader))
+	if runID == "" || token == "" || !s.bridgeCredentialMatches(r, token) {
+		return domain.Run{}, errors.New("memory proposal run authorization required")
+	}
+	value, ok := collaborationCapabilityScopes.Load(collaborationCapabilityScopeKey{server: s, token: token})
+	scope, validScope := value.(collaborationCapabilityScope)
+	if !ok || !validScope || scope&collaborationCapabilityScopeMemory == 0 {
+		return domain.Run{}, errors.New("memory proposal run authorization required")
+	}
+	s.collabCapabilityMu.RLock()
+	capability, exists := s.collabCapabilities[token]
+	s.collabCapabilityMu.RUnlock()
+	if !exists || capability.runID != runID || !time.Now().UTC().Before(capability.expiresAt) {
+		return domain.Run{}, errors.New("memory proposal run authorization required")
+	}
+	run, err := s.Store.GetRun(r.Context(), runID)
+	if err != nil || terminalRunStatus(run.Status) {
+		return domain.Run{}, errors.New("memory proposal run is no longer active")
+	}
+	return run, nil
+}
+
+func (s *Server) bridgeCredentialMatches(r *http.Request, capability string) bool {
+	if strings.TrimSpace(s.RemoteToken) != "" && authorized(r, s.RemoteToken) {
+		return true
+	}
+	return bridgeBearerToken(r) == capability
 }
 
 func (s *Server) bindCollabCapability(token, runID string, ttl ...time.Duration) {
@@ -459,6 +581,24 @@ func setCollabRunID(servers []harness.MCPServerSpec, runID string) {
 
 func (s *Server) appendCollaborationMCP(ctx context.Context, specs []harness.MCPServerSpec, agent domain.Agent, hasAgent bool, effectiveProviders ...string) (string, []harness.MCPServerSpec, error) {
 	collaborationEnabled := hasAgent && agent.Metadata != nil && agent.Metadata.Collaboration != nil && agent.Metadata.Collaboration.Enabled
+	provider := ""
+	if len(effectiveProviders) > 0 {
+		provider = strings.TrimSpace(effectiveProviders[0])
+	}
+	preferences, err := s.Store.GetPreferences(ctx)
+	if err != nil {
+		return "", specs, err
+	}
+	if provider == "" {
+		provider = preferences.Normalize().Workspace.Engine
+		if provider == "" {
+			provider = "grok"
+		}
+		if hasAgent && agent.Metadata != nil && agent.Metadata.Lead != nil {
+			provider = configuredLeadProvider(agent.Metadata.Lead.Harness)
+		}
+	}
+	memoryEnabled := hasAgent && preferences.Normalize().Features.MemoryProposals && !isPiLeadProvider(provider)
 	githubEnabled := false
 	if hasAgent && s.Store != nil {
 		connection, err := s.Store.GetGitHubConnection(ctx)
@@ -467,29 +607,12 @@ func (s *Server) appendCollaborationMCP(ctx context.Context, specs []harness.MCP
 		}
 		githubEnabled = connection.Enabled && slices.Contains(connection.AgentIDs, agent.Bot.ID)
 		if githubEnabled {
-			provider := ""
-			if len(effectiveProviders) > 0 {
-				provider = strings.TrimSpace(effectiveProviders[0])
-			}
-			if provider == "" {
-				preferences, err := s.Store.GetPreferences(ctx)
-				if err != nil {
-					return "", specs, err
-				}
-				provider = preferences.Normalize().Workspace.Engine
-				if provider == "" {
-					provider = "grok"
-				}
-				if agent.Metadata != nil && agent.Metadata.Lead != nil {
-					provider = configuredLeadProvider(agent.Metadata.Lead.Harness)
-				}
-			}
 			if isPiLeadProvider(provider) {
 				githubEnabled = false
 			}
 		}
 	}
-	if !collaborationEnabled && !githubEnabled {
+	if !collaborationEnabled && !githubEnabled && !memoryEnabled {
 		return "", specs, nil
 	}
 	spec, token, err := s.collaborationMCPServerSpec()
@@ -499,17 +622,29 @@ func (s *Server) appendCollaborationMCP(ctx context.Context, specs []harness.MCP
 	if githubEnabled {
 		spec.Env[collaborationmcp.GitHubEnabledEnv] = "1"
 	}
+	if memoryEnabled {
+		spec.Env[collaborationmcp.MemoryEnabledEnv] = "1"
+	}
+	scope := collaborationCapabilityScope(0)
+	if collaborationEnabled {
+		scope |= collaborationCapabilityScopeCollaboration
+	}
+	if githubEnabled {
+		scope |= collaborationCapabilityScopeGitHub
+	}
+	if memoryEnabled {
+		scope |= collaborationCapabilityScopeMemory
+	}
 	if !collaborationEnabled {
 		spec.Env[collaborationmcp.GitHubOnlyEnv] = "1"
-		s.setCollabCapabilityScope(token, collaborationCapabilityScopeGitHubOnly)
 	}
+	s.setCollabCapabilityScope(token, scope)
 	return token, append(specs, spec), nil
 }
 
 func (s *Server) collaborationMCPServerSpec() (harness.MCPServerSpec, string, error) {
-	token := strings.TrimSpace(s.RemoteToken)
-	if token == "" {
-		return harness.MCPServerSpec{}, "", errors.New("Agent collaboration MCP requires botd bearer authentication")
+	if strings.TrimSpace(s.RemoteToken) == "" {
+		return harness.MCPServerSpec{}, "", errors.New("Agent collaboration MCP requires controller bearer authentication")
 	}
 	command := strings.TrimSpace(s.CollaborationMCPCommand)
 	if command == "" {
@@ -549,7 +684,7 @@ func (s *Server) collaborationMCPServerSpec() (harness.MCPServerSpec, string, er
 		Command: resolved,
 		Env: map[string]string{
 			collaborationmcp.APIURLEnv:   strings.TrimRight(apiURL, "/"),
-			collaborationmcp.APITokenEnv: token,
+			collaborationmcp.APITokenEnv: capability,
 			collaborationmcp.RunTokenEnv: capability,
 		},
 	}, capability, nil
