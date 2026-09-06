@@ -32,6 +32,8 @@ ship paragraph dumps.
 
 ### Fixed
 
+- Project snapshots no longer fail with a SQLite lock error when another Agent turn writes at the same time. Snapshot transactions reserve the writer before reading the project, and unassigned routine runs retain their origin for later retries.
+
 - Desktop startup no longer times out while `botd` is already healthy. The native shell's health check read only the first 512 bytes of the `/health` reply, so once response headers grew past that the JSON body never arrived and the app reported a startup timeout. It now reads the whole reply up to 8192 bytes, and a regression test covers a fragmented reply with large headers. Found during the native Linux test of this branch.
 - Packaged desktop apps bundle `collaboration-mcp` and hand its path to `botd`, so GitHub and collaboration tools work outside a source checkout. The Linux, macOS and Windows release verification scripts fail when it is missing.
 - Computer and collaboration capability leases start when a turn executes, so queue waits do not consume their lifetime. Routine turns now bind their configured Computer MCP capability at execution too.

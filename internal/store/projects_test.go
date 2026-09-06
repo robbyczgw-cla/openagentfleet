@@ -1,13 +1,188 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
 )
+
+func TestUnassociatedProjectSubjectWriteWaitsWithoutDeferredUpgrade(t *testing.T) {
+	instance, first, _ := openProjectTestStore(t)
+	run, err := instance.CreateRun(t.Context(), first.Conversation.ID, first.Bot.ID, "test", "ordinary chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := instance.db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	type result struct {
+		snapshot *domain.ProjectTaskSnapshot
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snapshot, snapshotErr := instance.SnapshotProjectForRun(t.Context(), run.ID, domain.ProjectSubjectConversation, first.Conversation.ID, first.Bot.ID)
+		done <- result{snapshot: snapshot, err: snapshotErr}
+	}()
+	select {
+	case got := <-done:
+		_, _ = writer.ExecContext(context.Background(), "ROLLBACK")
+		_ = writer.Close()
+		t.Fatalf("subject write did not wait for writer: %#v, %v", got.snapshot, got.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := writer.ExecContext(t.Context(), "ROLLBACK"); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil || got.snapshot != nil {
+			t.Fatalf("unassociated snapshot after writer release = %#v, %v", got.snapshot, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subject write did not resume after writer release")
+	}
+	var subjects int
+	if err := instance.db.QueryRowContext(t.Context(), `SELECT count(*) FROM project_run_subjects WHERE run_id=?`, run.ID).Scan(&subjects); err != nil {
+		t.Fatal(err)
+	}
+	if subjects != 1 {
+		t.Fatalf("unassociated run wrote %d subject rows", subjects)
+	}
+}
+
+func TestAssociatedProjectSnapshotWaitsForWriterAndRemainsAtomic(t *testing.T) {
+	instance, first, _ := openProjectTestStore(t)
+	project, err := instance.CreateProject(t.Context(), domain.ProjectDraft{
+		Name: "Release", Brief: "fixed revision", AgentIDs: []string{first.Bot.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.SetProjectAssociation(t.Context(), project.ID, domain.ProjectSubjectConversation, first.Conversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	run, err := instance.CreateRun(t.Context(), first.Conversation.ID, first.Bot.ID, "test", "associated chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := instance.db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	type result struct {
+		snapshot *domain.ProjectTaskSnapshot
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snapshot, snapshotErr := instance.SnapshotProjectForRun(t.Context(), run.ID, domain.ProjectSubjectConversation, first.Conversation.ID, first.Bot.ID)
+		done <- result{snapshot: snapshot, err: snapshotErr}
+	}()
+	select {
+	case got := <-done:
+		_, _ = writer.ExecContext(context.Background(), "ROLLBACK")
+		_ = writer.Close()
+		t.Fatalf("associated snapshot did not wait for writer: %#v, %v", got.snapshot, got.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := writer.ExecContext(t.Context(), "ROLLBACK"); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		if got.err != nil || got.snapshot == nil || got.snapshot.ProjectID != project.ID || got.snapshot.Brief != project.Brief {
+			t.Fatalf("associated snapshot after writer release = %#v, %v", got.snapshot, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("associated snapshot did not resume after writer release")
+	}
+	var subjects, snapshots int
+	if err := instance.db.QueryRowContext(t.Context(), `SELECT
+(SELECT count(*) FROM project_run_subjects WHERE run_id=?),
+(SELECT count(*) FROM project_task_snapshots WHERE run_id=?)`, run.ID, run.ID).Scan(&subjects, &snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if subjects != 1 || snapshots != 1 {
+		t.Fatalf("atomic rows = subjects %d snapshots %d", subjects, snapshots)
+	}
+}
+
+func TestUnassignedRoutineProvenanceSelectsLaterProjectOnRetry(t *testing.T) {
+	instance, agent, _ := openProjectTestStore(t)
+	routine, err := instance.CreateRoutine(t.Context(), routineTestDraft(agent.Bot.ID, time.Now().Add(time.Hour)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := instance.CreateRun(t.Context(), agent.Conversation.ID, agent.Bot.ID, "grok", "routine before project assignment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := instance.SnapshotProjectForRun(t.Context(), parent.ID, domain.ProjectSubjectRoutine, routine.ID, agent.Bot.ID)
+	if err != nil || snapshot != nil {
+		t.Fatalf("unassigned routine snapshot = %#v, %v", snapshot, err)
+	}
+	var storedType domain.ProjectSubjectType
+	var storedID string
+	if err := instance.db.QueryRowContext(t.Context(), `SELECT subject_type,subject_id FROM project_run_subjects WHERE run_id=?`, parent.ID).Scan(&storedType, &storedID); err != nil {
+		t.Fatal(err)
+	}
+	if storedType != domain.ProjectSubjectRoutine || storedID != routine.ID {
+		t.Fatalf("stored provenance = %s/%s", storedType, storedID)
+	}
+
+	routineProject, err := instance.CreateProject(t.Context(), domain.ProjectDraft{
+		Name: "Later routine project", Brief: "routine retry instructions", AgentIDs: []string{agent.Bot.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatProject, err := instance.CreateProject(t.Context(), domain.ProjectDraft{
+		Name: "Chat project", Brief: "wrong retry instructions", AgentIDs: []string{agent.Bot.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.SetProjectAssociation(t.Context(), routineProject.ID, domain.ProjectSubjectRoutine, routine.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.SetProjectAssociation(t.Context(), chatProject.ID, domain.ProjectSubjectConversation, agent.Conversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	child, err := instance.CreateRun(t.Context(), agent.Conversation.ID, agent.Bot.ID, "grok", "retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.SnapshotTaskFollowupProject(t.Context(), parent.ID, child.ID, agent.Bot.ID); err != nil {
+		t.Fatal(err)
+	}
+	childSnapshot, err := instance.GetTaskProjectSnapshot(t.Context(), child.ID)
+	if err != nil || childSnapshot.ProjectID != routineProject.ID || childSnapshot.Brief != routineProject.Brief {
+		t.Fatalf("retry snapshot = %#v, %v", childSnapshot, err)
+	}
+}
 
 func openProjectTestStore(t *testing.T) (*Store, domain.Agent, domain.Agent) {
 	t.Helper()

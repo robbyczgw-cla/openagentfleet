@@ -376,41 +376,20 @@ func (s *Store) DeleteProjectAssociation(ctx context.Context, subjectType domain
 // An existing snapshot keeps its revision, but current status and membership
 // still gate every enqueue retry and later provider preflight.
 func (s *Store) SnapshotProjectForRun(ctx context.Context, runID string, subjectType domain.ProjectSubjectType, subjectID, agentID string) (*domain.ProjectTaskSnapshot, error) {
-	if err := s.MigrateProjects(ctx); err != nil {
-		return nil, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var runAgentID, conversationID string
-	if err := tx.QueryRowContext(ctx, `SELECT bot_id,conversation_id FROM runs WHERE id=?`, runID).Scan(&runAgentID, &conversationID); errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrProjectSubjectNotFound
-	} else if err != nil {
-		return nil, err
-	}
-	if runAgentID != agentID {
-		return nil, ErrProjectRunAgentMismatch
-	}
-	if subjectType == domain.ProjectSubjectConversation && conversationID != subjectID {
-		return nil, ErrProjectRunAgentMismatch
-	}
 	if !domain.ValidProjectSubjectType(subjectType) {
 		return nil, errors.New("invalid project association subject")
 	}
-	subjectAgentID, err := projectSubjectAgentID(ctx, tx, subjectType, subjectID)
-	if err != nil {
+	if err := validateProjectRunSubject(ctx, s.db, runID, subjectType, subjectID, agentID); err != nil {
 		return nil, err
 	}
-	if subjectAgentID != agentID {
-		return nil, ErrProjectRunAgentMismatch
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_run_subjects(run_id,subject_type,subject_id) VALUES(?,?,?) ON CONFLICT(run_id) DO NOTHING`, runID, subjectType, subjectID); err != nil {
+	// Subject provenance belongs to the run even when no project is associated
+	// yet. The standalone write can wait on SQLite's busy timeout without the
+	// read-to-write upgrade hazard of a deferred transaction.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_run_subjects(run_id,subject_type,subject_id) VALUES(?,?,?) ON CONFLICT(run_id) DO NOTHING`, runID, subjectType, subjectID); err != nil {
 		return nil, err
 	}
-	if existing, err := getTaskProjectSnapshot(ctx, tx, runID); err == nil {
-		if err := authorizeProjectSnapshot(ctx, tx, existing.ProjectID, agentID); err != nil {
+	if existing, err := getTaskProjectSnapshot(ctx, s.db, runID); err == nil {
+		if err := authorizeProjectSnapshot(ctx, s.db, existing.ProjectID, agentID); err != nil {
 			return nil, err
 		}
 		return &existing, nil
@@ -418,9 +397,36 @@ func (s *Store) SnapshotProjectForRun(ctx context.Context, runID string, subject
 		return nil, err
 	}
 	var projectID string
-	err = tx.QueryRowContext(ctx, `SELECT project_id FROM project_associations WHERE subject_type=? AND subject_id=?`, subjectType, subjectID).Scan(&projectID)
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM project_associations WHERE subject_type=? AND subject_id=?`, subjectType, subjectID).Scan(&projectID)
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := tx.Commit(); err != nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	conn, rollback, err := s.beginProjectImmediate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer rollback()
+	if err := validateProjectRunSubject(ctx, conn, runID, subjectType, subjectID, agentID); err != nil {
+		return nil, err
+	}
+	if existing, err := getTaskProjectSnapshot(ctx, conn, runID); err == nil {
+		if err := authorizeProjectSnapshot(ctx, conn, existing.ProjectID, agentID); err != nil {
+			return nil, err
+		}
+		if err := commitProjectImmediate(ctx, conn); err != nil {
+			return nil, err
+		}
+		return &existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	err = conn.QueryRowContext(ctx, `SELECT project_id FROM project_associations WHERE subject_type=? AND subject_id=?`, subjectType, subjectID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := commitProjectImmediate(ctx, conn); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -428,34 +434,31 @@ func (s *Store) SnapshotProjectForRun(ctx context.Context, runID string, subject
 	if err != nil {
 		return nil, err
 	}
-	project, err := loadProject(ctx, tx, projectID)
+	project, err := loadProject(ctx, conn, projectID)
 	if err != nil {
 		return nil, err
 	}
 	if project.Status == domain.ProjectStatusArchived {
 		return nil, ErrProjectArchived
 	}
-	if err := requireProjectMember(ctx, tx, projectID, agentID); err != nil {
+	if err := requireProjectMember(ctx, conn, projectID, agentID); err != nil {
 		return nil, err
 	}
 	snapshot := domain.ProjectTaskSnapshot{
 		RunID: runID, ProjectID: project.ID, ProjectName: project.Name,
 		BriefRevision: project.BriefRevision, Brief: project.Brief, CreatedAt: now(),
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_task_snapshots(run_id,project_id,project_name,brief_revision,brief,created_at) VALUES(?,?,?,?,?,?)`,
+	if _, err := conn.ExecContext(ctx, `INSERT INTO project_task_snapshots(run_id,project_id,project_name,brief_revision,brief,created_at) VALUES(?,?,?,?,?,?)`,
 		snapshot.RunID, snapshot.ProjectID, snapshot.ProjectName, snapshot.BriefRevision, snapshot.Brief, snapshot.CreatedAt); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commitProjectImmediate(ctx, conn); err != nil {
 		return nil, err
 	}
 	return &snapshot, nil
 }
 
 func (s *Store) GetTaskProjectSnapshot(ctx context.Context, runID string) (domain.ProjectTaskSnapshot, error) {
-	if err := s.MigrateProjects(ctx); err != nil {
-		return domain.ProjectTaskSnapshot{}, err
-	}
 	item, err := getTaskProjectSnapshot(ctx, s.db, runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ProjectTaskSnapshot{}, ErrProjectSnapshotNotFound
@@ -481,9 +484,6 @@ func (s *Store) SnapshotTaskFollowupProject(ctx context.Context, parentID, runID
 // ProjectBriefPromptForRun returns only the immutable project snapshot. Agent
 // memories remain on their existing private prompt path.
 func (s *Store) ProjectBriefPromptForRun(ctx context.Context, runID, agentID string) (string, error) {
-	if err := s.MigrateProjects(ctx); err != nil {
-		return "", err
-	}
 	var runAgentID string
 	if err := s.db.QueryRowContext(ctx, `SELECT bot_id FROM runs WHERE id=?`, runID).Scan(&runAgentID); errors.Is(err, sql.ErrNoRows) {
 		return "", ErrProjectSubjectNotFound
@@ -508,6 +508,53 @@ func (s *Store) ProjectBriefPromptForRun(ctx context.Context, runID, agentID str
 
 type projectQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (s *Store) beginProjectImmediate(ctx context.Context) (*sql.Conn, func(), error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("acquire project connection: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		_ = conn.Close()
+		return nil, func() {}, fmt.Errorf("configure project transaction: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		_ = conn.Close()
+		return nil, func() {}, fmt.Errorf("begin project transaction: %w", err)
+	}
+	rollback := func() {
+		_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		_ = conn.Close()
+	}
+	return conn, rollback, nil
+}
+
+func commitProjectImmediate(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("snapshot project for run: commit: %w", err)
+	}
+	return nil
+}
+
+func validateProjectRunSubject(ctx context.Context, queryer projectQueryer, runID string, subjectType domain.ProjectSubjectType, subjectID, agentID string) error {
+	var runAgentID, conversationID string
+	if err := queryer.QueryRowContext(ctx, `SELECT bot_id,conversation_id FROM runs WHERE id=?`, runID).Scan(&runAgentID, &conversationID); errors.Is(err, sql.ErrNoRows) {
+		return ErrProjectSubjectNotFound
+	} else if err != nil {
+		return err
+	}
+	if runAgentID != agentID || (subjectType == domain.ProjectSubjectConversation && conversationID != subjectID) {
+		return ErrProjectRunAgentMismatch
+	}
+	subjectAgentID, err := projectSubjectAgentID(ctx, queryer, subjectType, subjectID)
+	if err != nil {
+		return err
+	}
+	if subjectAgentID != agentID {
+		return ErrProjectRunAgentMismatch
+	}
+	return nil
 }
 
 func loadProject(ctx context.Context, queryer projectQueryer, projectID string) (domain.Project, error) {
@@ -575,14 +622,23 @@ func requireProjectMember(ctx context.Context, queryer projectQueryer, projectID
 }
 
 func authorizeProjectSnapshot(ctx context.Context, queryer projectQueryer, projectID, agentID string) error {
-	project, err := loadProject(ctx, queryer, projectID)
+	var status domain.ProjectStatus
+	var member bool
+	err := queryer.QueryRowContext(ctx, `SELECT p.status,EXISTS(
+SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.bot_id=?) FROM projects p WHERE p.id=?`, agentID, projectID).Scan(&status, &member)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrProjectNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if project.Status == domain.ProjectStatusArchived {
+	if status == domain.ProjectStatusArchived {
 		return ErrProjectArchived
 	}
-	return requireProjectMember(ctx, queryer, projectID, agentID)
+	if !member {
+		return ErrProjectAgentNotMember
+	}
+	return nil
 }
 
 func projectSubjectAgentID(ctx context.Context, queryer projectQueryer, subjectType domain.ProjectSubjectType, subjectID string) (string, error) {
