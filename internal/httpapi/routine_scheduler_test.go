@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,9 +13,172 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robbyczgw-cla/openagentfleet/internal/collaborationmcp"
 	"github.com/robbyczgw-cla/openagentfleet/internal/domain"
+	"github.com/robbyczgw-cla/openagentfleet/internal/harness"
 	"github.com/robbyczgw-cla/openagentfleet/internal/store"
 )
+
+type routineGitHubExecutor struct {
+	server    *Server
+	t         *testing.T
+	resultErr error
+	token     string
+}
+
+func (executor *routineGitHubExecutor) RunWithOptions(ctx context.Context, _, _, _ string, options harness.RunOptions) (string, error) {
+	executor.t.Helper()
+	var bridge *harness.MCPServerSpec
+	for index := range options.MCPServers {
+		if options.MCPServers[index].Name == collaborationmcp.MCPServerName {
+			bridge = &options.MCPServers[index]
+			break
+		}
+	}
+	if bridge == nil {
+		executor.t.Fatal("routine executor did not receive the GitHub MCP bridge")
+	}
+	if bridge.Env[collaborationmcp.GitHubEnabledEnv] != "1" || bridge.Env[collaborationmcp.GitHubOnlyEnv] != "1" {
+		executor.t.Fatalf("routine bridge flags = %#v", bridge.Env)
+	}
+	executor.token = bridge.Env[collaborationmcp.RunTokenEnv]
+	runID := bridge.Env[collaborationmcp.RunIDEnv]
+	if executor.token == "" || runID == "" {
+		executor.t.Fatalf("routine bridge capability is incomplete: %#v", bridge.Env)
+	}
+	executor.server.collabCapabilityMu.RLock()
+	capability, bound := executor.server.collabCapabilities[executor.token]
+	executor.server.collabCapabilityMu.RUnlock()
+	if !bound || capability.runID != runID {
+		executor.t.Fatalf("routine GitHub capability was not bound: %#v", capability)
+	}
+
+	bridgeServer, err := collaborationmcp.New(collaborationmcp.Config{
+		APIURL:        collaborationmcp.DefaultAPIURL,
+		APIToken:      "controller",
+		RunID:         runID,
+		RunToken:      executor.token,
+		GitHubEnabled: true,
+		GitHubOnly:    true,
+	})
+	if err != nil {
+		executor.t.Fatal(err)
+	}
+	var output bytes.Buffer
+	request := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n")
+	if err := bridgeServer.Serve(ctx, request, &output); err != nil {
+		executor.t.Fatal(err)
+	}
+	var response struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		executor.t.Fatal(err)
+	}
+	if len(response.Result.Tools) != 4 {
+		executor.t.Fatalf("routine GitHub tool count = %d, want 4", len(response.Result.Tools))
+	}
+	for _, tool := range response.Result.Tools {
+		if !strings.HasPrefix(tool.Name, "github_") {
+			executor.t.Fatalf("routine GitHub-only bridge exposed %q", tool.Name)
+		}
+	}
+
+	blocked := performCollabRequest(executor.server.Handler(), http.MethodGet, "/api/collaboration/agents", "", "controller", runID, executor.token)
+	if blocked.Code != http.StatusUnauthorized {
+		executor.t.Fatalf("routine GitHub capability listed collaborators: %d %s", blocked.Code, blocked.Body.String())
+	}
+	if executor.resultErr != nil {
+		return "", executor.resultErr
+	}
+	return "routine complete", nil
+}
+
+func TestRoutineGitHubBridgeInjectsFourToolsAndReleasesCapabilities(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		trigger   string
+		resultErr error
+	}{
+		{name: "scheduled completed", trigger: domain.RoutineTriggerSchedule},
+		{name: "test failed", trigger: domain.RoutineTriggerTest, resultErr: errors.New("routine executor failed")},
+		{name: "scheduled stopped", trigger: domain.RoutineTriggerSchedule, resultErr: context.Canceled},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server, instance, botID := openRoutineScheduler(t)
+			server.AllowHarnessExecution = true
+			server.HarnessWorkdir = t.TempDir()
+			server.RemoteToken = "controller"
+			server.CollaborationMCPCommand = "/bin/true"
+			if _, err := instance.PatchAgent(t.Context(), botID, domain.AgentProfileUpdate{}, func(metadata domain.AgentMetadata) (domain.AgentMetadata, error) {
+				metadata.Collaboration = &domain.AgentCollaboration{Enabled: true}
+				return domain.NormalizeAgentMetadata(metadata)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := instance.SaveGitHubConnection(t.Context(), store.GitHubConnection{
+				Enabled: true, Login: "octocat", Repositories: []string{"acme/widgets"}, AgentIDs: []string{botID},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			executor := &routineGitHubExecutor{server: server, t: t, resultErr: testCase.resultErr}
+			server.runExecutorOverride = executor
+			routine := createEnabledRoutine(t, instance, botID, time.Now().UTC().Add(time.Hour), domain.RoutineApprovalNever)
+			err := server.executeScheduledRoutine(t.Context(), routine, domain.RoutineRun{Trigger: testCase.trigger})
+			if testCase.resultErr == nil && err != nil {
+				t.Fatalf("execute routine: %v", err)
+			}
+			if testCase.resultErr != nil && err == nil {
+				t.Fatal("failed routine returned no error")
+			}
+			server.collabCapabilityMu.RLock()
+			_, retained := server.collabCapabilities[executor.token]
+			server.collabCapabilityMu.RUnlock()
+			if retained {
+				t.Fatal("routine retained its GitHub capability")
+			}
+			key := collaborationCapabilityScopeKey{server: server, token: executor.token}
+			if _, retained := collaborationCapabilityScopes.Load(key); retained {
+				t.Fatal("routine retained its active GitHub scope")
+			}
+			if _, retained := pendingCollaborationCapabilityScopes.Load(key); retained {
+				t.Fatal("routine retained its pending GitHub scope")
+			}
+		})
+	}
+}
+
+func TestRoutineGitHubBridgeReleasesPendingCapabilityBeforeExecution(t *testing.T) {
+	server, instance, botID := openRoutineScheduler(t)
+	server.RemoteToken = "controller"
+	server.CollaborationMCPCommand = "/bin/true"
+	if err := instance.SaveGitHubConnection(t.Context(), store.GitHubConnection{
+		Enabled: true, Login: "octocat", Repositories: []string{"acme/widgets"}, AgentIDs: []string{botID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	routine := createEnabledRoutine(t, instance, botID, time.Now().UTC().Add(time.Hour), domain.RoutineApprovalNever)
+	err := server.executeScheduledRoutine(t.Context(), routine, domain.RoutineRun{Trigger: domain.RoutineTriggerTest})
+	if err == nil || !strings.Contains(err.Error(), "execution is disabled") {
+		t.Fatalf("disabled routine error = %v", err)
+	}
+	server.collabCapabilityMu.RLock()
+	retainedCapabilities := len(server.collabCapabilities)
+	server.collabCapabilityMu.RUnlock()
+	if retainedCapabilities != 0 {
+		t.Fatalf("disabled routine retained %d capabilities", retainedCapabilities)
+	}
+	pendingCollaborationCapabilityScopes.Range(func(key, _ any) bool {
+		if scoped, ok := key.(collaborationCapabilityScopeKey); ok && scoped.server == server {
+			t.Errorf("disabled routine retained pending capability %q", scoped.token)
+		}
+		return true
+	})
+}
 
 func TestRoutineSchedulerDoesNotClaimWhenFeatureOff(t *testing.T) {
 	server, instance, botID := openRoutineScheduler(t)
@@ -265,6 +429,10 @@ func TestRoutineSchedulerDeniedOccurrenceAdvances(t *testing.T) {
 	approvals, err := instance.ListApprovals(t.Context(), "pending")
 	if err != nil || len(approvals) != 1 {
 		t.Fatalf("pending approvals = %#v, %v", approvals, err)
+	}
+	task, _, err := instance.GetTask(t.Context(), approvals[0].RunID)
+	if err != nil || task.Title != "Scheduled routine: "+routine.Name {
+		t.Fatalf("routine approval task = %#v, %v", task, err)
 	}
 	denied := performRequest(server.Handler(), http.MethodPost, "/api/approvals/"+approvals[0].ID, `{"status":"denied","option_id":"reject"}`, "")
 	if denied.Code != http.StatusOK {

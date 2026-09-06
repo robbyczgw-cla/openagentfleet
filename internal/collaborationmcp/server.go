@@ -36,27 +36,33 @@ const (
 	RunIDHeader      = "X-OpenAgentFleet-Collab-Run-ID"
 	RunTokenHeader   = "X-OpenAgentFleet-Collab-Run-Token"
 	DefaultAPIURL    = defaultAPIURL
+	GitHubEnabledEnv = "OPENAGENTFLEET_GITHUB_ENABLED"
+	GitHubOnlyEnv    = "OPENAGENTFLEET_GITHUB_ONLY"
 )
 
 // Config controls how the MCP server reaches botd. APIURL must be loopback
 // HTTP(S). APIToken, RunID, and RunToken are required and are sent on every
 // botd request; they are never returned in tool results.
 type Config struct {
-	APIURL     string
-	APIToken   string
-	RunID      string
-	RunToken   string
-	HTTPClient *http.Client
+	GitHubEnabled bool
+	GitHubOnly    bool
+	APIURL        string
+	APIToken      string
+	RunID         string
+	RunToken      string
+	HTTPClient    *http.Client
 }
 
 // Server is a synchronous stdio MCP server. It processes one JSON-RPC request
 // per input line, which keeps stdout strictly line-delimited JSON-RPC.
 type Server struct {
-	apiURL   string
-	token    string
-	runID    string
-	runToken string
-	client   *http.Client
+	githubEnabled bool
+	githubOnly    bool
+	apiURL        string
+	token         string
+	runID         string
+	runToken      string
+	client        *http.Client
 }
 
 // New creates a collaboration MCP bridge with a bounded HTTP client.
@@ -82,11 +88,13 @@ func New(config Config) (*Server, error) {
 		client = &http.Client{Timeout: 45 * time.Second}
 	}
 	return &Server{
-		apiURL:   apiURL,
-		token:    token,
-		runID:    runID,
-		runToken: runToken,
-		client:   client,
+		githubEnabled: config.GitHubEnabled,
+		githubOnly:    config.GitHubOnly,
+		apiURL:        apiURL,
+		token:         token,
+		runID:         runID,
+		runToken:      runToken,
+		client:        client,
 	}, nil
 }
 
@@ -198,7 +206,14 @@ func (s *Server) dispatch(ctx context.Context, request rpcRequest) (any, *rpcErr
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return map[string]any{"tools": tools()}, nil
+		available := tools()
+		if s.githubOnly {
+			available = nil
+		}
+		if s.githubEnabled {
+			available = append(available, githubTools()...)
+		}
+		return map[string]any{"tools": available}, nil
 	case "tools/call":
 		var params toolCallParams
 		if err := decodeRequiredParams(request.Params, &params); err != nil {
@@ -338,6 +353,15 @@ type taskStatusArguments struct {
 }
 
 func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMessage) toolResult {
+	if strings.HasPrefix(name, "github_") {
+		if !s.githubEnabled {
+			return toolFailure(fmt.Errorf("GitHub connection is disabled"))
+		}
+		return s.callGitHubTool(ctx, name, arguments)
+	}
+	if s.githubOnly {
+		return toolFailure(fmt.Errorf("Agent collaboration is disabled"))
+	}
 	switch name {
 	case "list_agents":
 		return s.listAgents(ctx)

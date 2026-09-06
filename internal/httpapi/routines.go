@@ -32,6 +32,10 @@ type routineHeartbeatRequest struct {
 }
 
 func (s *Server) handleRoutineRoutes(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/routines/preview" && r.Method == http.MethodPost {
+		s.previewRoutineSchedule(w, r)
+		return
+	}
 	if r.URL.Path == "/api/routines" {
 		switch r.Method {
 		case http.MethodGet:
@@ -58,6 +62,8 @@ func (s *Server) handleRoutineRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case action == "" && r.Method == http.MethodPatch:
+		s.editRoutine(w, r, routineID)
 	case action == "" && r.Method == http.MethodGet:
 		s.getRoutine(w, r, routineID)
 	case action == "enable" && r.Method == http.MethodPost:
@@ -516,7 +522,8 @@ func (s *Server) writeRoutineError(w http.ResponseWriter, err error) {
 		errors.Is(err, store.ErrRoutineNeedsAttention),
 		errors.Is(err, store.ErrRoutineDisabled),
 		errors.Is(err, store.ErrRoutinePaused),
-		errors.Is(err, store.ErrRoutineRunActive):
+		errors.Is(err, store.ErrRoutineRunActive),
+		errors.Is(err, store.ErrRoutineEditRequiresPause):
 		status = http.StatusConflict
 	case strings.Contains(err.Error(), "routine "):
 		status = http.StatusBadRequest

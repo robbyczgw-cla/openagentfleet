@@ -54,6 +54,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := s.MigrateTasks(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -770,6 +774,11 @@ func (s *Store) CreateMessageForActiveRun(ctx context.Context, runID, conversati
 	if _, err := tx.ExecContext(ctx, "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)", item.ID, item.ConversationID, item.Role, item.Content, item.CreatedAt); err != nil {
 		return domain.Message{}, err
 	}
+	if role == "assistant" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_results(run_id,result) VALUES(?,?) ON CONFLICT(run_id) DO UPDATE SET result=excluded.result`, runID, content); err != nil {
+			return domain.Message{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Message{}, err
 	}
@@ -887,6 +896,9 @@ func (s *Store) CreateMessageWithAttachmentsAndRun(ctx context.Context, conversa
 		return domain.Message{}, nil, domain.Run{}, domain.RunEvent{}, err
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO run_events (id, run_id, type, data, created_at) VALUES (?, ?, ?, ?, ?)", event.ID, event.RunID, event.Type, event.Data, event.CreatedAt); err != nil {
+		return domain.Message{}, nil, domain.Run{}, domain.RunEvent{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_results(run_id,title) VALUES(?,?)`, run.ID, content); err != nil {
 		return domain.Message{}, nil, domain.Run{}, domain.RunEvent{}, err
 	}
 	if err := tx.Commit(); err != nil {

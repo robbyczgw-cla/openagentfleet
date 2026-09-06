@@ -1,0 +1,110 @@
+.connected-apps {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+}
+
+.connected-apps-header,
+.connected-app-summary,
+.connected-app-section-heading,
+.connected-app-actions,
+.connected-app-manual {
+  display: flex;
+  align-items: center;
+}
+
+.connected-apps-header {
+  justify-content: space-between;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.connected-apps-header p,
+.connected-apps-header h2,
+.connected-app-summary h3,
+.connected-app-summary p,
+.connected-app-section-heading h4,
+.connected-app-section-heading p {
+  margin: 0;
+}
+
+.connected-apps-header p {
+  margin-bottom: 3px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.connected-apps-header h2 { font-size: 18px; letter-spacing: -.02em; }
+.connected-apps-close { width: 32px; height: 32px; border-radius: 8px; color: var(--ink-2); background: transparent; font-size: 22px; }
+.connected-apps-close:hover { background: var(--surface-2); }
+.connected-apps-state { margin: 0; padding: 44px 22px; color: var(--ink-3); text-align: center; }
+.connected-app-card { overflow-y: auto; }
+
+.connected-app-summary {
+  gap: 12px;
+  padding: 20px 22px;
+}
+
+.connected-app-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--surface);
+  background: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.connected-app-summary > div { min-width: 0; }
+.connected-app-summary h3 { font-size: 15px; }
+.connected-app-summary p { margin-top: 3px; color: var(--ink-3); font-size: 12px; }
+.connected-app-status { margin-left: auto; padding: 4px 8px; border-radius: 999px; color: var(--ink-3); background: var(--surface-2); font-size: 10px; font-weight: 650; white-space: nowrap; }
+.connected-app-status.is-connected { color: var(--accent-hover); background: var(--accent-soft); }
+
+.connected-app-settings { padding: 0 22px 20px; }
+.connected-app-section-heading { justify-content: space-between; gap: 16px; margin: 18px 0 9px; }
+.connected-app-section-heading h4 { font-size: 13px; }
+.connected-app-section-heading p { margin-top: 3px; color: var(--ink-3); font-size: 11px; line-height: 1.4; }
+.connected-app-options { max-height: 210px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
+.connected-app-options label { display: flex; align-items: center; gap: 9px; min-height: 39px; padding: 8px 11px; color: var(--ink-2); font-size: 12px; }
+.connected-app-options label + label { border-top: 1px solid var(--border); }
+.connected-app-options label:hover { background: var(--surface-2); }
+.connected-app-options label.is-disabled { color: var(--ink-3); cursor: not-allowed; }
+.connected-app-options label.is-disabled:hover { background: transparent; }
+.connected-app-options input { accent-color: var(--accent); }
+.connected-app-options small { margin-left: auto; color: var(--ink-3); font-size: 10px; }
+.connected-app-empty { margin: 0; padding: 13px; color: var(--ink-3); font-size: 11px; }
+.connected-app-agents { max-height: 160px; }
+.connected-app-manual { gap: 8px; margin-top: 8px; }
+.connected-app-manual input { min-width: 0; flex: 1; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--ink); background: var(--surface); font-size: 12px; }
+
+.connected-app-primary,
+.connected-app-secondary,
+.connected-app-danger {
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.connected-app-primary { color: #fff; background: var(--accent); }
+.connected-app-primary:hover { background: var(--accent-hover); }
+.connected-app-secondary { border: 1px solid var(--border); background: var(--surface); }
+.connected-app-secondary:hover { background: var(--surface-2); }
+.connected-app-danger { color: #9b3d32; background: #f8edea; }
+.connected-app-error { margin: 0 22px 16px; padding: 9px 11px; border-radius: 8px; color: #87534b; background: #f8edea; font-size: 11px; }
+.connected-app-actions { justify-content: flex-end; gap: 8px; padding: 15px 22px; border-top: 1px solid var(--border); }
+.connected-app-actions .connected-app-danger { margin-right: auto; }
+
+@media (max-width: 600px) {
+  .connected-app-summary { align-items: flex-start; flex-wrap: wrap; }
+  .connected-app-status { margin-left: 54px; }
+  .connected-app-section-heading { align-items: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connected-apps * { scroll-behavior: auto; }
+}

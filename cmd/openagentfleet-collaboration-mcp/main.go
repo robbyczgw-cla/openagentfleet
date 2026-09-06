@@ -28,10 +28,12 @@ func main() {
 		os.Exit(1)
 	}
 	server, err := collaborationmcp.New(collaborationmcp.Config{
-		APIURL:   os.Getenv(collaborationmcp.APIURLEnv),
-		APIToken: apiToken,
-		RunID:    runID,
-		RunToken: runToken,
+		APIURL:        os.Getenv(collaborationmcp.APIURLEnv),
+		GitHubEnabled: os.Getenv(collaborationmcp.GitHubEnabledEnv) == "1",
+		GitHubOnly:    os.Getenv(collaborationmcp.GitHubOnlyEnv) == "1",
+		APIToken:      apiToken,
+		RunID:         runID,
+		RunToken:      runToken,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "openagentfleet-collaboration-mcp:", err)

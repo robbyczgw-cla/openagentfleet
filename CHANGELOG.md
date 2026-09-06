@@ -14,6 +14,10 @@ ship paragraph dumps.
 - Per-Agent queue shared by chat, group, delegation, and routine turns.
 - Coordinator delegation events on the existing handoff records.
 - README 19-second first-run storyboard with voiceover, plus roster / gated-routine / Routines screenshots.
+- Tasks & results panel: every Agent's runs in one filtered list, each with its brief, saved answer, and snapshotted output files.
+- Routines workspace: simple schedule picker with server-computed next runs, agenda and week calendar, safe edits on paused routines, and Markdown workflow templates.
+- Connected apps: read-only GitHub issues and pull requests for selected repositories and Agents, using the `gh` login on this computer.
+- [Workspace productivity](docs/workspace-productivity.md) guide for the three panels and their limits.
 
 ### Fixed
 
