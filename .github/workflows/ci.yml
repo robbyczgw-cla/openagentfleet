@@ -110,7 +110,7 @@ jobs:
           target="$(rustc --print host-tuple)"
           sidecar_dir="client/src-tauri/binaries"
           mkdir -p "$sidecar_dir"
-          for name in botd browser-mcp uv uvx opencode; do
+          for name in botd browser-mcp collaboration-mcp uv uvx opencode; do
             placeholder="$sidecar_dir/$name-$target"
             printf '#!/bin/sh\nexit 0\n' > "$placeholder"
             chmod 755 "$placeholder"
@@ -177,7 +177,7 @@ jobs:
           target="$(rustc --print host-tuple)"
           sidecar_dir="client/src-tauri/binaries"
           mkdir -p "$sidecar_dir"
-          for name in botd browser-mcp uv uvx opencode; do
+          for name in botd browser-mcp collaboration-mcp uv uvx opencode; do
             placeholder="$sidecar_dir/$name-$target"
             printf '#!/bin/sh\nexit 0\n' > "$placeholder"
             chmod 755 "$placeholder"

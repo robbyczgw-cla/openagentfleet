@@ -27,17 +27,18 @@ const (
 // injects this server for a lead run that may collaborate with other Agents;
 // the bridge still relies on botd's authenticated, server-side gate.
 const (
-	MCPServerName    = "openagentfleet-collaboration-mcp"
-	MCPServerCommand = "openagentfleet-collaboration-mcp"
-	APIURLEnv        = "OPENAGENTFLEET_API_URL"
-	APITokenEnv      = "OPENAGENTFLEET_API_TOKEN"
-	RunIDEnv         = "OPENAGENTFLEET_COLLAB_RUN_ID"
-	RunTokenEnv      = "OPENAGENTFLEET_COLLAB_RUN_TOKEN"
-	RunIDHeader      = "X-OpenAgentFleet-Collab-Run-ID"
-	RunTokenHeader   = "X-OpenAgentFleet-Collab-Run-Token"
-	DefaultAPIURL    = defaultAPIURL
-	GitHubEnabledEnv = "OPENAGENTFLEET_GITHUB_ENABLED"
-	GitHubOnlyEnv    = "OPENAGENTFLEET_GITHUB_ONLY"
+	MCPServerName       = "openagentfleet-collaboration-mcp"
+	MCPServerCommand    = "openagentfleet-collaboration-mcp"
+	MCPServerCommandEnv = "OPENAGENTFLEET_COLLABORATION_MCP_BINARY"
+	APIURLEnv           = "OPENAGENTFLEET_API_URL"
+	APITokenEnv         = "OPENAGENTFLEET_API_TOKEN"
+	RunIDEnv            = "OPENAGENTFLEET_COLLAB_RUN_ID"
+	RunTokenEnv         = "OPENAGENTFLEET_COLLAB_RUN_TOKEN"
+	RunIDHeader         = "X-OpenAgentFleet-Collab-Run-ID"
+	RunTokenHeader      = "X-OpenAgentFleet-Collab-Run-Token"
+	DefaultAPIURL       = defaultAPIURL
+	GitHubEnabledEnv    = "OPENAGENTFLEET_GITHUB_ENABLED"
+	GitHubOnlyEnv       = "OPENAGENTFLEET_GITHUB_ONLY"
 )
 
 // Config controls how the MCP server reaches botd. APIURL must be loopback

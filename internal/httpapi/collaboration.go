@@ -513,6 +513,9 @@ func (s *Server) collaborationMCPServerSpec() (harness.MCPServerSpec, string, er
 	}
 	command := strings.TrimSpace(s.CollaborationMCPCommand)
 	if command == "" {
+		command = strings.TrimSpace(os.Getenv(collaborationmcp.MCPServerCommandEnv))
+	}
+	if command == "" {
 		command = collaborationmcp.MCPServerCommand
 		if executable, err := os.Executable(); err == nil {
 			sibling := filepath.Join(filepath.Dir(executable), collaborationmcp.MCPServerCommand)

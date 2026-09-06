@@ -39,6 +39,7 @@ need() {
 need "OpenAgentFleet.exe"
 need "botd.exe"
 need "browser-mcp.exe"
+need "collaboration-mcp.exe"
 need "uv.exe"
 need "uvx.exe"
 need "opencode.exe"

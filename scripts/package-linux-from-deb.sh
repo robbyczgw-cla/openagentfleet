@@ -93,6 +93,7 @@ echo "Opening the app does not start a container; Computer View does that on dem
 /usr/bin/OpenAgentFleet
 /usr/bin/botd
 /usr/bin/browser-mcp
+/usr/bin/collaboration-mcp
 /usr/bin/opencode
 /usr/bin/uv
 /usr/bin/uvx

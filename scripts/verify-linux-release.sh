@@ -46,6 +46,7 @@ contents="$(dpkg-deb -c "$deb_path")"
 for needle in \
   botd \
   browser-mcp \
+  collaboration-mcp \
   '.desktop' \
   'agent-computer/Dockerfile' \
   'agent-computer/computer-server.mjs'
@@ -76,6 +77,7 @@ if [[ -n "$rpm_path" ]]; then
     '/usr/bin/OpenAgentFleet' \
     '/usr/bin/botd' \
     '/usr/bin/browser-mcp' \
+    '/usr/bin/collaboration-mcp' \
     'OpenAgentFleet.desktop' \
     'agent-computer/Dockerfile' \
     'agent-computer/computer-server.mjs'
