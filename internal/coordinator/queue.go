@@ -40,7 +40,7 @@ func NewTurnQueue() *TurnQueue {
 }
 
 func (q *TurnQueue) Enqueue(ctx context.Context, agentID, turnID string, fn func(context.Context) error) error {
-	result, err := q.Submit(ctx, agentID, turnID, fn)
+	job, err := q.submit(ctx, agentID, turnID, fn)
 	if err != nil {
 		return err
 	}
@@ -48,16 +48,25 @@ func (q *TurnQueue) Enqueue(ctx context.Context, agentID, turnID string, fn func
 		ctx = context.Background()
 	}
 	select {
-	case err := <-result:
+	case err := <-job.result:
 		return err
 	case <-ctx.Done():
-		return ctx.Err()
+		q.cancelPending(job)
+		return <-job.result
 	}
 }
 
 // Submit reserves the Agent's queue position before returning. The result
 // arrives after execution or after the queue skips a canceled turn.
 func (q *TurnQueue) Submit(ctx context.Context, agentID, turnID string, fn func(context.Context) error) (<-chan error, error) {
+	job, err := q.submit(ctx, agentID, turnID, fn)
+	if err != nil {
+		return nil, err
+	}
+	return job.result, nil
+}
+
+func (q *TurnQueue) submit(ctx context.Context, agentID, turnID string, fn func(context.Context) error) (*turnJob, error) {
 	if q == nil {
 		return nil, errors.New("turn queue is required")
 	}
@@ -75,7 +84,7 @@ func (q *TurnQueue) Submit(ctx context.Context, agentID, turnID string, fn func(
 	}
 	job := &turnJob{ctx: ctx, agentID: agentID, turnID: turnID, fn: fn, result: make(chan error, 1)}
 	q.enqueue(job)
-	return job.result, nil
+	return job, nil
 }
 
 func (q *TurnQueue) enqueue(job *turnJob) {
@@ -141,5 +150,24 @@ func (j *turnJob) finish(err error) {
 	select {
 	case j.result <- err:
 	default:
+	}
+}
+
+// A running job owns its terminal state until its callback returns.
+func (q *TurnQueue) cancelPending(job *turnJob) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	agent := q.agents[job.agentID]
+	if agent == nil {
+		return
+	}
+	for i, pending := range agent.jobs {
+		if pending == job {
+			copy(agent.jobs[i:], agent.jobs[i+1:])
+			agent.jobs[len(agent.jobs)-1] = nil
+			agent.jobs = agent.jobs[:len(agent.jobs)-1]
+			job.finish(job.ctx.Err())
+			return
+		}
 	}
 }

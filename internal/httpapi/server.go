@@ -901,19 +901,9 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	run.SessionID = sessionID
 	if computerCapability != "" {
-		leaseTTL := time.Duration(timeoutSeconds) * time.Second
-		if leaseTTL <= 0 {
-			leaseTTL = s.RunTimeout
-		}
-		s.bindComputerCapability(computerCapability, run.ID, leaseTTL)
 		setComputerRunID(mcpServers, run.ID)
 	}
 	if collabCapability != "" {
-		leaseTTL := time.Duration(timeoutSeconds) * time.Second
-		if leaseTTL <= 0 {
-			leaseTTL = s.RunTimeout
-		}
-		s.bindCollabCapability(collabCapability, run.ID, leaseTTL)
 		setCollabRunID(mcpServers, run.ID)
 	}
 	s.publishStoredRunEvent(run, queuedEvent)
@@ -1746,7 +1736,11 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 	}
 	runContext, timeoutCancel := context.WithTimeout(baseContext, timeout)
 	defer timeoutCancel()
-	defer s.releaseComputerCapability(mcpServers)
+	defer s.releaseRunCapabilities(mcpServers)
+	if baseContext.Err() != nil {
+		_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped"}`)
+		return
+	}
 
 	if _, err := s.commitRunLifecycleEvent(runContext, run, "running", "", "run.started", `{"status":"running"}`); err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -1758,6 +1752,7 @@ func (s *Server) executeRunWithContext(baseContext context.Context, run domain.R
 		return
 	}
 	run.Status = "running"
+	s.bindRunCapabilities(mcpServers, run.ID, timeout)
 
 	if err := rejectPiLeadMCP(run.Provider, mcpServers); err != nil {
 		run.Status, run.Error = "failed", err.Error()
@@ -1857,7 +1852,11 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 	}
 	runContext, timeoutCancel := context.WithTimeout(baseContext, timeout)
 	defer timeoutCancel()
-	defer s.releaseComputerCapability(mcpServers)
+	defer s.releaseRunCapabilities(mcpServers)
+	if baseContext.Err() != nil {
+		_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped"}`)
+		return
+	}
 
 	fail := func(err error) {
 		if errors.Is(err, context.Canceled) {
@@ -1874,6 +1873,7 @@ func (s *Server) executeLeadWorkerRunWithContext(baseContext context.Context, ru
 		return
 	}
 	run.Status = "running"
+	s.bindRunCapabilities(mcpServers, run.ID, timeout)
 
 	if err := rejectPiLeadMCP(run.Provider, mcpServers); err != nil {
 		fail(err)
@@ -3051,7 +3051,14 @@ func (s *Server) commitRunLifecycleEvent(ctx context.Context, run domain.Run, st
 		return domain.StreamEvent{}, err
 	}
 	s.markAgentUnreadForRunStatus(ctx, run.BotID, status)
-	return s.publishStoredRunEvent(run, item), nil
+	published := s.publishStoredRunEvent(run, item)
+	if eventType == "run.started" {
+		if handoff, err := s.Store.GetHandoffByTargetRun(ctx, run.ID); err == nil && handoff.Mode == domain.HandoffModeDelegate {
+			handoff.Status = domain.HandoffStatusRunning
+			s.publishDelegation(handoff, domain.EventAgentDelegationStarted)
+		}
+	}
+	return published, nil
 }
 
 func (s *Server) markAgentUnreadForRunStatus(ctx context.Context, botID, status string) {

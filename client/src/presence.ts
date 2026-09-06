@@ -39,6 +39,13 @@ export function deriveAgentPresence(input: {
 }): AgentPresence {
   const run = input.run;
   const computer = input.computer;
+  if (run?.status === "queued") {
+    return {
+      state: "working",
+      label: "Queued",
+      detail: "Waiting to start. This Agent runs one task at a time.",
+    };
+  }
   const active = Boolean(run && runActive(run.status));
   if (run?.status === "waiting_for_approval") {
     return {
@@ -68,10 +75,10 @@ export function deriveAgentPresence(input: {
       detail: active ? "Working with a teammate" : "Asked another Agent",
     };
   }
-  if (run && (run.status === "queued" || run.status === "running")) {
+  if (run?.status === "running") {
     return {
       state: "working",
-      label: run.status === "queued" ? "Queued" : "Working",
+      label: "Working",
       detail: `Run ${run.status}`,
     };
   }

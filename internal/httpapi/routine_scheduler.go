@@ -250,8 +250,9 @@ func (s *Server) executeScheduledRoutine(ctx context.Context, routine domain.Rou
 	}
 	if queue := s.turnQueue(); queue != nil {
 		if err := queue.Enqueue(runContext, run.BotID, run.ID, execute); err != nil {
-			_ = s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped"}`)
-			return err
+			if stopErr := s.commitTerminalRunLifecycleEvent(run, "stopped", "", "run.stopped", `{"status":"stopped"}`); stopErr != nil {
+				return stopErr
+			}
 		}
 	} else {
 		_ = execute(runContext)

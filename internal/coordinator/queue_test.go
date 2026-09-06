@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -221,4 +222,34 @@ func waitDone(t *testing.T, wg *sync.WaitGroup) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for turns to finish")
 	}
+}
+
+func TestEnqueueWaitsForRunningTurnCleanupAfterCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		q := NewTurnQueue()
+		ctx, cancel := context.WithCancel(t.Context())
+		started := make(chan struct{})
+		release := make(chan struct{})
+		result := make(chan error, 1)
+		expected := errors.New("executor cleaned up")
+		go func() {
+			result <- q.Enqueue(ctx, "agent", "run", func(context.Context) error {
+				close(started)
+				<-release
+				return expected
+			})
+		}()
+		<-started
+		cancel()
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatalf("returned before cleanup: %v", err)
+		default:
+		}
+		close(release)
+		if err := <-result; !errors.Is(err, expected) {
+			t.Fatalf("result = %v", err)
+		}
+	})
 }

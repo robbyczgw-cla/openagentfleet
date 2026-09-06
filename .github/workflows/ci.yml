@@ -77,6 +77,10 @@ jobs:
         working-directory: client
         run: pnpm exec tsc --noEmit
 
+      - name: Test queued Agent presence
+        working-directory: client
+        run: node --experimental-strip-types --test src/presence.test.mjs
+
       - name: Build client
         working-directory: client
         run: pnpm exec vite build

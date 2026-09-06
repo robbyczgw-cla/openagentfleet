@@ -287,19 +287,9 @@ func (s *Server) startAgentCollaboration(ctx context.Context, sourceRun domain.R
 	}
 	run := result.Run
 	if computerCapability != "" {
-		leaseTTL := time.Duration(timeoutSeconds) * time.Second
-		if leaseTTL <= 0 {
-			leaseTTL = s.RunTimeout
-		}
-		s.bindComputerCapability(computerCapability, run.ID, leaseTTL)
 		setComputerRunID(mcpServers, run.ID)
 	}
 	if collabCapability != "" {
-		leaseTTL := time.Duration(timeoutSeconds) * time.Second
-		if leaseTTL <= 0 {
-			leaseTTL = s.RunTimeout
-		}
-		s.bindCollabCapability(collabCapability, run.ID, leaseTTL)
 		setCollabRunID(mcpServers, run.ID)
 	}
 	s.publishHandoff(result.Handoff, "handoff.created")
@@ -322,9 +312,6 @@ func (s *Server) startAgentCollaboration(ctx context.Context, sourceRun domain.R
 	s.launchAgentTurn(run.BotID, run.ID, func(runContext context.Context) {
 		s.executeRunWithContext(runContext, run, systemPrompt, model, reasoningEffort, serviceTier, permissionMode, webSearch, timeoutSeconds, mcpServers)
 	})
-	if mode == domain.HandoffModeDelegate {
-		s.publishDelegation(result.Handoff, domain.EventAgentDelegationStarted)
-	}
 	return result.Handoff, run, nil
 }
 
